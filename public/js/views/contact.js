@@ -1,0 +1,681 @@
+import { get, post, patch } from '../api.js';
+import {
+  html, raw, render, $, $$, on, fresh, state, field, formData, opts, toItems, userItems, table, badge, relBadge, optoutBadge, K, optLabel,
+  fmtDate, fmtDateTime, fmtMoney, fmtDuration, relTime, modal, confirmDialog, toast, toastError, can, empty,
+} from '../ui.js';
+import {
+  activityForm, taskForm, completeTask, cancelTask, opportunityForm, simulatorButton, openSimulator, simulationForm, proposalForm,
+  proposalDetail, contractForm, consentForm, extractCustom, dupList,
+} from '../forms.js';
+import { nextActionCell } from './leads.js';
+
+const TABS = [
+  ['resumo', 'Resumo'],
+  ['cadastro', 'Cadastro'],
+  ['contatos', 'Contatos da empresa'],
+  ['oportunidades', 'Oportunidades'],
+  ['historico', 'Histórico'],
+  ['tarefas', 'Tarefas'],
+  ['simulacoes', 'Simulações e propostas'],
+  ['produtos', 'Produtos contratados'],
+  ['origens', 'Origens'],
+  ['privacidade', 'Preferências e LGPD'],
+  ['auditoria', 'Auditoria'],
+];
+
+export async function show(view, { id, sub }) {
+  let c = await get(`/api/cadastros/${id}`);
+  if (c.merged_into_id) {
+    location.hash = `#/leads/${c.merged_into_id}`;
+    return;
+  }
+  let tab = sub || 'resumo';
+  const reload = async () => {
+    c = await get(`/api/cadastros/${id}`);
+    draw();
+  };
+  const draw = () => {
+    const tabs = TABS.filter(([k]) => k !== 'contatos' || c.kind === 'PJ');
+    render(view, html`<div class="page">
+      <div class="page-head">
+        <div>
+          <div class="crumbs"><a href="#/${c.relationship === 'cliente' ? 'clientes' : 'leads'}">${c.relationship === 'cliente' ? 'Clientes' : 'Prospects e leads'}</a> / ${c.code}</div>
+          <h1>${c.name} <small class="muted">${c.kind === 'PJ' ? 'Pessoa jurídica' : 'Pessoa física'}</small></h1>
+          <div class="badges">${relBadge(c.relationship)} ${c.relationship === 'cliente' ? badge(`Cliente ${K('client_status', c.client_status)}`, 'ok') : ''} ${badge(`Lead: ${K('lead_status', c.lead_status)}`)} ${optoutBadge(c.optouts)} ${c.anonymized_at ? badge('Anonimizado', 'danger') : ''}</div>
+          <div class="muted small">Responsável: <strong>${c.owner_name || 'sem responsável'}</strong> · criado em ${fmtDateTime(c.created_at)}${c.created_by_name ? ` por ${c.created_by_name}` : ''} · atualizado ${relTime(c.updated_at)}${c.updated_by_name ? ` por ${c.updated_by_name}` : ''}</div>
+        </div>
+        ${can.write() && !c.anonymized_at
+          ? html`<div class="actions">
+            <button class="btn primary" data-act="activity">Registrar atividade</button>
+            <button class="btn" data-act="task">Nova tarefa</button>
+            <button class="btn" data-act="opp">Nova oportunidade</button>
+            ${simulatorButton(c, c.opportunities.find((o) => o.status === 'aberta'))}
+          </div>`
+          : ''}
+      </div>
+      <div class="next-action ${!c.next_action ? 'missing' : c.next_action.due_at && new Date(c.next_action.due_at) < new Date() ? 'late' : ''}">
+        <span>Próxima ação:</span> ${nextActionCell(c.next_action)}
+      </div>
+      ${c.missing_recommended.length && !c.anonymized_at ? html`<div class="alert warn">Cadastro incompleto. Recomendado completar: ${c.missing_recommended.map((f) => FIELD_LABELS[f] || f).join(', ')}. <a href="#/leads/${c.id}/cadastro">Completar</a></div>` : ''}
+      <nav class="tabs">${tabs.map(([k, l]) => html`<a href="#/leads/${c.id}/${k}" class="${tab === k ? 'active' : ''}" data-tab="${k}">${l}${countFor(c, k)}</a>`)}</nav>
+      <div id="tab"></div>
+    </div>`);
+    drawTab();
+  };
+  const drawTab = async () => {
+    const box = fresh($('#tab', view));
+    try {
+      await TAB_RENDER[tab](box, c, reload);
+    } catch (e) {
+      render(box, html`<div class="alert danger">${e.message}</div>`);
+    }
+  };
+  on(view, 'click', '[data-tab]', (e, a) => {
+    e.preventDefault();
+    tab = a.dataset.tab;
+    history.replaceState(null, '', `#/leads/${c.id}/${tab}`);
+    $$('[data-tab]', view).forEach((x) => x.classList.toggle('active', x === a));
+    drawTab();
+  });
+  on(view, 'click', '[data-act=activity]', async (e, b) => {
+    if (await activityForm(c, { opportunity_id: b.dataset.opp, type: b.dataset.type })) reload();
+  });
+  on(view, 'click', '[data-act=task]', async (e, b) => {
+    if (await taskForm({ contact: c, opportunity_id: b.dataset.opp, type: b.dataset.type })) reload();
+  });
+  on(view, 'click', '[data-act=opp]', async () => {
+    const r = await opportunityForm(c);
+    if (r) reload();
+  });
+  on(view, 'click', '[data-act=open-simulator]', (e, b) => openSimulator(Number(b.dataset.contact), b.dataset.opp ? Number(b.dataset.opp) : null, 'cadastro').then(() => setTimeout(reload, 500)));
+  draw();
+}
+
+const FIELD_LABELS = {
+  phone1: 'telefone principal', email: 'e-mail', city: 'cidade', state: 'UF', origin: 'origem', pref_channel: 'canal preferido',
+  legal_name: 'razão social', doc: 'CPF/CNPJ', company_contact: 'contato da empresa', birth_date: 'data de nascimento', profession: 'profissão',
+  segment: 'segmento', owner_id: 'responsável', whatsapp: 'WhatsApp',
+};
+
+function countFor(c, k) {
+  const n = { oportunidades: c.opportunities.length, tarefas: c.tasks.filter((t) => t.status === 'pendente').length, simulacoes: c.simulations.length + c.proposals.length, produtos: c.contracts.length, contatos: c.company_contacts.filter((x) => x.active).length, origens: c.origins.length }[k];
+  return n ? html` <span class="count">${n}</span>` : '';
+}
+
+/* ------------------------- Abas ------------------------- */
+
+const TAB_RENDER = {
+  async resumo(box, c) {
+    const open = c.opportunities.filter((o) => ['aberta', 'pausada'].includes(o.status));
+    const hist = await get(`/api/cadastros/${c.id}/historico`, { limit: 8 });
+    render(box, html`<div class="cols">
+      <section class="card">
+        <h3>Dados principais</h3>
+        <div class="kv">
+          <div><span>Telefone</span>${c.phone1 || '—'}${c.phone2 ? html`<br>${c.phone2}` : ''}</div>
+          <div><span>WhatsApp</span>${c.whatsapp || '—'}</div>
+          <div><span>E-mail</span>${c.email || '—'}</div>
+          <div><span>Cidade/UF</span>${[c.city, c.state].filter(Boolean).join('/') || '—'}</div>
+          <div><span>Origem</span>${optLabel('origem', c.origin)}${c.campaign ? html`<br><small>${c.campaign}</small>` : ''}</div>
+          <div><span>Primeiro contato</span>${fmtDateTime(c.first_contact_at)}</div>
+          <div><span>Canal preferido</span>${optLabel('canal', c.pref_channel)}</div>
+          <div><span>Melhor horário</span>${c.pref_time || '—'}</div>
+          ${c.kind === 'PJ' ? html`<div><span>Contato principal</span>${c.company_contacts.find((x) => x.is_primary)?.name || '—'}</div>` : ''}
+          ${c.contact_restriction ? html`<div class="full"><span>Restrição de contato</span><strong class="warn-text">${c.contact_restriction}</strong></div>` : ''}
+          ${c.initial_notes ? html`<div class="full"><span>Observações iniciais</span>${c.initial_notes}</div>` : ''}
+        </div>
+      </section>
+      <section class="card">
+        <h3>Oportunidades em andamento</h3>
+        ${open.length
+          ? html`<ul class="opp-list">${open.map((o) => html`<li><a href="#/oportunidades/${o.id}"><strong>${o.code}</strong> ${o.title || ''}</a> — ${badge(o.stage_name, o.status === 'pausada' ? 'muted' : '')}
+              <div class="small muted">${o.product_name || 'Produto não definido'} · ${fmtMoney(o.credit_value)} · ${o.owner_name || '—'}${o.next_action ? html` · Próxima: ${o.next_action} (${fmtDateTime(o.next_action_at)})` : ''}</div></li>`)}</ul>`
+          : empty('Nenhuma oportunidade em andamento.')}
+        ${c.contracts.length ? html`<h3>Produtos contratados</h3><ul>${c.contracts.map((k) => html`<li>${k.code} — ${k.product_name || optLabel('categoria_credito', k.category)} · ${fmtMoney(k.credit_value)} · ${optLabel('status_contrato', k.status)}</li>`)}</ul>` : ''}
+      </section>
+    </div>
+    <section class="card"><h3>Atividades recentes</h3>${noteBox(c)}${timeline(hist.rows)}<p><a href="#/leads/${c.id}/historico" data-tab="historico">Ver histórico completo →</a></p></section>`);
+    bindNote(box, c);
+  },
+
+  async cadastro(box, c, reload) {
+    const cfg = state.meta.settings.field_config?.[c.kind === 'PJ' ? 'contact_pj' : 'contact_pf'] || {};
+    const vis = (f) => cfg[f]?.visible !== false;
+    const rec = (f) => c.recommended_fields.includes(f);
+    const F = (f, extra) => (vis(f) ? field({ name: f, value: c[f], recommended: rec(f), ...extra }) : '');
+    const ro = !can.write() || c.anonymized_at;
+    render(box, html`<form class="card" id="edit">
+      <fieldset ${ro ? raw('disabled') : ''}>
+      <div class="grid">
+        ${c.kind === 'PJ'
+          ? html`${F('name', { label: 'Nome de exibição', required: true })}${F('legal_name', { label: 'Razão social' })}${F('trade_name', { label: 'Nome fantasia' })}
+            ${F('doc', { label: 'CNPJ' })}${F('state_registration', { label: 'Inscrição estadual' })}
+            ${F('segment', { label: 'Segmento ou atividade', type: 'select', options: opts('segmento') })}
+            ${F('company_size', { label: 'Porte / faixa de faturamento', type: 'select', options: opts('porte') })}${F('website', { label: 'Site', type: 'url' })}`
+          : html`${F('name', { label: 'Nome completo', required: true })}${F('doc', { label: 'CPF', help: 'Opcional — informe somente se necessário.' })}
+            ${F('birth_date', { label: 'Data de nascimento', type: 'date' })}${F('profession', { label: 'Profissão ou atividade' })}`}
+        ${F('phone1', { label: 'Telefone principal', type: 'tel' })}${F('phone2', { label: 'Telefone secundário', type: 'tel' })}
+        ${F('whatsapp', { label: 'WhatsApp', type: 'tel' })}${F('email', { label: 'E-mail', type: 'email' })}
+        ${F('city', { label: 'Cidade' })}${F('state', { label: 'UF', maxlength: 2 })}
+        ${F('origin', { label: 'Origem', type: 'select', options: opts('origem') })}${F('campaign', { label: 'Campanha ou ação' })}
+        ${F('first_contact_at', { label: 'Data do primeiro contato', type: 'datetime' })}
+        ${field({ name: 'relationship', label: 'Tipo de registro', type: 'select', options: toItems(state.meta.constants.relationships), value: c.relationship, allowEmpty: false })}
+        ${field({ name: 'lead_status', label: 'Status do lead', type: 'select', options: toItems(state.meta.constants.lead_status), value: c.lead_status, allowEmpty: false })}
+        ${field({ name: 'client_status', label: 'Status do cliente', type: 'select', options: toItems(state.meta.constants.client_status), value: c.client_status, placeholder: 'Não é cliente' })}
+        ${field({ name: 'owner_id', label: 'Responsável', type: 'select', options: userItems(), value: c.owner_id, placeholder: 'Sem responsável', disabled: !can.manage() })}
+        ${F('initial_notes', { label: 'Observações iniciais', type: 'textarea', full: true })}
+        ${customFieldsFor('contact', c.custom)}
+      </div>
+      <div class="modal-error" hidden></div>
+      ${ro ? '' : html`<div class="form-actions"><button class="btn primary" type="submit">Salvar alterações</button></div>`}
+      </fieldset>
+    </form>
+    <p class="muted small">Status do lead, status do cliente e etapa da oportunidade são controlados separadamente. Alterações ficam registradas na auditoria.</p>`);
+    const form = $('#edit', box);
+    let confirmDup = false;
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const err = $('.modal-error', form);
+      err.hidden = true;
+      const d = formData(form);
+      d.custom = extractCustom(d);
+      if (!can.manage()) delete d.owner_id;
+      try {
+        const r = await patch(`/api/cadastros/${c.id}`, { ...d, confirm_duplicate: confirmDup });
+        toast(r.changed ? 'Cadastro atualizado.' : 'Nenhuma alteração.');
+        reload();
+      } catch (ex) {
+        err.hidden = false;
+        if (ex.status === 409 && ex.details?.duplicates) {
+          err.innerHTML = String(html`${dupList(ex.details.duplicates)}<p>Clique em salvar novamente para confirmar mesmo assim.</p>`);
+          confirmDup = true;
+        } else err.textContent = ex.message;
+      }
+    });
+  },
+
+  async contatos(box, c, reload) {
+    const rows = c.company_contacts;
+    render(box, html`<section class="card">
+      <div class="section-head"><h3>Contatos vinculados à empresa</h3>${can.write() ? html`<button class="btn" data-act="cc-new">+ Adicionar contato</button>` : ''}</div>
+      <p class="hint">Cada contato tem preferências e histórico próprios, sempre vinculados a esta empresa.</p>
+      ${table(
+        [
+          { label: 'Nome', render: (x) => html`<strong>${x.name}</strong>${x.is_primary ? html` ${badge('Principal', 'ok')}` : ''}${!x.active ? html` ${badge('Inativo', 'muted')}` : ''} ${optoutBadge(x.optouts)}` },
+          { label: 'Cargo', render: (x) => x.role || '—' },
+          { label: 'Telefone', render: (x) => html`${x.phone || '—'}${x.whatsapp ? html`<br><small>WhatsApp: ${x.whatsapp}</small>` : ''}` },
+          { label: 'E-mail', render: (x) => x.email || '—' },
+          { label: 'Preferência', render: (x) => html`${optLabel('canal', x.pref_channel)}${x.pref_time ? html`<br><small>${x.pref_time}</small>` : ''}` },
+          { label: '', render: (x) => (can.write() ? html`<button class="btn small" data-act="cc-edit" data-id="${x.id}">Editar</button> <button class="btn small ghost" data-act="cc-hist" data-id="${x.id}">Histórico</button>` : html`<button class="btn small ghost" data-act="cc-hist" data-id="${x.id}">Histórico</button>`) },
+        ],
+        rows,
+        { emptyMsg: 'Nenhum contato vinculado.' },
+      )}</section><div id="cc-hist"></div>`);
+    const form = (x = {}) =>
+      modal({
+        title: x.id ? `Editar contato — ${x.name}` : 'Novo contato da empresa',
+        body: html`<div class="grid">
+          ${field({ name: 'name', label: 'Nome', value: x.name, required: true })}
+          ${field({ name: 'role', label: 'Cargo', value: x.role })}
+          ${field({ name: 'phone', label: 'Telefone', type: 'tel', value: x.phone })}
+          ${field({ name: 'whatsapp', label: 'WhatsApp', type: 'tel', value: x.whatsapp })}
+          ${field({ name: 'email', label: 'E-mail', type: 'email', value: x.email })}
+          ${field({ name: 'pref_channel', label: 'Canal preferido', type: 'select', options: opts('canal'), value: x.pref_channel })}
+          ${field({ name: 'pref_time', label: 'Melhor horário', value: x.pref_time })}
+          ${field({ name: 'is_primary', label: 'Contato principal', type: 'checkbox', value: !!x.is_primary })}
+          ${x.id ? field({ name: 'active', label: 'Ativo', type: 'checkbox', value: x.active !== 0 }) : ''}
+          ${field({ name: 'notes', label: 'Observações', type: 'textarea', value: x.notes, full: true })}
+        </div>`,
+        async onSubmit(d) {
+          if (x.id) await patch(`/api/contatos-empresa/${x.id}`, d);
+          else await post(`/api/cadastros/${c.id}/contatos`, d);
+          toast('Contato salvo.');
+          return true;
+        },
+      });
+    on(box, 'click', '[data-act=cc-new]', async () => (await form()) && reload());
+    on(box, 'click', '[data-act=cc-edit]', async (e, b) => (await form(rows.find((x) => x.id === Number(b.dataset.id)))) && reload());
+    on(box, 'click', '[data-act=cc-hist]', async (e, b) => {
+      const x = rows.find((y) => y.id === Number(b.dataset.id));
+      const h = await get(`/api/cadastros/${c.id}/historico`, { company_contact_id: x.id });
+      render($('#cc-hist', box), html`<section class="card"><h3>Histórico de ${x.name}</h3>${timeline(h.rows)}</section>`);
+    });
+  },
+
+  async oportunidades(box, c, reload) {
+    render(box, html`<section class="card">
+      <div class="section-head"><h3>Oportunidades</h3>${can.write() ? html`<button class="btn" data-act="opp">+ Nova oportunidade</button>` : ''}</div>
+      ${table(
+        [
+          { label: 'Código', render: (o) => html`<a href="#/oportunidades/${o.id}">${o.code}</a>` },
+          { label: 'Etapa', render: (o) => html`${o.stage_name}<br><small>${K('opp_status', o.status)}</small>` },
+          { label: 'Produto', render: (o) => html`${o.product_name || '—'}<br><small>${optLabel('categoria_credito', o.credit_category)}</small>` },
+          { label: 'Crédito', render: (o) => fmtMoney(o.credit_value), cls: 'num' },
+          { label: 'Estratégia', render: (o) => html`${optLabel('estrategia', o.strategy)}${o.strategy ? (o.strategy_validated_at ? html` ${badge('validada', 'ok')}` : html` ${badge('não validada', 'warn')}`) : ''}` },
+          { label: 'Responsável', render: (o) => o.owner_name || '—' },
+          { label: 'Próxima ação', render: (o) => (o.next_action ? html`${o.next_action}<br><small>${fmtDateTime(o.next_action_at)}</small>` : '—') },
+          { label: 'Criada', render: (o) => fmtDate(o.created_at) },
+        ],
+        c.opportunities,
+        { emptyMsg: 'Nenhuma oportunidade.' },
+      )}</section>`);
+  },
+
+  async historico(box, c) {
+    const types = Object.entries(state.meta.constants.activity_types).map(([value, v]) => ({ value, label: v.label }));
+    render(box, html`<section class="card">
+      ${noteBox(c)}
+      <form class="filters" data-hf>
+        <label>Tipo<select name="type"><option value="">Todos</option>${types.map((t) => html`<option value="${t.value}">${t.label}</option>`)}</select></label>
+        ${c.company_contacts.length ? html`<label>Contato<select name="company_contact_id"><option value="">Todos</option>${c.company_contacts.map((x) => html`<option value="${x.id}">${x.name}</option>`)}</select></label>` : ''}
+        <label>Origem do registro<select name="source"><option value="">Todas</option><option value="manual">Manual</option><option value="discadora">Discadora</option><option value="simulador">Simulador</option><option value="whatsapp">WhatsApp</option><option value="api_leads">API de leads</option><option value="importacao">Importação</option><option value="sistema">Sistema</option></select></label>
+      </form>
+      <div id="tl"></div></section>`);
+    const f = $('[data-hf]', box);
+    const load = async () => {
+      const h = await get(`/api/cadastros/${c.id}/historico`, Object.fromEntries(new FormData(f).entries()));
+      render($('#tl', box), timeline(h.rows));
+    };
+    f.addEventListener('change', load);
+    bindNote(box, c, load);
+    await load();
+  },
+
+  async tarefas(box, c, reload) {
+    render(box, html`<section class="card">
+      <div class="section-head"><h3>Tarefas e retornos</h3>${can.write() ? html`<span><button class="btn" data-act="task">+ Nova tarefa</button> <button class="btn" data-act="task" data-type="reuniao">+ Agendar reunião</button></span>` : ''}</div>
+      ${tasksTable(c.tasks)}</section>`);
+    bindTasks(box, c.tasks, reload);
+  },
+
+  async simulacoes(box, c, reload) {
+    const openOpp = c.opportunities.find((o) => o.status === 'aberta');
+    render(box, html`<section class="card">
+      <div class="section-head"><h3>Simulações</h3>
+        <span>${can.write() ? html`${simulatorButton(c, openOpp)} <button class="btn" data-act="sim-manual">Registrar simulação manual</button>` : ''}</span></div>
+      ${!state.meta.simulator.available ? html`<p class="hint">${state.meta.simulator.message}</p>` : ''}
+      ${table(
+        [
+          { label: 'Código', render: (s) => html`<a href="#" data-sim="${s.id}">${s.code}</a> <small>v${s.version}</small>` },
+          { label: 'Origem', render: (s) => (s.source === 'simulador' ? badge('Simulador', 'ok') : badge('Manual')) },
+          { label: 'Oportunidade', render: (s) => s.opportunity_code || '—' },
+          { label: 'Crédito', render: (s) => fmtMoney(s.credit_value), cls: 'num' },
+          { label: 'Prazo', render: (s) => (s.term_months ? `${s.term_months} m` : '—') },
+          { label: 'Parcela', render: (s) => fmtMoney(s.installment), cls: 'num' },
+          { label: 'Modalidade / estratégia', render: (s) => html`${optLabel('modalidade_pagamento', s.payment_modality)}<br><small>${optLabel('estrategia', s.strategy)}</small>` },
+          { label: 'Status', render: (s) => K('simulation_status', s.status) },
+          { label: 'Responsável', render: (s) => s.user_name || '—' },
+          { label: 'Data', render: (s) => fmtDateTime(s.created_at) },
+          { label: '', render: (s) => html`${s.view_url ? html`<a href="${s.view_url}" target="_blank" rel="noopener noreferrer">consultar</a> ` : ''}${can.write() && s.opportunity_id ? html`<button class="btn small" data-act="prop-from-sim" data-sim="${s.id}" data-opp="${s.opportunity_id}">Gerar proposta</button>` : ''}` },
+        ],
+        c.simulations,
+        { emptyMsg: 'Nenhuma simulação registrada.' },
+      )}</section>
+      <section class="card">
+        <div class="section-head"><h3>Propostas</h3>${can.write() && c.opportunities.length ? html`<button class="btn" data-act="prop-new">+ Nova proposta</button>` : ''}</div>
+        ${table(
+          [
+            { label: 'Código', render: (p) => html`<a href="#" data-prop="${p.id}">${p.code}</a> <small>v${p.version}</small>` },
+            { label: 'Oportunidade', render: (p) => p.opportunity_code },
+            { label: 'Produto', render: (p) => p.product_name || '—' },
+            { label: 'Crédito', render: (p) => fmtMoney(p.credit_value), cls: 'num' },
+            { label: 'Prazo', render: (p) => (p.term_months ? `${p.term_months} m` : '—') },
+            { label: 'Parcela inicial', render: (p) => fmtMoney(p.initial_installment), cls: 'num' },
+            { label: 'Status', render: (p) => badge(K('proposal_status', p.status), `st-${p.status}`) },
+            { label: 'Validade', render: (p) => fmtDate(p.valid_until) },
+            { label: 'Criada', render: (p) => fmtDateTime(p.created_at) },
+          ],
+          c.proposals,
+          { emptyMsg: 'Nenhuma proposta.' },
+        )}</section>`);
+    on(box, 'click', '[data-act=sim-manual]', async () => (await simulationForm(c, { opportunity_id: openOpp?.id })) && reload());
+    on(box, 'click', '[data-sim]:not([data-act])', async (e, a) => {
+      e.preventDefault();
+      const s = await get(`/api/simulacoes/${a.dataset.sim}`);
+      if (await simulationForm(c, { simulation: s })) reload();
+    });
+    on(box, 'click', '[data-act=prop-from-sim]', async (e, b) => {
+      const opp = c.opportunities.find((o) => o.id === Number(b.dataset.opp));
+      if (await proposalForm(opp, c.simulations.filter((s) => s.opportunity_id === opp.id), { simulation_id: Number(b.dataset.sim) })) reload();
+    });
+    on(box, 'click', '[data-act=prop-new]', async () => {
+      const items = c.opportunities.map((o) => ({ value: o.id, label: `${o.code} — ${o.stage_name}` }));
+      const pick = await modal({ title: 'Nova proposta', body: field({ name: 'opp', label: 'Oportunidade', type: 'select', options: items, value: openOpp?.id, allowEmpty: false, full: true }), submitLabel: 'Continuar', onSubmit: (d) => d.opp });
+      if (!pick) return;
+      const opp = c.opportunities.find((o) => o.id === Number(pick));
+      if (await proposalForm(opp, c.simulations.filter((s) => s.opportunity_id === opp.id))) reload();
+    });
+    on(box, 'click', '[data-prop]', (e, a) => {
+      e.preventDefault();
+      proposalDetail(a.dataset.prop, reload);
+    });
+  },
+
+  async produtos(box, c, reload) {
+    render(box, html`<section class="card">
+      <div class="section-head"><h3>Produtos contratados</h3>${can.write() ? html`<button class="btn" data-act="contract-new">+ Registrar produto contratado</button>` : ''}</div>
+      ${contractsTable(c.contracts)}</section>`);
+    on(box, 'click', '[data-act=contract-new]', async () => (await contractForm(c)) && reload());
+    on(box, 'click', '[data-contract]', async (e, a) => {
+      e.preventDefault();
+      if (!can.write()) return;
+      if (await contractForm(c, c.contracts.find((k) => k.id === Number(a.dataset.contract)))) reload();
+    });
+  },
+
+  async origens(box, c, reload) {
+    render(box, html`<section class="card">
+      <div class="section-head"><h3>Origens e campanhas</h3>${can.write() ? html`<button class="btn" data-act="origin-new">+ Registrar nova origem</button>` : ''}</div>
+      <p class="hint">Cada entrada do contato (formulário, campanha, importação) é registrada aqui, sem duplicar o cadastro. Campos não fornecidos pela plataforma ficam vazios.</p>
+      ${table(
+        [
+          { label: 'Recebido em', render: (o) => fmtDateTime(o.received_at || o.created_at) },
+          { label: 'Origem', render: (o) => optLabel('origem', o.origin) },
+          { label: 'Plataforma', render: (o) => o.platform || '—' },
+          { label: 'Campanha', render: (o) => html`${o.campaign_name || '—'}${o.campaign_id ? html`<br><small>ID ${o.campaign_id}</small>` : ''}` },
+          { label: 'Conjunto / anúncio', render: (o) => html`${o.adset_id || '—'} / ${o.ad_id || '—'}` },
+          { label: 'ID do lead na plataforma', render: (o) => o.platform_lead_id || '—' },
+          { label: 'UTM', render: (o) => [o.utm_source, o.utm_medium, o.utm_campaign, o.utm_content, o.utm_term].filter(Boolean).join(' · ') || '—' },
+          { label: 'Registro', render: (o) => o.source_ref || 'manual' },
+        ],
+        c.origins,
+        { emptyMsg: 'Nenhuma origem registrada.' },
+      )}</section>`);
+    on(box, 'click', '[data-act=origin-new]', async () => {
+      const ok = await modal({
+        title: 'Registrar origem',
+        wide: true,
+        body: html`<div class="grid">
+          ${field({ name: 'origin', label: 'Origem', type: 'select', options: opts('origem') })}
+          ${field({ name: 'campaign_name', label: 'Nome da campanha' })}
+          ${field({ name: 'platform', label: 'Plataforma' })}
+          ${field({ name: 'platform_lead_id', label: 'ID do lead na plataforma' })}
+          ${field({ name: 'campaign_id', label: 'ID da campanha' })}
+          ${field({ name: 'adset_id', label: 'ID do conjunto de anúncios' })}
+          ${field({ name: 'ad_id', label: 'ID do anúncio' })}
+          ${field({ name: 'received_at', label: 'Data de recebimento', type: 'datetime' })}
+          ${field({ name: 'utm_source', label: 'utm_source' })}${field({ name: 'utm_medium', label: 'utm_medium' })}
+          ${field({ name: 'utm_campaign', label: 'utm_campaign' })}${field({ name: 'utm_content', label: 'utm_content' })}
+        </div>`,
+        onSubmit: (d) => post(`/api/cadastros/${c.id}/origens`, d),
+      });
+      if (ok) {
+        toast('Origem registrada.');
+        reload();
+      }
+    });
+  },
+
+  async privacidade(box, c, reload) {
+    const ro = !can.write() || c.anonymized_at;
+    render(box, html`<div class="cols">
+      <form class="card" id="prefs"><h3>Preferências de contato</h3>
+        <fieldset ${ro ? raw('disabled') : ''}><div class="grid">
+          ${field({ name: 'pref_channel', label: 'Canal preferido', type: 'select', options: opts('canal'), value: c.pref_channel })}
+          ${field({ name: 'pref_time', label: 'Melhor horário para contato', value: c.pref_time, placeholder: 'ex.: dias úteis após 18h' })}
+          ${field({ name: 'pref_phone', label: 'Telefone preferencial', value: c.pref_phone })}
+          ${field({ name: 'pref_frequency', label: 'Frequência de contato', type: 'select', options: opts('frequencia_contato'), value: c.pref_frequency })}
+          ${field({ name: 'contact_restriction', label: 'Restrição ou observação de contato', type: 'textarea', value: c.contact_restriction, full: true })}
+          ${field({ name: 'pref_source', label: 'Origem desta preferência', placeholder: 'ex.: informado pelo cliente na ligação', full: true })}
+        </div>
+        <p class="muted small">Última atualização: ${fmtDateTime(c.pref_updated_at)}${c.pref_source ? ` · ${c.pref_source}` : ''}</p>
+        ${ro ? '' : html`<button class="btn primary" type="submit">Salvar preferências</button>`}</fieldset>
+      </form>
+      <section class="card">
+        <div class="section-head"><h3>Consentimentos e oposições</h3>${ro ? '' : html`<button class="btn" data-act="consent">Registrar</button>`}</div>
+        <p>Situação atual: ${c.optouts.length ? optoutBadge(c.optouts) : badge('Sem restrições registradas', 'ok')}</p>
+        ${table(
+          [
+            { label: 'Data', render: (k) => fmtDateTime(k.recorded_at) },
+            { label: 'Tipo', render: (k) => (k.status === 'oposicao' ? badge('Oposição', 'danger') : badge('Consentimento', 'ok')) },
+            { label: 'Canal', render: (k) => K('contact_channels', k.channel) },
+            { label: 'Contato', render: (k) => k.company_contact_name || 'Cadastro' },
+            { label: 'Origem', render: (k) => k.source },
+            { label: 'Registrado por', render: (k) => k.recorded_by_name || '—' },
+          ],
+          c.consents,
+          { emptyMsg: 'Nenhum registro.' },
+        )}
+      </section>
+    </div>
+    <section class="card">
+      <div class="section-head"><h3>Solicitações do titular (LGPD)</h3>${ro ? '' : html`<button class="btn" data-act="request">Registrar solicitação</button>`}</div>
+      ${table(
+        [
+          { label: 'Data', render: (r) => fmtDateTime(r.requested_at) },
+          { label: 'Tipo', render: (r) => K('data_request_types', r.type) },
+          { label: 'Detalhes', render: (r) => r.details || '—' },
+          { label: 'Status', render: (r) => badge(r.status, r.status === 'concluida' ? 'ok' : r.status === 'recusada' ? 'danger' : 'warn') },
+          { label: 'Resolução', render: (r) => html`${r.resolution || '—'}${r.resolved_at ? html`<br><small>${fmtDateTime(r.resolved_at)}</small>` : ''}` },
+          { label: '', render: (r) => (!ro && !['concluida', 'recusada'].includes(r.status) ? html`<button class="btn small" data-act="resolve" data-id="${r.id}">Atualizar</button>` : '') },
+        ],
+        c.data_requests,
+        { emptyMsg: 'Nenhuma solicitação registrada.' },
+      )}
+      <p class="hint">Correções de dados são feitas na aba Cadastro e ficam registradas na auditoria. Oposição a contato deve ser registrada em "Consentimentos e oposições".</p>
+    </section>
+    ${can.manage() && !c.anonymized_at ? html`<section class="card danger-zone"><h3>Ações administrativas</h3>
+      <p><button class="btn" data-act="merge">Mesclar outro cadastro neste</button> <small class="muted">Traz histórico, oportunidades, propostas e origens do outro cadastro para este.</small></p>
+      ${can.admin() ? html`<p><button class="btn danger" data-act="anonymize">Anonimizar dados pessoais</button> <small class="muted">Irreversível. Remove dados pessoais mantendo indicadores agregados.</small></p>` : ''}
+    </section>` : ''}`);
+    $('#prefs', box).addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        await patch(`/api/cadastros/${c.id}`, formData(e.target));
+        toast('Preferências salvas.');
+        reload();
+      } catch (ex) {
+        toastError(ex);
+      }
+    });
+    on(box, 'click', '[data-act=consent]', async () => (await consentForm(c)) && reload());
+    on(box, 'click', '[data-act=request]', async () => {
+      const ok = await modal({
+        title: 'Registrar solicitação do titular',
+        body: html`<div class="grid">${field({ name: 'type', label: 'Tipo', type: 'select', options: toItems(state.meta.constants.data_request_types), required: true })}
+          ${field({ name: 'requested_at', label: 'Data da solicitação', type: 'datetime', value: new Date().toISOString() })}
+          ${field({ name: 'details', label: 'Detalhes', type: 'textarea', full: true })}</div>`,
+        onSubmit: (d) => post(`/api/cadastros/${c.id}/solicitacoes`, d),
+      });
+      if (ok) reload();
+    });
+    on(box, 'click', '[data-act=resolve]', async (e, b) => {
+      const ok = await modal({
+        title: 'Atualizar solicitação',
+        body: html`<div class="grid">${field({ name: 'status', label: 'Status', type: 'select', options: [{ value: 'em_andamento', label: 'Em andamento' }, { value: 'concluida', label: 'Concluída' }, { value: 'recusada', label: 'Recusada' }], allowEmpty: false })}
+          ${field({ name: 'resolution', label: 'Resolução / justificativa', type: 'textarea', full: true, required: true })}</div>`,
+        onSubmit: (d) => patch(`/api/solicitacoes/${b.dataset.id}`, d),
+      });
+      if (ok) reload();
+    });
+    on(box, 'click', '[data-act=merge]', () => mergeDialog(c));
+    on(box, 'click', '[data-act=anonymize]', async () => {
+      const ok = await modal({
+        title: 'Anonimizar cadastro',
+        danger: true,
+        submitLabel: 'Anonimizar definitivamente',
+        body: html`<p>Esta ação remove nome, documentos, telefones, e-mails, observações e conteúdos de atividades de <strong>${c.name}</strong>. Indicadores agregados são mantidos. <strong>Não pode ser desfeita.</strong></p>
+          ${field({ name: 'reason', label: 'Motivo / solicitação que fundamenta', type: 'textarea', required: true, full: true })}`,
+        onSubmit: (d) => post(`/api/cadastros/${c.id}/anonimizar`, d),
+      });
+      if (ok) {
+        toast('Cadastro anonimizado.');
+        reload();
+      }
+    });
+  },
+
+  async auditoria(box, c) {
+    const rows = await get(`/api/cadastros/${c.id}/auditoria`);
+    render(box, html`<section class="card"><h3>Histórico de alterações</h3>${table(
+      [
+        { label: 'Data', render: (r) => fmtDateTime(r.created_at) },
+        { label: 'Usuário', render: (r) => r.user_name || 'Sistema/integração' },
+        { label: 'Registro', render: (r) => `${r.entity}${r.entity_id ? ` #${r.entity_id}` : ''}` },
+        { label: 'Ação', key: 'action' },
+        { label: 'Alterações', render: (r) => (r.changes ? changesView(r.changes) : '—') },
+      ],
+      rows,
+      { emptyMsg: 'Sem registros.' },
+    )}</section>`);
+  },
+};
+
+function changesView(ch) {
+  return html`<ul class="changes">${Object.entries(ch).map(([k, v]) =>
+    Array.isArray(v) && v.length === 2 ? html`<li><code>${k}</code>: ${v[0] ?? '∅'} → <strong>${v[1] ?? '∅'}</strong></li>` : html`<li><code>${k}</code>: ${typeof v === 'object' ? JSON.stringify(v) : v}</li>`,
+  )}</ul>`;
+}
+
+async function mergeDialog(c) {
+  const ok = await modal({
+    title: `Mesclar outro cadastro em ${c.code}`,
+    wide: true,
+    body: html`<p>Busque o cadastro duplicado. Ele será incorporado a <strong>${c.code} — ${c.name}</strong>: atividades, oportunidades, propostas, simulações, origens e consentimentos serão preservados; campos vazios deste cadastro serão completados com os do outro. Oposições a contato dos dois cadastros são somadas.</p>
+      <div class="field full"><label>Buscar cadastro</label><input type="search" name="q" placeholder="nome, telefone, e-mail ou código"></div>
+      <div class="merge-results"></div><input type="hidden" name="source_id">`,
+    submitLabel: 'Mesclar',
+    danger: true,
+    onMount(form) {
+      let t;
+      form.q.addEventListener('input', () => {
+        clearTimeout(t);
+        t = setTimeout(async () => {
+          const rows = (await get('/api/busca', { q: form.q.value })).filter((r) => r.kind === 'contact' && r.id !== c.id);
+          render($('.merge-results', form), rows.length ? html`${rows.map((r) => html`<label class="check"><input type="radio" name="pick" value="${r.id}"> ${r.code} — ${r.title} <small>${r.subtitle}</small></label>`)}` : empty('Nenhum cadastro encontrado.'));
+        }, 250);
+      });
+      on(form, 'change', 'input[name=pick]', (e, r) => (form.source_id.value = r.value));
+    },
+    async onSubmit(d) {
+      if (!d.source_id) throw new Error('Selecione o cadastro a ser mesclado.');
+      return post(`/api/cadastros/${c.id}/mesclar`, { source_id: Number(d.source_id) });
+    },
+  });
+  if (ok) {
+    toast('Cadastros mesclados.');
+    location.hash = `#/leads/${c.id}/historico`;
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  }
+}
+
+/* ------------------------- Componentes locais ------------------------- */
+
+function customFieldsFor(entity, values = {}) {
+  const defs = state.meta.custom_fields.filter((f) => f.entity === entity);
+  return defs.map((f) =>
+    field({
+      name: `cf_${f.key}`,
+      label: f.label,
+      type: f.type === 'boolean' ? 'checkbox' : f.type,
+      options: (f.options || []).map((o) => ({ value: o, label: o })),
+      value: values?.[f.key],
+    }),
+  );
+}
+
+export function noteBox(c) {
+  if (!can.write() || c.anonymized_at) return '';
+  return html`<form class="note-box" data-note>
+    <textarea name="notes" rows="2" placeholder="Adicionar observação ao histórico (não apaga registros anteriores)…" required></textarea>
+    <div class="note-actions">
+      <button class="btn small" type="button" data-act="activity" data-type="ligacao_realizada">Ligação</button>
+      <button class="btn small" type="button" data-act="activity" data-type="mensagem_enviada">Mensagem</button>
+      <button class="btn small" type="button" data-act="activity" data-type="reuniao_realizada">Reunião</button>
+      <button class="btn small primary" type="submit">Adicionar observação</button>
+    </div></form>`;
+}
+function bindNote(box, c, after) {
+  const f = $('[data-note]', box);
+  if (!f) return;
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!f.notes.value.trim()) return;
+    try {
+      await post('/api/atividades', { contact_id: c.id, type: 'observacao', notes: f.notes.value });
+      toast('Observação adicionada.');
+      f.notes.value = '';
+      if (after) after();
+      else window.dispatchEvent(new HashChangeEvent('hashchange'));
+    } catch (ex) {
+      toastError(ex);
+    }
+  });
+}
+
+const SOURCE_LABEL = { manual: 'manual', discadora: 'discadora', simulador: 'simulador', whatsapp: 'WhatsApp', api_leads: 'API de leads', importacao: 'importação', sistema: 'sistema' };
+
+export function timeline(rows) {
+  if (!rows.length) return empty('Nenhuma atividade registrada.');
+  return html`<ol class="timeline">${rows.map((a) => {
+    const t = state.meta.constants.activity_types[a.type] || { label: a.type };
+    return html`<li class="tl-${a.type} src-${a.source}">
+      <div class="tl-head"><strong>${t.label}</strong>
+        ${a.result ? badge(optLabel('resultado_ligacao', a.result)) : ''}
+        ${a.duration_seconds ? html`<span class="muted small">${fmtDuration(a.duration_seconds)}</span>` : ''}
+        ${a.channel && !t.channel ? html`<span class="muted small">${optLabel('canal', a.channel)}</span>` : ''}
+        <span class="muted small">· ${fmtDateTime(a.occurred_at)} · ${a.user_name || (a.source === 'sistema' ? 'Sistema' : 'Não identificado')} · via ${SOURCE_LABEL[a.source] || a.source}</span>
+        ${a.opportunity_code ? html`<a class="small" href="#/oportunidades/${a.opportunity_id}">${a.opportunity_code}</a>` : ''}
+        ${a.company_contact_name ? html`<span class="small">· ${a.company_contact_name}</span>` : ''}
+        ${a.contact_name && a.showContact ? html`<a class="small" href="#/leads/${a.contact_id}">${a.contact_name}</a>` : ''}
+      </div>
+      ${a.notes ? html`<div class="tl-notes">${a.notes}</div>` : ''}
+      ${a.next_action || a.return_at ? html`<div class="small">Próxima ação: <strong>${a.next_action || '—'}</strong>${a.return_at ? ` · retorno em ${fmtDateTime(a.return_at)}` : ''}</div>` : ''}
+    </li>`;
+  })}</ol>`;
+}
+
+export function tasksTable(tasks, { showContact = false } = {}) {
+  return table(
+    [
+      { label: 'Prazo', render: (t) => html`<span class="${t.status === 'pendente' && new Date(t.due_at) < new Date() ? 'overdue' : ''}">${fmtDateTime(t.due_at)}<br><small>${relTime(t.due_at)}</small></span>` },
+      { label: 'Tarefa', render: (t) => html`<strong>${t.title}</strong><br><small>${K('task_types', t.type)}${t.opportunity_code ? ` · ${t.opportunity_code}` : ''}</small>${t.notes ? html`<br><small class="muted">${t.notes}</small>` : ''}` },
+      ...(showContact ? [{ label: 'Cadastro', render: (t) => (t.contact_id ? html`<a href="#/leads/${t.contact_id}">${t.contact_name}</a> ${optoutBadge(t.contact_optouts)}` : '—') }] : []),
+      { label: 'Responsável', render: (t) => t.assigned_name || '—' },
+      { label: 'Status', render: (t) => html`${badge(t.status === 'pendente' ? 'Pendente' : t.status === 'concluida' ? 'Concluída' : 'Cancelada', t.status === 'pendente' ? 'warn' : t.status === 'concluida' ? 'ok' : 'muted')}${t.outcome ? html`<br><small>${K('meeting_outcomes', t.outcome)}</small>` : ''}` },
+      {
+        label: '',
+        render: (t) =>
+          t.status === 'pendente' && can.write()
+            ? html`<button class="btn small primary" data-task-act="done" data-id="${t.id}">Concluir</button> <button class="btn small" data-task-act="edit" data-id="${t.id}">Editar</button> <button class="btn small ghost" data-task-act="cancel" data-id="${t.id}">Cancelar</button>`
+            : '',
+      },
+    ],
+    tasks,
+    { emptyMsg: 'Nenhuma tarefa.' },
+  );
+}
+
+export function bindTasks(box, tasks, reload) {
+  on(box, 'click', '[data-task-act]', async (e, b) => {
+    const t = (typeof tasks === 'function' ? tasks() : tasks).find((x) => x.id === Number(b.dataset.id));
+    try {
+      let ok = false;
+      if (b.dataset.taskAct === 'done') ok = await completeTask(t);
+      if (b.dataset.taskAct === 'edit') ok = await taskForm({ task: t });
+      if (b.dataset.taskAct === 'cancel') ok = await cancelTask(t);
+      if (ok) reload();
+    } catch (ex) {
+      toastError(ex);
+    }
+  });
+}
+
+export function contractsTable(rows, { showContact = false } = {}) {
+  return table(
+    [
+      { label: 'Código', render: (k) => html`<a href="#" data-contract="${k.id}">${k.code}</a>` },
+      ...(showContact ? [{ label: 'Cliente', render: (k) => html`<a href="#/leads/${k.contact_id}">${k.contact_name}</a>` }] : []),
+      { label: 'Produto / categoria', render: (k) => html`${k.product_name || '—'}<br><small>${optLabel('categoria_credito', k.category)}</small>` },
+      { label: 'Administradora / grupo / cota', render: (k) => [k.administrator, k.group_code, k.quota_code].map((x) => x || '—').join(' / ') },
+      { label: 'Crédito', render: (k) => fmtMoney(k.credit_value), cls: 'num' },
+      { label: 'Prazo', render: (k) => (k.term_months ? `${k.term_months} m` : '—') },
+      { label: 'Cotas', render: (k) => k.quotas ?? '—' },
+      { label: 'Contratação', render: (k) => fmtDate(k.contracted_at) },
+      { label: 'Status', render: (k) => badge(optLabel('status_contrato', k.status)) },
+      { label: 'Modalidade / estratégia', render: (k) => html`${optLabel('modalidade_pagamento', k.payment_modality)}<br><small>${optLabel('estrategia', k.strategy)}</small>` },
+    ],
+    rows,
+    { emptyMsg: 'Nenhum produto contratado.' },
+  );
+}
