@@ -1,0 +1,17 @@
+{
+  "name": "crm-consorcios-primarios",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CRM para venda de consórcios primários: prospects, leads, funil, atividades, simulações, propostas, clientes e integrações preparadas.",
+  "main": "server/index.js",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server/index.js",
+    "dev": "node --disable-warning=ExperimentalWarning --watch server/index.js",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js",
+    "demo": "node --disable-warning=ExperimentalWarning scripts/demo-data.js"
+  },
+  "license": "UNLICENSED"
+}
