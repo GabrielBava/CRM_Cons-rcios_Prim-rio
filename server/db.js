@@ -567,11 +567,154 @@ const DEFAULT_OPTIONS = {
     ['outra', 'Outra'],
   ],
   urgencia: [
-    ['imediata', 'Imediata (até 3 meses)'],
-    ['curto', 'Curto prazo (3 a 12 meses)'],
+    ['curto', 'Curto prazo (até 12 meses)'],
     ['medio', 'Médio prazo (1 a 3 anos)'],
-    ['longo', 'Longo prazo (mais de 3 anos)'],
-    ['indefinido', 'Sem prazo definido'],
+    ['longo', 'Longo prazo (acima de 3 anos)'],
+  ],
+  sexo: [
+    ['feminino', 'Feminino'],
+    ['masculino', 'Masculino'],
+    ['nao_informado', 'Prefiro não informar'],
+  ],
+  estado_civil: [
+    ['solteiro', 'Solteiro(a)'],
+    ['casado', 'Casado(a)', { conjuge: true }],
+    ['uniao_estavel', 'União estável', { conjuge: true }],
+    ['divorciado', 'Divorciado(a)'],
+    ['separado', 'Separado(a)'],
+    ['viuvo', 'Viúvo(a)'],
+  ],
+  regime_bens: [
+    ['comunhao_parcial', 'Comunhão parcial de bens'],
+    ['comunhao_universal', 'Comunhão universal de bens'],
+    ['separacao_total', 'Separação total de bens'],
+    ['participacao_final', 'Participação final nos aquestos'],
+  ],
+  faixa_renda: [
+    ['ate_3k', 'Até R$ 3.000'],
+    ['3k_6k', 'R$ 3.001 a R$ 6.000'],
+    ['6k_10k', 'R$ 6.001 a R$ 10.000'],
+    ['10k_20k', 'R$ 10.001 a R$ 20.000'],
+    ['20k_40k', 'R$ 20.001 a R$ 40.000'],
+    ['acima_40k', 'Acima de R$ 40.000'],
+  ],
+  faixa_patrimonio: [
+    ['ate_100k', 'Até R$ 100 mil'],
+    ['100k_500k', 'R$ 100 mil a R$ 500 mil'],
+    ['500k_1m', 'R$ 500 mil a R$ 1 milhão'],
+    ['1m_5m', 'R$ 1 milhão a R$ 5 milhões'],
+    ['acima_5m', 'Acima de R$ 5 milhões'],
+  ],
+  faixa_faturamento: [
+    ['ate_360k', 'Até R$ 360 mil/ano'],
+    ['360k_4_8m', 'R$ 360 mil a R$ 4,8 milhões/ano'],
+    ['4_8m_30m', 'R$ 4,8 milhões a R$ 30 milhões/ano'],
+    ['acima_30m', 'Acima de R$ 30 milhões/ano'],
+  ],
+  temperatura: [
+    ['frio', 'Frio'],
+    ['morno', 'Morno'],
+    ['quente', 'Quente'],
+  ],
+  objetivo: [
+    ['aquisicao', 'Aquisição'],
+    ['investimento', 'Investimento'],
+  ],
+  tipo_produto: [
+    ['primario', 'Primário (cota nova)'],
+    ['contemplada', 'Carta contemplada'],
+  ],
+  momento_financeiro: [
+    ['organizado_reserva', 'Organizado, com reserva'],
+    ['organizado_sem_reserva', 'Organizado, sem reserva'],
+    ['apertado', 'Orçamento apertado'],
+    ['endividado', 'Endividado'],
+  ],
+  tipo_contratacao: [
+    ['clt', 'CLT'],
+    ['pj', 'PJ'],
+    ['autonomo', 'Autônomo / profissional liberal'],
+    ['servidor', 'Servidor público'],
+    ['empresario', 'Empresário'],
+    ['aposentado', 'Aposentado / pensionista'],
+    ['outro', 'Outro'],
+  ],
+  possui_fgts: [
+    ['sim', 'Sim'],
+    ['nao', 'Não'],
+    ['nao_sabe', 'Não sabe'],
+  ],
+  decisor: [
+    ['sozinho', 'Decide sozinho'],
+    ['conjuge', 'Com cônjuge'],
+    ['socio', 'Com sócio'],
+    ['familia', 'Com a família'],
+    ['outro', 'Outro'],
+  ],
+  possui_produto: [
+    ['nenhum', 'Não possui'],
+    ['consorcio', 'Consórcio'],
+    ['financiamento', 'Financiamento'],
+    ['ambos', 'Consórcio e financiamento'],
+  ],
+  tipo_endereco: [
+    ['residencial', 'Residencial'],
+    ['comercial', 'Comercial'],
+    ['correspondencia', 'Correspondência'],
+  ],
+  tipo_documento: [
+    ['identificacao', 'Documento de identificação', { pf: true }],
+    ['comprovante_endereco', 'Comprovante de endereço', { pf: true, pj: true }],
+    ['comprovante_renda', 'Comprovante de renda', { pf: true }],
+    ['comprovante_estado_civil', 'Comprovante de estado civil', { pf: true }],
+    ['contrato_social', 'Contrato social e última alteração', { pj: true }],
+    ['cartao_cnpj', 'Cartão CNPJ', { pj: true }],
+    ['faturamento', 'Faturamento dos últimos 12 meses', { pj: true }],
+    ['doc_representante', 'Documento do representante legal', { pj: true }],
+    ['proposta', 'Proposta'],
+    ['comprovante_pagamento', 'Comprovante de pagamento'],
+    ['outro', 'Outro'],
+  ],
+  relacao_socio: [
+    ['socio', 'Sócio'],
+    ['representante', 'Representante legal'],
+    ['administrador', 'Administrador'],
+  ],
+  canal_aceite: [
+    ['whatsapp', 'WhatsApp'],
+    ['email', 'E-mail'],
+    ['telefone', 'Telefone'],
+    ['presencial', 'Presencial'],
+    ['assinatura_digital', 'Assinatura digital'],
+  ],
+  motivo_recusa_proposta: [
+    ['parcela_alta', 'Parcela acima do esperado'],
+    ['prazo', 'Prazo não atende'],
+    ['credito', 'Crédito não atende'],
+    ['concorrente', 'Escolheu outra empresa'],
+    ['desistiu', 'Desistiu da compra'],
+    ['outro', 'Outro motivo'],
+  ],
+  tipo_lancamento: [
+    ['parcela', 'Parcela'],
+    ['adesao', 'Taxa de adesão / 1ª parcela'],
+    ['lance', 'Lance'],
+    ['transferencia', 'Taxa de transferência'],
+    ['outro', 'Outro'],
+  ],
+  forma_pagamento: [
+    ['boleto', 'Boleto'],
+    ['pix', 'PIX'],
+    ['cartao', 'Cartão'],
+    ['debito', 'Débito em conta'],
+    ['outro', 'Outro'],
+  ],
+  etapa_pos_venda: [
+    ['boas_vindas', 'Boas-vindas enviadas'],
+    ['primeira_parcela', '1ª parcela confirmada'],
+    ['assembleias', 'Acompanhamento das assembleias combinado'],
+    ['contemplacao', 'Contemplação acompanhada'],
+    ['indicacao', 'Pedido de indicação feito'],
   ],
   motivo_perda: [
     ['sem_interesse', 'Sem interesse'],
@@ -663,22 +806,29 @@ const DEFAULT_INTEGRATIONS = [
   ['meta_ads', 'Meta Ads (Lead Ads)'],
   ['whatsapp', 'WhatsApp'],
   ['api_leads', 'API de entrada de leads (site, formulários, conectores)'],
+  ['agenda_externa', 'Google Agenda / Outlook'],
 ];
 
 const DEFAULT_SETTINGS = {
   stalled_days: 7,
   simulation_link_hours: 24,
   field_config: {},
+  require_sale_checklist: true,
+  client_link_days: 7,
+  finance_user_id: null,
+  doc_checklist: {
+    PF: ['identificacao', 'comprovante_endereco', 'comprovante_renda', 'comprovante_estado_civil'],
+    PJ: ['contrato_social', 'cartao_cnpj', 'comprovante_endereco', 'faturamento', 'doc_representante'],
+  },
 };
 
 function seedDefaults(db) {
   const now = nowIso();
-  const hasOptions = db.prepare('SELECT COUNT(*) AS n FROM options').get().n > 0;
-  if (!hasOptions) {
-    const ins = db.prepare('INSERT INTO options (list, value, label, position, flags) VALUES (?, ?, ?, ?, ?)');
-    for (const [list, items] of Object.entries(DEFAULT_OPTIONS)) {
-      items.forEach(([value, label, flags], i) => ins.run(list, value, label, i, JSON.stringify(flags || {})));
-    }
+  // Cada lista é semeada quando ainda não tem itens (inclui listas novas em bancos já existentes)
+  const ins = db.prepare('INSERT INTO options (list, value, label, position, flags) VALUES (?, ?, ?, ?, ?)');
+  for (const [list, items] of Object.entries(DEFAULT_OPTIONS)) {
+    if (db.prepare('SELECT COUNT(*) AS n FROM options WHERE list = ?').get(list).n > 0) continue;
+    items.forEach(([value, label, flags], i) => ins.run(list, value, label, i, JSON.stringify(flags || {})));
   }
   if (db.prepare('SELECT COUNT(*) AS n FROM pipeline_stages').get().n === 0) {
     const ins = db.prepare('INSERT INTO pipeline_stages (name, position, kind, created_at) VALUES (?, ?, ?, ?)');
@@ -698,10 +848,164 @@ function seedDefaults(db) {
   }
 }
 
+/* Colunas adicionadas depois da primeira versão (aplicadas também em bancos existentes). */
+const ADDED_COLUMNS = {
+  contacts: [
+    ['rg', 'TEXT'], ['birthplace', 'TEXT'], ['nationality', 'TEXT'], ['sex', 'TEXT'], ['marital_status', 'TEXT'],
+    ['property_regime', 'TEXT'], ['mother_name', 'TEXT'], ['income_range', 'TEXT'], ['net_worth_range', 'TEXT'],
+    ['spouse_name', 'TEXT'], ['spouse_doc', 'TEXT'], ['spouse_profession', 'TEXT'], ['spouse_income_range', 'TEXT'],
+    ['opening_date', 'TEXT'], ['main_activity', 'TEXT'], ['revenue_range', 'TEXT'],
+    ['temperature', 'TEXT'], ['referred_by_id', 'INTEGER REFERENCES contacts(id)'],
+    ['nps_score', 'INTEGER'], ['nps_comment', 'TEXT'], ['nps_at', 'TEXT'],
+  ],
+  opportunities: [
+    ['objective_type', 'TEXT'], ['product_type', 'TEXT'], ['credit_purpose', 'TEXT'], ['financial_moment', 'TEXT'],
+    ['employment_type', 'TEXT'], ['has_fgts', 'TEXT'], ['decision_maker', 'TEXT'], ['existing_products', 'TEXT'],
+    ['existing_consortium_value', 'REAL'], ['existing_consortium_admin', 'TEXT'], ['existing_financing_balance', 'REAL'],
+    ['existing_financing_cet', 'REAL'], ['existing_financing_bank', 'TEXT'],
+  ],
+  proposals: [
+    ['accepted_at', 'TEXT'], ['accepted_channel', 'TEXT'], ['accepted_by', 'INTEGER REFERENCES users(id)'], ['refusal_reason', 'TEXT'],
+  ],
+  contracts: [
+    ['contract_number', 'TEXT'], ['installment_value', 'REAL'], ['due_day', 'INTEGER'], ['first_due_date', 'TEXT'],
+    ['contemplated_at', 'TEXT'], ['contemplation_type', 'TEXT'], ['bid_value', 'REAL'], ['acquired_asset', 'TEXT'],
+    ['seller_id', 'INTEGER REFERENCES users(id)'], ['sale_value', 'REAL'],
+  ],
+};
+
+const EXTRA_SCHEMA = `
+CREATE TABLE IF NOT EXISTS addresses (
+  id INTEGER PRIMARY KEY,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id),
+  type TEXT NOT NULL DEFAULT 'residencial',
+  is_primary INTEGER NOT NULL DEFAULT 0,
+  cep TEXT, street TEXT, number TEXT, complement TEXT, district TEXT, city TEXT, state TEXT, ibge TEXT,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_addr_contact ON addresses(contact_id);
+
+CREATE TABLE IF NOT EXISTS partners (
+  id INTEGER PRIMARY KEY,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id),
+  name TEXT NOT NULL,
+  doc TEXT,
+  relation TEXT NOT NULL DEFAULT 'socio',
+  share_pct REAL,
+  email TEXT,
+  phone TEXT,
+  is_legal_rep INTEGER NOT NULL DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_partners_contact ON partners(contact_id);
+
+-- Arquivos anexados (documentos, propostas, comprovantes). O conteúdo fica no próprio banco.
+CREATE TABLE IF NOT EXISTS attachments (
+  id INTEGER PRIMARY KEY,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id),
+  proposal_id INTEGER REFERENCES proposals(id),
+  contract_id INTEGER REFERENCES contracts(id),
+  finance_entry_id INTEGER,
+  doc_type TEXT NOT NULL DEFAULT 'outro',
+  filename TEXT NOT NULL,
+  mime TEXT,
+  size INTEGER NOT NULL,
+  content BLOB NOT NULL,
+  status TEXT NOT NULL DEFAULT 'recebido' CHECK (status IN ('pendente','recebido','aprovado','recusado','removido')),
+  valid_until TEXT,
+  notes TEXT,
+  source TEXT NOT NULL DEFAULT 'equipe',
+  uploaded_by INTEGER REFERENCES users(id),
+  reviewed_by INTEGER REFERENCES users(id),
+  reviewed_at TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_attach_contact ON attachments(contact_id);
+
+-- Links para o cliente atualizar os próprios dados (blocos externos)
+CREATE TABLE IF NOT EXISTS client_links (
+  id INTEGER PRIMARY KEY,
+  token_hash TEXT NOT NULL UNIQUE,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id),
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  last_used_at TEXT,
+  submissions INTEGER NOT NULL DEFAULT 0,
+  revoked_at TEXT
+);
+
+-- Financeiro do cliente: parcelas e demais valores a acompanhar
+CREATE TABLE IF NOT EXISTS finance_entries (
+  id INTEGER PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id),
+  contract_id INTEGER REFERENCES contracts(id),
+  type TEXT NOT NULL DEFAULT 'parcela',
+  installment_number INTEGER,
+  description TEXT,
+  due_date TEXT NOT NULL,
+  amount REAL NOT NULL,
+  status TEXT NOT NULL DEFAULT 'a_vencer' CHECK (status IN ('a_vencer','pago','negociado','cancelado')),
+  paid_at TEXT,
+  paid_amount REAL,
+  payment_method TEXT,
+  notes TEXT,
+  alert_task_id INTEGER REFERENCES tasks(id),
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_fin_contact ON finance_entries(contact_id);
+CREATE INDEX IF NOT EXISTS idx_fin_due ON finance_entries(status, due_date);
+
+CREATE TABLE IF NOT EXISTS finance_issues (
+  id INTEGER PRIMARY KEY,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id),
+  contract_id INTEGER REFERENCES contracts(id),
+  description TEXT NOT NULL,
+  amount REAL,
+  agreement TEXT,
+  due_date TEXT,
+  status TEXT NOT NULL DEFAULT 'aberta' CHECK (status IN ('aberta','em_negociacao','resolvida')),
+  opened_at TEXT NOT NULL,
+  resolved_at TEXT,
+  created_by INTEGER REFERENCES users(id),
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS post_sale_items (
+  id INTEGER PRIMARY KEY,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id),
+  contract_id INTEGER REFERENCES contracts(id),
+  item TEXT NOT NULL,
+  done_at TEXT,
+  done_by INTEGER REFERENCES users(id),
+  notes TEXT,
+  UNIQUE (contact_id, contract_id, item)
+);
+`;
+
+function migrate(db) {
+  db.exec(EXTRA_SCHEMA);
+  for (const [table, cols] of Object.entries(ADDED_COLUMNS)) {
+    const existing = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
+    for (const [name, type] of cols) {
+      if (!existing.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+    }
+  }
+}
+
 /** Cria as tabelas e os valores iniciais (idempotente). Aceita qualquer conexão compatível com DatabaseSync. */
 function initDb(db) {
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec(SCHEMA);
+  migrate(db);
   seedDefaults(db);
   return db;
 }

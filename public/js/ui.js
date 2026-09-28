@@ -157,7 +157,7 @@ export function field(f) {
     default:
       input = html`<input type="${f.type || 'text'}" ${common} value="${f.value ?? ''}" ${f.maxlength ? html`maxlength="${f.maxlength}"` : ''}>`;
   }
-  return html`<div class="${cls}"><label for="${id}">${f.label}${f.required ? html` <span class="req">*</span>` : ''}${f.recommended ? html` <span class="rec" title="Campo recomendado">recomendado</span>` : ''}</label>${input}${f.help ? html`<small>${f.help}</small>` : ''}</div>`;
+  return html`<div class="${cls}"><label for="${id}">${f.label}${f.required ? html` <span class="req">*</span>` : ''}${f.recommended ? html` <span class="rec" title="Campo recomendado">recomendado</span>` : ''}${f.sale ? html` <span class="rec sale" title="Obrigatório para concluir a venda">venda</span>` : ''}</label>${input}${f.help ? html`<small>${f.help}</small>` : ''}</div>`;
 }
 
 /** Lê um formulário para objeto. Campos datetime-local são convertidos para ISO. */

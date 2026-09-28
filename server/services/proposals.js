@@ -1,6 +1,6 @@
 'use strict';
 const { PROPOSAL_STATUS } = require('../constants');
-const { loadContact, childScope, audit, diff, paging } = require('../core');
+const { loadContact, childScope, audit, diff, paging, optionLabel } = require('../core');
 const { badRequest, notFound, clean, toNumber, toDateOnly, nowIso } = require('../util');
 const { tx, nextCode } = require('../db');
 const { insertActivity } = require('./activities');
@@ -131,13 +131,34 @@ function changeStatus(db, user, id, data) {
   if (FINAL.includes(p.status)) throw badRequest(`A proposta está "${PROPOSAL_STATUS[p.status]}" e não pode mudar de status. Crie uma nova versão se necessário.`);
   if (status === 'substituida') throw badRequest('O status "substituída" é definido automaticamente ao criar uma nova versão.');
   const now = nowIso();
+  const extra = {};
+  if (status === 'aprovada') {
+    extra.accepted_channel = clean(data.accepted_channel);
+    if (!extra.accepted_channel) throw badRequest('Informe por qual canal o cliente aceitou a proposta.');
+    assertOption(db, 'canal_aceite', extra.accepted_channel, 'canal do aceite');
+    extra.accepted_at = toDateOnly(data.accepted_at) || now.slice(0, 10);
+    extra.accepted_by = user.id;
+  }
+  if (status === 'recusada') {
+    extra.refusal_reason = clean(data.refusal_reason);
+    if (!extra.refusal_reason) throw badRequest('Informe o motivo da recusa.');
+    assertOption(db, 'motivo_recusa_proposta', extra.refusal_reason, 'motivo da recusa');
+  }
   tx(db, () => {
     db.prepare('UPDATE proposals SET status = ?, presented_at = CASE WHEN ? = \'apresentada\' AND presented_at IS NULL THEN ? ELSE presented_at END, updated_at = ? WHERE id = ?').run(status, status, now, now, p.id);
+    const ek = Object.keys(extra);
+    if (ek.length) db.prepare(`UPDATE proposals SET ${ek.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).run(...ek.map((k) => extra[k]), p.id);
+    if (status === 'aprovada') {
+      // Aceite: segue para a ficha de pré-venda (dados e documentos obrigatórios para concluir a venda)
+      const opp = db.prepare('SELECT owner_id FROM opportunities WHERE id = ?').get(p.opportunity_id);
+      db.prepare("INSERT INTO tasks (contact_id, opportunity_id, type, title, notes, due_at, assigned_to, created_by, created_at, updated_at) VALUES (?, ?, 'pre_venda', ?, ?, ?, ?, ?, ?, ?)")
+        .run(p.contact_id, p.opportunity_id, 'Completar ficha de pré-venda', `Proposta ${p.code} aceita. Completar dados e documentos obrigatórios para concluir a venda.`, new Date(Date.now() + 86400000).toISOString(), opp?.owner_id ?? user.id, user.id, now, now);
+    }
     insertActivity(db, {
       contact_id: p.contact_id,
       opportunity_id: p.opportunity_id,
       type: 'proposta',
-      notes: `Proposta ${p.code} (v${p.version}): ${PROPOSAL_STATUS[p.status]} → ${PROPOSAL_STATUS[status]}${clean(data.notes) ? `. ${clean(data.notes)}` : ''}`,
+      notes: `Proposta ${p.code} (v${p.version}): ${PROPOSAL_STATUS[p.status]} → ${PROPOSAL_STATUS[status]}${extra.accepted_channel ? `. Aceite via ${optionLabel(db, 'canal_aceite', extra.accepted_channel)}; próxima etapa: ficha de pré-venda` : ''}${extra.refusal_reason ? `. Motivo: ${optionLabel(db, 'motivo_recusa_proposta', extra.refusal_reason)}` : ''}${clean(data.notes) ? `. ${clean(data.notes)}` : ''}`,
       user_id: user.id,
       ref_type: 'proposal',
       ref_id: p.id,

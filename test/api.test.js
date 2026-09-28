@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { createApp } = require('../server/app');
 
 let server;
+let appDb;
 let base;
 const sessions = {};
 
@@ -28,7 +29,7 @@ const login = async (who, email, password) => {
 const integ = (token) => ({ Authorization: `Bearer ${token}` });
 
 before(async () => {
-  ({ server } = createApp({ dbFile: ':memory:' }));
+  ({ server, db: appDb } = createApp({ dbFile: ':memory:' }));
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${server.address().port}`;
   const r = await call(null, 'POST', '/api/setup', { name: 'Admin', email: 'admin@t.com', password: 'senha1234' });
@@ -49,6 +50,22 @@ before(async () => {
   await login('leitor', 'l@t.com', 'senha1234');
 });
 after(() => server.close());
+
+
+const PDF = Buffer.from('%PDF-1.4 teste').toString('base64');
+async function completeForSale(id, who = 'c1') {
+  const u = await call(who, 'PATCH', `/api/cadastros/${id}`, {
+    doc: '529.982.247-25', rg: '123456', email: `venda${id}@x.com`, birthplace: 'Santos/SP', nationality: 'Brasileira', sex: 'feminino',
+    marital_status: 'solteiro', birth_date: '1990-01-01', mother_name: 'Mãe Teste', profession: 'Engenheira', income_range: '6k_10k', confirm_duplicate: true,
+  });
+  assert.equal(u.status, 200, JSON.stringify(u.data));
+  const a = await call(who, 'POST', `/api/cadastros/${id}/enderecos`, { cep: '01001-000', street: 'Praça da Sé', number: '1', district: 'Sé', city: 'São Paulo', state: 'SP' });
+  assert.equal(a.status, 200, JSON.stringify(a.data));
+  for (const t of ['identificacao', 'comprovante_endereco', 'comprovante_renda', 'comprovante_estado_civil']) {
+    const r = await call(who, 'POST', `/api/cadastros/${id}/anexos`, { doc_type: t, filename: `${t}.pdf`, content_base64: PDF });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+  }
+}
 
 test('setup só pode ser feito uma vez e rotas exigem sessão', async () => {
   const r = await call(null, 'POST', '/api/setup', { name: 'X', email: 'x@t.com', password: 'senha1234' });
@@ -110,8 +127,13 @@ test('funil: perda exige motivo, venda converte em cliente e mantém histórico'
   const won = meta.stages.find((s) => s.kind === 'ganho');
   const r1 = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: lost.id });
   assert.equal(r1.status, 400);
+  // Venda bloqueada enquanto a ficha de pré-venda estiver incompleta
+  const blocked = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: won.id });
+  assert.equal(blocked.status, 400);
+  assert.ok(blocked.data.details.missing.some((m) => m.key === 'doc:identificacao'));
+  await completeForSale(c.data.id);
   const r2 = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: won.id, contract: { administrator: 'Adm X', credit_value: 100000 } });
-  assert.equal(r2.status, 200);
+  assert.equal(r2.status, 200, JSON.stringify(r2.data));
   const after = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data;
   assert.equal(after.relationship, 'cliente');
   assert.equal(after.lead_status, 'convertido');
@@ -293,4 +315,84 @@ test('painel e todos os relatórios respondem com definições', async () => {
   }
   const tc = (await call('admin', 'GET', '/api/relatorios/taxa_contato')).data;
   assert.ok(tc.rows.length >= 1);
+});
+
+test('anexos: download respeita o escopo e o tipo de arquivo é validado', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Com Anexo', phone1: '11 95555-0001' });
+  const bad = await call('c1', 'POST', `/api/cadastros/${c.data.id}/anexos`, { doc_type: 'outro', filename: 'virus.exe', content_base64: PDF });
+  assert.equal(bad.status, 400);
+  const ok = await call('c1', 'POST', `/api/cadastros/${c.data.id}/anexos`, { doc_type: 'identificacao', filename: 'rg ção.pdf', content_base64: PDF });
+  assert.equal(ok.status, 200);
+  const res = await fetch(`${base}/api/anexos/${ok.data.id}`, { headers: { Cookie: sessions.c1 } });
+  assert.equal(res.status, 200);
+  assert.equal(Buffer.from(await res.arrayBuffer()).toString(), '%PDF-1.4 teste');
+  assert.equal((await fetch(`${base}/api/anexos/${ok.data.id}`, { headers: { Cookie: sessions.c2 } })).status, 404);
+  const d = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data;
+  assert.equal(d.attachments.length, 1);
+  assert.equal(d.attachments[0].content, undefined, 'lista não traz o conteúdo do arquivo');
+});
+
+test('link do cliente: atualiza dados externos, recebe documentos e pode ser revogado', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Link', phone1: '11 95555-0002' });
+  const l = await call('c1', 'POST', `/api/cadastros/${c.data.id}/link-cliente`);
+  assert.equal(l.status, 200);
+  const tok = l.data.token;
+  const form = await call(null, 'GET', `/api/publico/ficha?token=${encodeURIComponent(tok)}`);
+  assert.equal(form.status, 200);
+  assert.equal(form.data.values.name, 'Cliente Link');
+  assert.ok(form.data.values.initial_notes === undefined, 'só campos externos');
+  const sub = await call(null, 'POST', '/api/publico/ficha', { token: tok, values: { rg: '998877', mother_name: 'Mãe do Cliente', owner_id: 1 }, address: { cep: '20040020', street: 'Av. Rio Branco', number: '10', district: 'Centro', city: 'Rio de Janeiro', state: 'RJ' } });
+  assert.equal(sub.status, 200, JSON.stringify(sub.data));
+  const up = await call(null, 'POST', '/api/publico/ficha/anexo', { token: tok, doc_type: 'identificacao', filename: 'rg.pdf', content_base64: PDF });
+  assert.equal(up.status, 200);
+  const d = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data;
+  assert.equal(d.rg, '998877');
+  assert.equal(d.owner_name, 'Cons 1', 'cliente não altera campos internos');
+  assert.equal(d.addresses[0].city, 'Rio de Janeiro');
+  assert.equal(d.attachments[0].source, 'cliente');
+  assert.ok(d.tasks.some((t) => t.title === 'Conferir dados atualizados pelo cliente'));
+  await call('c1', 'POST', `/api/cadastros/${c.data.id}/link-cliente/revogar`);
+  assert.equal((await call(null, 'GET', `/api/publico/ficha?token=${encodeURIComponent(tok)}`)).status, 401);
+  assert.equal((await call(null, 'GET', '/api/publico/ficha?token=invalido')).status, 401);
+});
+
+test('proposta: aceite exige canal e abre a ficha de pré-venda; recusa exige motivo', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Aceite', phone1: '11 95555-0003' });
+  const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
+  const p = await call('c1', 'POST', '/api/propostas', { opportunity_id: opp.id, credit_value: 100000, status: 'apresentada' });
+  assert.equal((await call('c1', 'POST', `/api/propostas/${p.data.id}/status`, { status: 'aprovada' })).status, 400);
+  assert.equal((await call('c1', 'POST', `/api/propostas/${p.data.id}/status`, { status: 'aprovada', accepted_channel: 'whatsapp' })).status, 200);
+  const d = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data;
+  assert.equal(d.proposals[0].accepted_channel, 'whatsapp');
+  assert.ok(d.tasks.some((t) => t.type === 'pre_venda'));
+  const p2 = await call('c1', 'POST', '/api/propostas', { opportunity_id: opp.id, credit_value: 90000, status: 'apresentada' });
+  assert.equal((await call('c1', 'POST', `/api/propostas/${p2.data.id}/status`, { status: 'recusada' })).status, 400);
+  assert.equal((await call('c1', 'POST', `/api/propostas/${p2.data.id}/status`, { status: 'recusada', refusal_reason: 'parcela_alta' })).status, 200);
+});
+
+test('financeiro: gera parcelas, baixa pagamento, alerta atraso e respeita escopo', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Financeiro', phone1: '11 95555-0004' });
+  const k = await call('c1', 'POST', '/api/contratos', { contact_id: c.data.id, credit_value: 200000, installment_value: 1500, due_day: 10, term_months: 12, contract_number: 'ADM-1', sale_value: 0 });
+  assert.equal(k.status, 200);
+  const past = new Date(Date.now() - 70 * 86400000).toISOString().slice(0, 10);
+  const g = await call('c1', 'POST', `/api/contratos/${k.data.id}/gerar-parcelas`, { first_due_date: past });
+  assert.equal(g.data.created, 12);
+  assert.equal((await call('c1', 'POST', `/api/contratos/${k.data.id}/gerar-parcelas`, { first_due_date: past })).data.created, 0, 'não duplica');
+  let fin = (await call('c1', 'GET', `/api/cadastros/${c.data.id}/financeiro`)).data;
+  assert.equal(fin.entries.length, 12);
+  assert.ok(fin.summary.qtd_atrasado >= 2);
+  const first = fin.entries.find((e) => e.installment_number === 1);
+  assert.equal((await call('c1', 'PATCH', `/api/financeiro/${first.id}`, { action: 'pagar', payment_method: 'pix' })).status, 200);
+  fin = (await call('c1', 'GET', `/api/cadastros/${c.data.id}/financeiro`)).data;
+  assert.equal(fin.entries.find((e) => e.id === first.id).display_status, 'pago');
+  assert.equal(fin.summary.pago, 1500);
+  // alerta de atraso vira tarefa (a rotina roda ao criar o app e periodicamente; aqui chamamos pela rota de rotina interna)
+  require('../server/services/finance').overdueSweep(appDb);
+  const tasks = (await call('c1', 'GET', `/api/tarefas?contact_id=${c.data.id}&status=pendente`)).data.rows;
+  assert.ok(tasks.some((t) => t.type === 'financeiro'));
+  assert.equal((await call('c2', 'GET', `/api/cadastros/${c.data.id}/financeiro`)).status, 404);
+  assert.equal((await call('c2', 'GET', '/api/financeiro')).data.rows.filter((r) => r.contact_id === c.data.id).length, 0);
+  const rep = await call('gestor', 'GET', '/api/relatorios/financeiro?from=2020-01-01T00:00:00Z&to=2030-01-01T00:00:00Z');
+  assert.equal(rep.status, 200);
+  assert.ok(rep.data.rows.length > 0);
 });

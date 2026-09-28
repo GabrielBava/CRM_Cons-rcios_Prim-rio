@@ -1,27 +1,35 @@
 import { get, post, patch } from '../api.js';
 import {
   html, raw, render, $, $$, on, fresh, state, field, formData, opts, toItems, userItems, table, badge, relBadge, optoutBadge, K, optLabel,
-  fmtDate, fmtDateTime, fmtMoney, fmtDuration, relTime, modal, confirmDialog, toast, toastError, can, empty,
+  fmtDate, fmtDateTime, fmtMoney, fmtDuration, relTime, modal, confirmDialog, toast, toastError, can, empty, userName,
 } from '../ui.js';
 import {
   activityForm, taskForm, completeTask, cancelTask, opportunityForm, simulatorButton, openSimulator, simulationForm, proposalForm,
   proposalDetail, contractForm, consentForm, extractCustom, dupList,
 } from '../forms.js';
 import { nextActionCell } from './leads.js';
+import * as RT from './record-tabs.js';
 
 const TABS = [
   ['resumo', 'Resumo'],
-  ['cadastro', 'Cadastro'],
-  ['contatos', 'Contatos da empresa'],
-  ['oportunidades', 'Oportunidades'],
-  ['historico', 'Histórico'],
-  ['tarefas', 'Tarefas'],
-  ['simulacoes', 'Simulações e propostas'],
-  ['produtos', 'Produtos contratados'],
-  ['origens', 'Origens'],
+  ['cadastro', '1. Cadastro'],
+  ['origem', '2. Origem'],
+  ['endereco', '3. Endereço'],
+  ['negocio', '4. Negócio'],
+  ['financeiro', '5. Financeiro'],
+  ['propostas', '6. Propostas'],
+  ['agenda', '7. Agenda e tarefas'],
+  ['produtos', '8. Produtos contratados'],
+  ['historico', '9. Histórico'],
+  ['relacionamentos', 'Relacionamentos'],
+  ['documentos', 'Documentos'],
+  ['prevenda', 'Pré-venda'],
+  ['posvenda', 'Pós-venda'],
   ['privacidade', 'Preferências e LGPD'],
   ['auditoria', 'Auditoria'],
 ];
+// Endereços antigos das abas (links já compartilhados continuam funcionando)
+const TAB_ALIASES = { oportunidades: 'negocio', tarefas: 'agenda', simulacoes: 'propostas', origens: 'origem', contatos: 'relacionamentos' };
 
 export async function show(view, { id, sub }) {
   let c = await get(`/api/cadastros/${id}`);
@@ -29,26 +37,27 @@ export async function show(view, { id, sub }) {
     location.hash = `#/leads/${c.merged_into_id}`;
     return;
   }
-  let tab = sub || 'resumo';
+  let tab = TAB_ALIASES[sub] || sub || 'resumo';
   const reload = async () => {
     c = await get(`/api/cadastros/${id}`);
     draw();
   };
   const draw = () => {
-    const tabs = TABS.filter(([k]) => k !== 'contatos' || c.kind === 'PJ');
+    const tabs = TABS;
     render(view, html`<div class="page">
       <div class="page-head">
         <div>
           <div class="crumbs"><a href="#/${c.relationship === 'cliente' ? 'clientes' : 'leads'}">${c.relationship === 'cliente' ? 'Clientes' : 'Prospects e leads'}</a> / ${c.code}</div>
           <h1>${c.name} <small class="muted">${c.kind === 'PJ' ? 'Pessoa jurídica' : 'Pessoa física'}</small></h1>
-          <div class="badges">${relBadge(c.relationship)} ${c.relationship === 'cliente' ? badge(`Cliente ${K('client_status', c.client_status)}`, 'ok') : ''} ${badge(`Lead: ${K('lead_status', c.lead_status)}`)} ${optoutBadge(c.optouts)} ${c.anonymized_at ? badge('Anonimizado', 'danger') : ''}</div>
+          <div class="badges">${relBadge(c.relationship)} ${c.relationship === 'cliente' ? badge(`Cliente ${K('client_status', c.client_status)}`, 'ok') : ''} ${badge(`Lead: ${K('lead_status', c.lead_status)}`)} ${c.temperature ? badge(optLabel('temperatura', c.temperature), `temp-${c.temperature}`) : ''} ${optoutBadge(c.optouts)} ${c.finance_summary.qtd_atrasado ? badge(`Financeiro: ${c.finance_summary.qtd_atrasado} em atraso`, 'danger') : ''} ${c.anonymized_at ? badge('Anonimizado', 'danger') : ''}</div>
           <div class="muted small">Responsável: <strong>${c.owner_name || 'sem responsável'}</strong> · criado em ${fmtDateTime(c.created_at)}${c.created_by_name ? ` por ${c.created_by_name}` : ''} · atualizado ${relTime(c.updated_at)}${c.updated_by_name ? ` por ${c.updated_by_name}` : ''}</div>
         </div>
         ${can.write() && !c.anonymized_at
           ? html`<div class="actions">
             <button class="btn primary" data-act="activity">Registrar atividade</button>
             <button class="btn" data-act="task">Nova tarefa</button>
-            <button class="btn" data-act="opp">Nova oportunidade</button>
+            <button class="btn" data-act="opp">Novo negócio</button>
+            <button class="btn" data-act="client-link" title="O cliente atualiza cadastro, endereço e documentos">Link para o cliente</button>
             ${simulatorButton(c, c.opportunities.find((o) => o.status === 'aberta'))}
           </div>`
           : ''}
@@ -87,6 +96,7 @@ export async function show(view, { id, sub }) {
     const r = await opportunityForm(c);
     if (r) reload();
   });
+  on(view, 'click', '[data-act=client-link]', () => RT.clientLinkDialog(c, reload).catch(toastError));
   on(view, 'click', '[data-act=open-simulator]', (e, b) => openSimulator(Number(b.dataset.contact), b.dataset.opp ? Number(b.dataset.opp) : null, 'cadastro').then(() => setTimeout(reload, 500)));
   draw();
 }
@@ -94,15 +104,26 @@ export async function show(view, { id, sub }) {
 const FIELD_LABELS = {
   phone1: 'telefone principal', email: 'e-mail', city: 'cidade', state: 'UF', origin: 'origem', pref_channel: 'canal preferido',
   legal_name: 'razão social', doc: 'CPF/CNPJ', company_contact: 'contato da empresa', birth_date: 'data de nascimento', profession: 'profissão',
-  segment: 'segmento', owner_id: 'responsável', whatsapp: 'WhatsApp',
+  segment: 'segmento', owner_id: 'responsável', whatsapp: 'WhatsApp', temperature: 'temperatura', rg: 'RG',
+  nationality: 'nacionalidade', birthplace: 'naturalidade', sex: 'sexo', marital_status: 'estado civil', property_regime: 'regime de bens',
+  mother_name: 'nome da mãe', income_range: 'renda mensal', net_worth_range: 'patrimônio', spouse_name: 'nome do cônjuge', spouse_doc: 'CPF do cônjuge',
+  trade_name: 'nome fantasia', opening_date: 'data de abertura', main_activity: 'atividade', revenue_range: 'faturamento', legal_rep: 'representante legal',
 };
 
 function countFor(c, k) {
-  const n = { oportunidades: c.opportunities.length, tarefas: c.tasks.filter((t) => t.status === 'pendente').length, simulacoes: c.simulations.length + c.proposals.length, produtos: c.contracts.length, contatos: c.company_contacts.filter((x) => x.active).length, origens: c.origins.length }[k];
+  const n = {
+    negocio: c.opportunities.length, agenda: c.tasks.filter((t) => t.status === 'pendente').length, propostas: c.simulations.length + c.proposals.length,
+    produtos: c.contracts.length, relacionamentos: c.kind === 'PJ' ? c.partners.length + c.company_contacts.filter((x) => x.active).length : 0,
+    documentos: c.attachments.length, endereco: c.addresses.length, prevenda: c.sale_checklist.missing.length, financeiro: c.finance_summary.qtd_atrasado,
+  }[k];
+  if (k === 'prevenda' && n) return html` <span class="count warn">${n}</span>`;
+  if (k === 'financeiro' && n) return html` <span class="count danger">${n}</span>`;
   return n ? html` <span class="count">${n}</span>` : '';
 }
 
 /* ------------------------- Abas ------------------------- */
+
+const kvs = (label, v) => html`<div><span>${label}</span>${v ?? '—'}</div>`;
 
 const TAB_RENDER = {
   async resumo(box, c) {
@@ -134,6 +155,12 @@ const TAB_RENDER = {
         ${c.contracts.length ? html`<h3>Produtos contratados</h3><ul>${c.contracts.map((k) => html`<li>${k.code} — ${k.product_name || optLabel('categoria_credito', k.category)} · ${fmtMoney(k.credit_value)} · ${optLabel('status_contrato', k.status)}</li>`)}</ul>` : ''}
       </section>
     </div>
+    <div class="cols">
+      <section class="card"><div class="section-head"><h3>Pré-venda</h3><a href="#/leads/${c.id}/prevenda" data-tab="prevenda" class="small">abrir</a></div>
+        ${c.sale_checklist.complete ? html`<p>${badge('Ficha completa', 'ok')} Venda liberada.</p>` : html`<p>${c.sale_checklist.items.length - c.sale_checklist.missing.length} de ${c.sale_checklist.items.length} itens completos. Faltam: ${c.sale_checklist.missing.slice(0, 5).map((m) => m.label).join(', ')}${c.sale_checklist.missing.length > 5 ? '…' : ''}</p>`}</section>
+      <section class="card"><div class="section-head"><h3>Financeiro</h3><a href="#/leads/${c.id}/financeiro" data-tab="financeiro" class="small">abrir</a></div>
+        <div class="kv">${kvs('Pago', fmtMoney(c.finance_summary.pago))}${kvs('A vencer', fmtMoney(c.finance_summary.a_vencer))}${kvs('Em atraso', html`<span class="${c.finance_summary.qtd_atrasado ? 'overdue' : ''}">${fmtMoney(c.finance_summary.atrasado)} (${c.finance_summary.qtd_atrasado})</span>`)}${kvs('Próximo vencimento', fmtDate(c.finance_summary.proximo_vencimento))}</div></section>
+    </div>
     <section class="card"><h3>Atividades recentes</h3>${noteBox(c)}${timeline(hist.rows)}<p><a href="#/leads/${c.id}/historico" data-tab="historico">Ver histórico completo →</a></p></section>`);
     bindNote(box, c);
   },
@@ -142,36 +169,46 @@ const TAB_RENDER = {
     const cfg = state.meta.settings.field_config?.[c.kind === 'PJ' ? 'contact_pj' : 'contact_pf'] || {};
     const vis = (f) => cfg[f]?.visible !== false;
     const rec = (f) => c.recommended_fields.includes(f);
-    const F = (f, extra) => (vis(f) ? field({ name: f, value: c[f], recommended: rec(f), ...extra }) : '');
+    const saleKeys = new Set(c.sale_checklist.items.map((i) => i.key));
+    const F = (f, extra) => (vis(f) ? field({ name: f, value: c[f], recommended: rec(f), sale: saleKeys.has(f), ...extra }) : '');
     const ro = !can.write() || c.anonymized_at;
+    const married = (state.meta.options.estado_civil || []).find((o) => o.value === c.marital_status)?.flags?.conjuge;
     render(box, html`<form class="card" id="edit">
       <fieldset ${ro ? raw('disabled') : ''}>
       <div class="grid">
         ${c.kind === 'PJ'
           ? html`${F('name', { label: 'Nome de exibição', required: true })}${F('legal_name', { label: 'Razão social' })}${F('trade_name', { label: 'Nome fantasia' })}
-            ${F('doc', { label: 'CNPJ' })}${F('state_registration', { label: 'Inscrição estadual' })}
-            ${F('segment', { label: 'Segmento ou atividade', type: 'select', options: opts('segmento') })}
-            ${F('company_size', { label: 'Porte / faixa de faturamento', type: 'select', options: opts('porte') })}${F('website', { label: 'Site', type: 'url' })}`
-          : html`${F('name', { label: 'Nome completo', required: true })}${F('doc', { label: 'CPF', help: 'Opcional — informe somente se necessário.' })}
-            ${F('birth_date', { label: 'Data de nascimento', type: 'date' })}${F('profession', { label: 'Profissão ou atividade' })}`}
-        ${F('phone1', { label: 'Telefone principal', type: 'tel' })}${F('phone2', { label: 'Telefone secundário', type: 'tel' })}
+            ${F('doc', { label: 'CNPJ' })}${F('state_registration', { label: 'Inscrição estadual' })}${F('opening_date', { label: 'Data de abertura', type: 'date' })}
+            ${F('main_activity', { label: 'Atividade / CNAE' })}${F('segment', { label: 'Segmento', type: 'select', options: opts('segmento') })}
+            ${F('company_size', { label: 'Porte', type: 'select', options: opts('porte') })}${F('revenue_range', { label: 'Faturamento anual', type: 'select', options: opts('faixa_faturamento') })}
+            ${F('website', { label: 'Site', type: 'url' })}`
+          : html`${F('name', { label: 'Nome completo', required: true })}${F('doc', { label: 'CPF' })}${F('rg', { label: 'RG' })}
+            ${F('birth_date', { label: 'Data de nascimento', type: 'date' })}${F('sex', { label: 'Sexo', type: 'select', options: opts('sexo') })}
+            ${F('marital_status', { label: 'Estado civil', type: 'select', options: opts('estado_civil') })}
+            <div class="regime-wrap" ${married ? '' : raw('hidden')}>${F('property_regime', { label: 'Regime de bens', type: 'select', options: opts('regime_bens') })}</div>
+            ${F('birthplace', { label: 'Naturalidade (cidade/UF)' })}${F('nationality', { label: 'Nacionalidade' })}
+            ${F('mother_name', { label: 'Nome da mãe' })}${F('profession', { label: 'Profissão' })}
+            ${F('income_range', { label: 'Renda mensal', type: 'select', options: opts('faixa_renda') })}${F('net_worth_range', { label: 'Patrimônio estimado', type: 'select', options: opts('faixa_patrimonio') })}`}
+        ${F('phone1', { label: 'Telefone 1', type: 'tel' })}${F('phone2', { label: 'Telefone 2', type: 'tel' })}
         ${F('whatsapp', { label: 'WhatsApp', type: 'tel' })}${F('email', { label: 'E-mail', type: 'email' })}
-        ${F('city', { label: 'Cidade' })}${F('state', { label: 'UF', maxlength: 2 })}
-        ${F('origin', { label: 'Origem', type: 'select', options: opts('origem') })}${F('campaign', { label: 'Campanha ou ação' })}
-        ${F('first_contact_at', { label: 'Data do primeiro contato', type: 'datetime' })}
         ${field({ name: 'relationship', label: 'Tipo de registro', type: 'select', options: toItems(state.meta.constants.relationships), value: c.relationship, allowEmpty: false })}
         ${field({ name: 'lead_status', label: 'Status do lead', type: 'select', options: toItems(state.meta.constants.lead_status), value: c.lead_status, allowEmpty: false })}
         ${field({ name: 'client_status', label: 'Status do cliente', type: 'select', options: toItems(state.meta.constants.client_status), value: c.client_status, placeholder: 'Não é cliente' })}
-        ${field({ name: 'owner_id', label: 'Responsável', type: 'select', options: userItems(), value: c.owner_id, placeholder: 'Sem responsável', disabled: !can.manage() })}
-        ${F('initial_notes', { label: 'Observações iniciais', type: 'textarea', full: true })}
+        <div class="field full"><label>Documentos e arquivos</label><p class="small">${c.attachments.length} arquivo(s) anexado(s). <a href="#/leads/${c.id}/documentos" data-tab="documentos">Anexar documento de identificação, comprovantes e outros arquivos</a>.</p></div>
         ${customFieldsFor('contact', c.custom)}
       </div>
       <div class="modal-error" hidden></div>
       ${ro ? '' : html`<div class="form-actions"><button class="btn primary" type="submit">Salvar alterações</button></div>`}
       </fieldset>
     </form>
-    <p class="muted small">Status do lead, status do cliente e etapa da oportunidade são controlados separadamente. Alterações ficam registradas na auditoria.</p>`);
+    <p class="muted small">Campos marcados como <span class="rec sale">venda</span> são obrigatórios para concluir a venda. Origem, responsável e observações ficam na aba Origem; cidade e UF, na aba Endereço.</p>`);
     const form = $('#edit', box);
+    if (form.marital_status) {
+      form.marital_status.addEventListener('change', () => {
+        const f = (state.meta.options.estado_civil || []).find((o) => o.value === form.marital_status.value);
+        $('.regime-wrap', form).hidden = !f?.flags?.conjuge;
+      });
+    }
     let confirmDup = false;
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -179,7 +216,7 @@ const TAB_RENDER = {
       err.hidden = true;
       const d = formData(form);
       d.custom = extractCustom(d);
-      if (!can.manage()) delete d.owner_id;
+      delete d.owner_id;
       try {
         const r = await patch(`/api/cadastros/${c.id}`, { ...d, confirm_duplicate: confirmDup });
         toast(r.changed ? 'Cadastro atualizado.' : 'Nenhuma alteração.');
@@ -268,7 +305,8 @@ const TAB_RENDER = {
       <form class="filters" data-hf>
         <label>Tipo<select name="type"><option value="">Todos</option>${types.map((t) => html`<option value="${t.value}">${t.label}</option>`)}</select></label>
         ${c.company_contacts.length ? html`<label>Contato<select name="company_contact_id"><option value="">Todos</option>${c.company_contacts.map((x) => html`<option value="${x.id}">${x.name}</option>`)}</select></label>` : ''}
-        <label>Origem do registro<select name="source"><option value="">Todas</option><option value="manual">Manual</option><option value="discadora">Discadora</option><option value="simulador">Simulador</option><option value="whatsapp">WhatsApp</option><option value="api_leads">API de leads</option><option value="importacao">Importação</option><option value="sistema">Sistema</option></select></label>
+        <label>Origem do registro<select name="source"><option value="">Todas</option><option value="manual">Manual</option><option value="discadora">Discadora</option><option value="simulador">Simulador</option><option value="whatsapp">WhatsApp</option><option value="api_leads">API de leads</option><option value="importacao">Importação</option><option value="cliente">Cliente (link)</option><option value="sistema">Sistema</option></select></label>
+        <label>Fase<select name="phase"><option value="">Todas</option><option value="pre_venda">Pré-venda</option><option value="venda">Venda</option><option value="pos_venda">Pós-venda</option></select></label>
       </form>
       <div id="tl"></div></section>`);
     const f = $('[data-hf]', box);
@@ -354,7 +392,8 @@ const TAB_RENDER = {
   async produtos(box, c, reload) {
     render(box, html`<section class="card">
       <div class="section-head"><h3>Produtos contratados</h3>${can.write() ? html`<button class="btn" data-act="contract-new">+ Registrar produto contratado</button>` : ''}</div>
-      ${contractsTable(c.contracts)}</section>`);
+      ${contractsTable(c.contracts)}
+      <p class="hint">As parcelas de cada contrato são acompanhadas na aba Financeiro, onde é possível gerá-las automaticamente.</p></section>`);
     on(box, 'click', '[data-act=contract-new]', async () => (await contractForm(c)) && reload());
     on(box, 'click', '[data-contract]', async (e, a) => {
       e.preventDefault();
@@ -505,6 +544,17 @@ const TAB_RENDER = {
     });
   },
 
+  origem: (box, c, reload) => RT.origem(box, c, reload, TAB_RENDER.origens),
+  endereco: RT.endereco,
+  negocio: RT.negocio,
+  financeiro: RT.financeiro,
+  propostas: (box, c, reload) => TAB_RENDER.simulacoes(box, c, reload),
+  agenda: (box, c, reload) => TAB_RENDER.tarefas(box, c, reload),
+  relacionamentos: (box, c, reload) => RT.relacionamentos(box, c, reload, TAB_RENDER.contatos),
+  documentos: RT.documentos,
+  prevenda: RT.prevenda,
+  posvenda: RT.posvenda,
+
   async auditoria(box, c) {
     const rows = await get(`/api/cadastros/${c.id}/auditoria`);
     render(box, html`<section class="card"><h3>Histórico de alterações</h3>${table(
@@ -603,14 +653,15 @@ function bindNote(box, c, after) {
   });
 }
 
-const SOURCE_LABEL = { manual: 'manual', discadora: 'discadora', simulador: 'simulador', whatsapp: 'WhatsApp', api_leads: 'API de leads', importacao: 'importação', sistema: 'sistema' };
+const SOURCE_LABEL = { manual: 'manual', discadora: 'discadora', simulador: 'simulador', whatsapp: 'WhatsApp', api_leads: 'API de leads', importacao: 'importação', sistema: 'sistema', cliente: 'cliente (link)' };
+const PHASE_LABEL = { pre_venda: 'Pré-venda', venda: 'Venda', pos_venda: 'Pós-venda' };
 
 export function timeline(rows) {
   if (!rows.length) return empty('Nenhuma atividade registrada.');
   return html`<ol class="timeline">${rows.map((a) => {
     const t = state.meta.constants.activity_types[a.type] || { label: a.type };
     return html`<li class="tl-${a.type} src-${a.source}">
-      <div class="tl-head"><strong>${t.label}</strong>
+      <div class="tl-head"><strong>${t.label}</strong>${a.phase ? html` <span class="badge phase-${a.phase}">${PHASE_LABEL[a.phase]}</span>` : ''}
         ${a.result ? badge(optLabel('resultado_ligacao', a.result)) : ''}
         ${a.duration_seconds ? html`<span class="muted small">${fmtDuration(a.duration_seconds)}</span>` : ''}
         ${a.channel && !t.channel ? html`<span class="muted small">${optLabel('canal', a.channel)}</span>` : ''}
@@ -664,16 +715,16 @@ export function bindTasks(box, tasks, reload) {
 export function contractsTable(rows, { showContact = false } = {}) {
   return table(
     [
-      { label: 'Código', render: (k) => html`<a href="#" data-contract="${k.id}">${k.code}</a>` },
+      { label: 'Código', render: (k) => html`<a href="#" data-contract="${k.id}">${k.code}</a>${k.contract_number ? html`<br><small>Nº ${k.contract_number}</small>` : ''}` },
       ...(showContact ? [{ label: 'Cliente', render: (k) => html`<a href="#/leads/${k.contact_id}">${k.contact_name}</a>` }] : []),
       { label: 'Produto / categoria', render: (k) => html`${k.product_name || '—'}<br><small>${optLabel('categoria_credito', k.category)}</small>` },
       { label: 'Administradora / grupo / cota', render: (k) => [k.administrator, k.group_code, k.quota_code].map((x) => x || '—').join(' / ') },
       { label: 'Crédito', render: (k) => fmtMoney(k.credit_value), cls: 'num' },
-      { label: 'Prazo', render: (k) => (k.term_months ? `${k.term_months} m` : '—') },
-      { label: 'Cotas', render: (k) => k.quotas ?? '—' },
+      { label: 'Parcela', render: (k) => html`${fmtMoney(k.installment_value)}${k.due_day ? html`<br><small>vence dia ${k.due_day}</small>` : ''}`, cls: 'num' },
+      { label: 'Prazo / cotas', render: (k) => `${k.term_months ? `${k.term_months} m` : '—'} · ${k.quotas ?? '—'}` },
       { label: 'Contratação', render: (k) => fmtDate(k.contracted_at) },
-      { label: 'Status', render: (k) => badge(optLabel('status_contrato', k.status)) },
-      { label: 'Modalidade / estratégia', render: (k) => html`${optLabel('modalidade_pagamento', k.payment_modality)}<br><small>${optLabel('estrategia', k.strategy)}</small>` },
+      { label: 'Status', render: (k) => html`${badge(optLabel('status_contrato', k.status))}${k.contemplated_at ? html`<br><small>Contemplado em ${fmtDate(k.contemplated_at)}${k.contemplation_type ? ` (${optLabel('tipo_contemplacao', k.contemplation_type)})` : ''}</small>` : ''}` },
+      { label: 'Vendedor', render: (k) => html`${k.seller_name || (k.seller_id ? userName(k.seller_id) : '—')}${k.sale_value ? html`<br><small>Venda da carta: ${fmtMoney(k.sale_value)}</small>` : ''}` },
     ],
     rows,
     { emptyMsg: 'Nenhum produto contratado.' },

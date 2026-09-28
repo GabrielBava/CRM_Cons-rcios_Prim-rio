@@ -70,7 +70,7 @@ for (const dir of ['js', 'js/views']) {
 }
 const css = fs.readFileSync(path.join(ROOT, 'public', 'css', 'app.css'), 'utf8');
 const previewCss = fs.readFileSync(path.join(ROOT, 'preview', 'preview.css'), 'utf8');
-const page = `<title>CRM de Consórcios</title>
+const page = `<title>ERP/CRM de Consórcios</title>
 <style>
 ${css}
 ${previewCss}

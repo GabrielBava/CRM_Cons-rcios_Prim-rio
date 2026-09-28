@@ -19,7 +19,7 @@ export function contactsTable(rows) {
       { label: 'Código', render: (r) => html`<a href="#/leads/${r.id}">${r.code}</a>` },
       {
         label: 'Nome',
-        render: (r) => html`<a href="#/leads/${r.id}"><strong>${r.name}</strong></a> <small class="muted">${r.kind}</small><br>${relBadge(r.relationship)} ${r.relationship !== 'cliente' ? badge(K('lead_status', r.lead_status)) : badge(K('client_status', r.client_status), 'ok')} ${optoutBadge(r.optouts)}`,
+        render: (r) => html`<a href="#/leads/${r.id}"><strong>${r.name}</strong></a> <small class="muted">${r.kind}</small><br>${relBadge(r.relationship)} ${r.temperature ? badge(optLabel('temperatura', r.temperature), `temp-${r.temperature}`) : ''} ${r.relationship !== 'cliente' ? badge(K('lead_status', r.lead_status)) : badge(K('client_status', r.client_status), 'ok')} ${optoutBadge(r.optouts)}`,
       },
       { label: 'Contato', render: (r) => html`${r.phone1 || r.whatsapp || html`<span class="warn-text">sem telefone</span>`}<br><small>${r.email || ''}</small>` },
       { label: 'Cidade/UF', render: (r) => [r.city, r.state].filter(Boolean).join('/') || '—' },
@@ -53,6 +53,7 @@ export async function show(view, { params }, preset = {}) {
       <label>PF/PJ<select name="kind">${selectOptions([{ value: 'PF', label: 'Pessoa física' }, { value: 'PJ', label: 'Pessoa jurídica' }], s.kind, { placeholder: 'Todos' })}</select></label>
       <label>Responsável<select name="owner_id">${selectOptions([...userItems(), ...(can.manage() ? [{ value: 'none', label: 'Sem responsável' }] : [])], s.owner_id, { placeholder: 'Todos' })}</select></label>
       <label>Origem<select name="origin">${selectOptions(opts('origem'), s.origin, { placeholder: 'Todas' })}</select></label>
+      <label>Temperatura<select name="temperature">${selectOptions(opts('temperatura'), s.temperature, { placeholder: 'Todas' })}</select></label>
       <label>Campanha<input name="campaign" value="${s.campaign || ''}" placeholder="nome ou ID"></label>
       <label>Etapa<select name="stage_id">${selectOptions(stageItems(), s.stage_id, { placeholder: 'Todas' })}</select></label>
       <label>Produto<select name="product_id">${selectOptions(productItems(), s.product_id, { placeholder: 'Todos' })}</select></label>

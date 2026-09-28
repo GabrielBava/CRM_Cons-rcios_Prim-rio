@@ -18,6 +18,9 @@ const integrations = require('./services/integrations');
 const reports = require('./services/reports');
 const io = require('./services/importexport');
 const admin = require('./services/admin');
+const record = require('./services/record');
+const finance = require('./services/finance');
+const core = require('./core');
 
 function createRouter(db) {
   const routes = [];
@@ -83,6 +86,34 @@ function createRouter(db) {
     require('./core').audit(db, user, 'contact', c.id, 'origem_adicionada', body, c.id);
     return { id };
   });
+
+  /* ---------- Ficha: endereços, sócios, anexos, pré-venda, link do cliente, pós-venda ---------- */
+  add('GET', '/api/cep/:cep', ({ params }) => record.lookupCep(params.cep));
+  add('POST', '/api/cadastros/:id/enderecos', ({ user, params, body }) => ({ id: record.saveAddress(db, user, params.id, body) }));
+  add('POST', '/api/enderecos/:id/remover', ({ user, params }) => (record.deleteAddress(db, user, params.id), { ok: true }));
+  add('POST', '/api/cadastros/:id/socios', ({ user, params, body }) => ({ id: record.savePartner(db, user, params.id, body) }));
+  add('POST', '/api/cadastros/:id/anexos', ({ user, params, body }) => ({ id: record.uploadAttachment(db, user, params.id, body) }), { bodyLimit: 12e6 });
+  add('GET', '/api/anexos/:id', ({ user, params, res }) => {
+    const a = record.getAttachment(db, user, params.id);
+    return sendBinary(res, a.filename, a.mime, a.content);
+  });
+  add('PATCH', '/api/anexos/:id', ({ user, params, body }) => (record.reviewAttachment(db, user, params.id, body), { ok: true }));
+  add('GET', '/api/cadastros/:id/checklist-venda', ({ user, params }) => record.saleChecklist(db, core.loadContact(db, user, params.id)));
+  add('POST', '/api/cadastros/:id/link-cliente', ({ user, params }) => record.createClientLink(db, user, params.id));
+  add('POST', '/api/cadastros/:id/link-cliente/revogar', ({ user, params }) => ({ revogados: record.revokeClientLinks(db, user, params.id) }));
+  add('POST', '/api/cadastros/:id/pos-venda', ({ user, params, body }) => (record.togglePostSale(db, user, params.id, body), { ok: true }));
+  add('GET', '/api/publico/ficha', ({ query }) => record.publicForm(db, query.token), { public: true });
+  add('GET', '/api/publico/cep/:cep', ({ params, query }) => record.publicCep(db, query.token, params.cep), { public: true });
+  add('POST', '/api/publico/ficha', ({ body }) => record.publicSubmit(db, body.token, body), { public: true });
+  add('POST', '/api/publico/ficha/anexo', ({ body }) => record.publicUpload(db, body.token, body), { public: true, bodyLimit: 12e6 });
+
+  /* ---------- Financeiro ---------- */
+  add('GET', '/api/financeiro', ({ user, query }) => finance.listEntries(db, user, query));
+  add('POST', '/api/financeiro', ({ user, body }) => finance.createEntry(db, user, body));
+  add('PATCH', '/api/financeiro/:id', ({ user, params, body }) => (finance.updateEntry(db, user, params.id, body), { ok: true }));
+  add('POST', '/api/financeiro/pendencias', ({ user, body }) => ({ id: finance.saveIssue(db, user, body) }));
+  add('GET', '/api/cadastros/:id/financeiro', ({ user, params }) => finance.contactFinance(db, user, params.id));
+  add('POST', '/api/contratos/:id/gerar-parcelas', ({ user, params, body }) => finance.generateInstallments(db, user, params.id, body));
 
   /* ---------- Oportunidades e funil ---------- */
   add('GET', '/api/funil', ({ user, query }) => opps.board(db, user, query));
@@ -171,6 +202,18 @@ function createRouter(db) {
     return undefined;
   }
 
+  function sendBinary(res, filename, mime, content) {
+    res.writeHead(200, {
+      'Content-Type': mime || 'application/octet-stream',
+      // Nome ASCII para compatibilidade e nome original codificado (RFC 5987)
+      'Content-Disposition': `attachment; filename="${String(filename).normalize('NFD').replace(/[^\x20-\x7e]/g, '').replace(/["\\]/g, '_') || 'arquivo'}"; filename*=UTF-8''${encodeURIComponent(String(filename))}`,
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    res.end(content);
+    return undefined;
+  }
+
   function parseBody(req, limit) {
     const raw = req.rawBody == null ? '' : String(req.rawBody);
     if (raw.length > limit) throw new HttpError(413, 'Conteúdo muito grande.');
@@ -238,6 +281,11 @@ function createRouter(db) {
       proposals.expireSweep(db);
     } catch (e) {
       console.error('Falha ao expirar propostas:', e.message);
+    }
+    try {
+      finance.overdueSweep(db);
+    } catch (e) {
+      console.error('Falha ao verificar atrasos:', e.message);
     }
   }
 

@@ -1,4 +1,4 @@
-# Especificação funcional: CRM de Consórcios Primários
+# Especificação funcional: ERP/CRM de Consórcios Primários
 
 Este documento descreve o que está **implementado** nesta versão e o que ainda depende de definição. Os itens seguem a lista de entrega pedida.
 
@@ -12,13 +12,14 @@ O menu lateral vira um menu recolhível no celular. A barra superior tem **busca
 |---|---|
 | **Painel inicial** | Indicadores com definição de cálculo (ⓘ): leads novos, leads sem tentativa, tentativas de ligação, contatos efetivos com taxa, ligações recebidas, reuniões agendadas e realizadas, simulações, propostas, vendas e crédito. Mostra também leads parados por etapa, próximas tarefas e atrasos, e conversão por origem, usuário e produto. Filtros: período, usuário, origem, etapa, produto e status. |
 | **Prospects e leads** | Lista com busca e filtros: tipo de registro, status, PF/PJ, responsável, origem, campanha, etapa, produto, sem tentativa, cadastro incompleto e restrição de contato. Mostra a próxima ação de cada lead. Permite cadastro rápido, importação CSV, exportação CSV e lista para a discadora. |
-| **Ficha do cadastro** | Cabeçalho com etiquetas (relacionamento, status do lead, status do cliente, "não contatar"), próxima ação em destaque e aviso de campos recomendados pendentes. Abas: Resumo, Cadastro, Contatos da empresa (PJ), Oportunidades, Histórico, Tarefas, Simulações e propostas, Produtos contratados, Origens, Preferências e LGPD, Auditoria. |
+| **Ficha do cadastro** | Cabeçalho com etiquetas (relacionamento, status do lead, status do cliente, "não contatar"), próxima ação em destaque e aviso de campos recomendados pendentes. Abas na ordem da ficha aprovada: Resumo, 1. Cadastro, 2. Origem, 3. Endereço, 4. Negócio, 5. Financeiro, 6. Propostas, 7. Agenda e tarefas, 8. Produtos contratados, 9. Histórico, e ainda Relacionamentos (cônjuge ou sócios e contatos da empresa), Documentos, Pré-venda, Pós-venda, Preferências e LGPD, Auditoria. Detalhes na seção 12. |
 | **Funil comercial** | Kanban com arrastar e soltar. No celular e no teclado, usa-se o seletor "Mover para…". Há também visão em lista e filtros por responsável, origem, produto, etapa, prioridade e próxima ação (atrasada, hoje ou sem ação). |
 | **Oportunidade** | Dados comerciais, validação da estratégia, histórico de etapas, simulações, propostas, tarefas e atividades. |
 | **Agenda e tarefas** | Pendentes, atrasadas, hoje, próximos 7 dias, concluídas e canceladas, com filtro por responsável e tipo. Reuniões são concluídas com um resultado. |
 | **Ligações e atividades** | Todas as atividades, com filtros. Gestores e administradores também veem a **fila da discadora** (sem vínculo, com erro, vinculados, descartados) e as **entradas de leads e mensagens**. |
 | **Simulações e propostas** | Listas com filtros e detalhe da proposta, com versões, histórico e mudança de status. |
 | **Clientes** | Cadastros convertidos e produtos contratados. |
+| **Financeiro** | Parcelas e valores que os clientes pagam à administradora: em atraso, a vencer, pagos, negociados e cancelados, com totais e exportação CSV (seção 12). |
 | **Produtos e estratégias** | Produtos, estratégias, categorias, modalidades e tipos de contemplação. |
 | **Relatórios** | 12 relatórios com "Como é calculado" e exportação CSV. |
 | **Configurações e usuários** | Usuários e equipes, etapas do funil, listas, campos (visibilidade, recomendados e campos adicionais), integrações, parâmetros gerais, auditoria e senha. |
@@ -199,6 +200,9 @@ Os relatórios mostram dados pessoais apenas quando necessário (nome e código)
 | Simulador | Link com token temporário, endpoint de contexto, endpoint de retorno com validação e versionamento, registro manual | Implementar no simulador a leitura do `crm_token`, a chamada de contexto e o envio do resultado. Configurar a URL. |
 | Meta Ads | Campos de origem (IDs e UTMs), importação CSV, API de entrada de leads com deduplicação | Conector direto (app Meta, webhooks, Graph API) ou ferramenta intermediária |
 | WhatsApp | Endpoint de registro de mensagens com idempotência e vínculo por telefone | Provedor. **Envio** de mensagens não faz parte desta versão. |
+| Agenda externa (Google Agenda / Outlook) | Cadastro da integração com status "pendente" | Sincronização das reuniões e tarefas |
+| Pesquisa de NPS por link | Registro manual da nota (0 a 10) e do comentário na aba Pós-venda | Link para o cliente responder a pesquisa com perguntas sobre a empresa |
+| Consulta de CEP (ViaCEP) | Busca do endereço pelo CEP na ficha e na página do cliente. Se a consulta falhar, o endereço é preenchido manualmente. | — |
 | Importação/exportação | CSV (`;` ou `,`) com mapeamento, prévia, deduplicação e erros por linha. Exportação CSV compatível com Excel. | Leitura direta de `.xlsx` (hoje é preciso salvar como CSV) |
 
 ## 9. Permissões
@@ -243,7 +247,8 @@ Um gestor sem equipe vê apenas os próprios registros. Quando um consultor tent
 - A **anonimização** (administrador, com motivo) remove dados pessoais e preserva os indicadores.
 - O link da gravação e o texto das mensagens só são guardados se a opção estiver habilitada.
 - Exportações ficam registradas na auditoria.
-- O CRM não armazena dados de pagamento nem documentos.
+- O CRM não armazena dados de cartão ou conta bancária. Os documentos enviados (identificação, comprovantes, contrato social) ficam no banco, com acesso restrito ao escopo do usuário, e o conteúdo é apagado quando o documento é removido ou o cadastro é anonimizado.
+- O link para o cliente é aleatório, temporário (padrão de 7 dias), guardado como hash e pode ser revogado. Ele só permite alterar os campos externos (cadastro, endereço e documentos).
 
 ## 11. Campos e regras que ainda dependem de definição
 
@@ -255,5 +260,36 @@ Um gestor sem equipe vê apenas os próprios registros. Quando um consultor tent
 6. **Critérios comerciais:** critério formal de lead qualificado, resultados que contam como "contato efetivo" (o padrão é Atendida, Contato realizado e Retorno solicitado) e prazo para considerar um lead parado (padrão de 7 dias).
 7. **Estrutura da equipe:** equipes, gestores e regra de distribuição de leads sem responsável (hoje a distribuição é manual).
 8. **LGPD:** base legal por finalidade, prazo de retenção e rotina de eliminação, encarregado (DPO) e texto de consentimento nos formulários de captação.
-9. **Status de contrato e pós-venda:** valores definitivos (hoje: em formalização, ativo, contemplado, quitado, cancelado) e eventuais tarefas automáticas de pós-venda.
+9. **Status de contrato e pós-venda:** valores definitivos (hoje: em formalização, ativo, contemplado, quitado, cancelado). As etapas do checklist de pós-venda podem ser ajustadas em Configurações › Listas.
+11. **NPS e agenda externa:** perguntas da pesquisa de NPS e escolha entre Google Agenda e Outlook.
 10. **Hospedagem:** servidor, HTTPS, backup e política de acesso externo.
+
+## 12. Módulo ERP: ficha em 9 blocos, financeiro, pré-venda e pós-venda
+
+Implementa a ficha aprovada na página de proposta (`docs/proposta-ficha/index.html`). Os campos marcados como **externos** podem ser atualizados pelo próprio cliente por link. Os **internos** são só da empresa. Sempre que possível, os campos são listas configuráveis (Configurações › Listas) para alimentar indicadores.
+
+| Bloco | Tipo | Conteúdo |
+|---|---|---|
+| 1. Cadastro | Externo | PF: nome, CPF, RG, data de nascimento, naturalidade, nacionalidade, sexo, estado civil, regime de bens (casado ou união estável), nome da mãe, profissão, faixa de renda e de patrimônio. PJ: razão social, nome fantasia, CNPJ, IE, data de abertura, atividade, faixa de faturamento e representante legal. Campos com a marca **venda** são exigidos para concluir a venda. |
+| 2. Origem | Interno | Origem, campanha, UTMs, **indicado por** (vínculo com outro cadastro, com lista de indicações feitas) e **temperatura** (fria, morna, quente). |
+| 3. Endereço | Externo | Vários endereços (residencial, comercial, correspondência, cobrança), um principal. Busca por CEP. |
+| 4. Negócio | Interno | Campos da R1: objetivo, tipo de produto (primário ou contemplada, no mesmo funil), finalidade do crédito, prazo, momento financeiro, tipo de contratação, FGTS, **quem decide a compra**, produtos que já possui. Consórcio: valor e administradora. Financiamento: saldo devedor, CET e banco. |
+| 5. Financeiro | Interno | Parcelas e demais valores que o cliente paga. Situações: a vencer, pago, negociado, cancelado e **em atraso** (calculado). Geração de parcelas a partir do contrato. Pendências financeiras. |
+| 6. Propostas | — | Simulações e propostas com versões. Aprovar exige o **canal e a data do aceite** e cria a tarefa "Completar ficha de pré-venda". Recusar exige o **motivo da recusa** (lista). |
+| 7. Agenda e tarefas | Interno | Tarefas e reuniões. Novos tipos: pré-venda e financeiro. Sincronização com agenda externa: **integração pendente**. |
+| 8. Produtos contratados | Externo | Contrato: nº na administradora, grupo e cota, valor da parcela, dia de vencimento, primeira parcela, **vendedor** e **valor da venda**, contemplação (data, tipo, lance e bem adquirido). |
+| 9. Histórico | — | Linha do tempo com filtro por **fase**: pré-venda (antes da primeira proposta), venda (depois da primeira proposta) e pós-venda (depois da conversão em cliente). |
+
+**Relacionamentos.** PF: dados do cônjuge (nome, CPF, profissão, renda), exibidos quando o estado civil pede. PJ: sócios (nome, CPF, participação, relação) e contatos da empresa.
+
+**Documentos.** Envio de PDF ou imagem (até 8 MB), com situação: pendente, recebido, aprovado, recusado ou removido. A lista exigida para PF e para PJ é definida em Configurações › Geral. Padrão PF: identificação, comprovante de endereço, comprovante de renda e comprovante de estado civil. Padrão PJ: contrato social, cartão CNPJ, comprovante de endereço, faturamento e documento do representante.
+
+**Checklist de venda (pré-venda).** Mover a oportunidade para "Ganho" só é possível com a ficha completa: campos marcados como obrigatórios na venda (Configurações › Campos), endereço principal completo, dados do cônjuge e regime de bens quando aplicável, e documentos exigidos recebidos ou aprovados. O CRM informa exatamente o que falta. A regra pode ser desligada em Configurações › Geral.
+
+**Link para o cliente.** Na ficha, o botão "Link para o cliente" gera um endereço (`#/ficha/<token>`) que o cliente abre sem login para conferir e atualizar cadastro, endereço (com busca por CEP) e documentos. Cada envio fica no histórico com a origem "cliente" e cria a tarefa "Conferir dados atualizados pelo cliente" para o responsável. O link expira no prazo configurado (1 a 60 dias) e pode ser revogado.
+
+**Financeiro.** Quem paga é sempre o cliente, e a empresa acompanha para avisar. Parcelas vencidas e não pagas aparecem em atraso na ficha, no menu Financeiro e no painel ("Parcelas em atraso"). Cada atraso gera uma tarefa do tipo financeiro para o **responsável financeiro** definido em Configurações › Geral (ou para o responsável pelo cliente). A tarefa é concluída automaticamente quando a parcela é paga, negociada ou cancelada. Relatórios: **Financeiro** (previsto, recebido, em atraso e adimplência por mês de vencimento) e **Vendas por vendedor**.
+
+**Pós-venda.** Checklist por cliente com etapas configuráveis (boas-vindas, primeira parcela, acompanhamento das assembleias, contemplação e pedido de indicação) e registro de NPS (nota de 0 a 10 e comentário). O link de NPS para o cliente responder é uma **integração pendente**.
+
+**Itens recusados na aprovação** (não implementados): PEP, evento de origem, página de conversão, responsáveis por fase, checklist de FGTS, transcrição automática da R1 e visões adicionais da agenda.

@@ -246,20 +246,32 @@ export function opportunityFields(o = {}, companyContacts = []) {
   const ccItems = companyContacts.filter((c) => c.active !== 0).map((c) => ({ value: c.id, label: c.name }));
   return html`<div class="grid">
     ${field({ name: 'title', label: 'Título (opcional)', value: o.title, placeholder: 'ex.: Imóvel para moradia', full: true })}
+    <h4 class="full">Qualificação (R1)</h4>
+    ${field({ name: 'objective_type', label: '(R1) Objetivo', type: 'select', options: opts('objetivo'), value: o.objective_type })}
+    ${field({ name: 'product_type', label: '(R1) Produto', type: 'select', options: opts('tipo_produto'), value: o.product_type })}
+    ${field({ name: 'credit_purpose', label: '(R1) Para que é o crédito', value: o.credit_purpose, placeholder: 'ex.: apartamento para morar', full: true })}
+    ${field({ name: 'financial_moment', label: '(R1) Momento financeiro', type: 'select', options: opts('momento_financeiro'), value: o.financial_moment })}
+    ${field({ name: 'employment_type', label: 'Tipo de contratação', type: 'select', options: opts('tipo_contratacao'), value: o.employment_type })}
+    ${field({ name: 'has_fgts', label: '(R1) Possui FGTS (PF)', type: 'select', options: opts('possui_fgts'), value: o.has_fgts })}
+    ${field({ name: 'decision_maker', label: 'Quem decide a compra', type: 'select', options: opts('decisor'), value: o.decision_maker })}
+    ${field({ name: 'existing_products', label: 'Já possui consórcio ou financiamento', type: 'select', options: opts('possui_produto'), value: o.existing_products })}
+    <div class="grid full existing-cons">${field({ name: 'existing_consortium_value', label: 'Consórcio atual: valor (R$)', type: 'money', value: o.existing_consortium_value })}${field({ name: 'existing_consortium_admin', label: 'Consórcio atual: administradora', value: o.existing_consortium_admin })}</div>
+    <div class="grid full existing-fin">${field({ name: 'existing_financing_balance', label: 'Financiamento: saldo devedor (R$)', type: 'money', value: o.existing_financing_balance })}${field({ name: 'existing_financing_cet', label: 'Financiamento: CET (% a.a.)', type: 'number', value: o.existing_financing_cet, step: '0.01' })}${field({ name: 'existing_financing_bank', label: 'Financiamento: banco', value: o.existing_financing_bank })}</div>
+    <h4 class="full">Condições desejadas</h4>
     ${field({ name: 'product_id', label: 'Produto', type: 'select', options: productItems(), value: o.product_id })}
     ${field({ name: 'credit_category', label: 'Categoria do crédito', type: 'select', options: opts('categoria_credito'), value: o.credit_category })}
     ${field({ name: 'credit_value', label: 'Crédito desejado (R$)', type: 'money', value: o.credit_value, min: 0 })}
     ${field({ name: 'term_months', label: 'Prazo de interesse (meses)', type: 'number', value: o.term_months, min: 1, step: 1 })}
-    ${field({ name: 'installment_min', label: 'Parcela desejada — mínima (R$)', type: 'money', value: o.installment_min, min: 0 })}
-    ${field({ name: 'installment_max', label: 'Parcela desejada — máxima (R$)', type: 'money', value: o.installment_max, min: 0 })}
+    ${field({ name: 'installment_max', label: '(R1) Capacidade de parcela (R$/mês)', type: 'money', value: o.installment_max, min: 0 })}
+    ${field({ name: 'installment_min', label: 'Parcela mínima desejada (R$)', type: 'money', value: o.installment_min, min: 0 })}
     ${field({ name: 'quotas', label: 'Quantidade de cotas', type: 'number', value: o.quotas, min: 1, step: 1 })}
     ${field({ name: 'payment_modality', label: 'Modalidade de pagamento pretendida', type: 'select', options: opts('modalidade_pagamento'), value: o.payment_modality })}
     ${field({ name: 'strategy', label: 'Estratégia', type: 'select', options: opts('estrategia'), value: o.strategy, help: 'A estratégia só é considerada recomendação após validação do consultor.' })}
     ${field({ name: 'contemplation_type', label: 'Contemplação de interesse', type: 'select', options: opts('tipo_contemplacao'), value: o.contemplation_type })}
-    ${field({ name: 'bid_own_resources', label: 'Recursos próprios para lance (R$)', type: 'money', value: o.bid_own_resources, min: 0 })}
-    ${field({ name: 'fgts_available', label: 'FGTS disponível (R$)', type: 'money', value: o.fgts_available, min: 0, help: 'Quando aplicável.' })}
+    ${field({ name: 'bid_own_resources', label: '(R1) Capital/reserva para lance (R$)', type: 'money', value: o.bid_own_resources, min: 0 })}
+    ${field({ name: 'fgts_available', label: '(R1) FGTS disponível (R$)', type: 'money', value: o.fgts_available, min: 0, help: 'Somente PF.' })}
     ${field({ name: 'embedded_bid_interest', label: 'Interesse em lance embutido', type: 'select', options: [{ value: 'sim', label: 'Sim' }, { value: 'nao', label: 'Não' }, { value: 'avaliar', label: 'Avaliar' }, { value: 'nao_se_aplica', label: 'Não se aplica / não permitido' }], value: o.embedded_bid_interest })}
-    ${field({ name: 'urgency', label: 'Urgência / horizonte de compra', type: 'select', options: opts('urgencia'), value: o.urgency })}
+    ${field({ name: 'urgency', label: '(R1) Prazo objetivo', type: 'select', options: opts('urgencia'), value: o.urgency })}
     ${field({ name: 'priority', label: 'Prioridade', type: 'select', options: toItems(state.meta.constants.priorities), value: o.priority || 'media', allowEmpty: false })}
     ${ccItems.length ? field({ name: 'company_contact_id', label: 'Contato da empresa', type: 'select', options: ccItems, value: o.company_contact_id }) : ''}
     ${field({ name: 'owner_id', label: 'Responsável', type: 'select', options: userItems(), value: o.owner_id || state.user.id, allowEmpty: false, disabled: !can.manage() })}
@@ -276,6 +288,15 @@ export function opportunityForm(contact, opp) {
     title: opp ? `Editar ${opp.code}` : `Nova oportunidade — ${contact.name}`,
     wide: true,
     body: opportunityFields(opp || { owner_id: contact.owner_id }, contact.company_contacts || []),
+    onMount(form) {
+      const sync = () => {
+        const v = form.existing_products.value;
+        $('.existing-cons', form).hidden = !['consorcio', 'ambos'].includes(v);
+        $('.existing-fin', form).hidden = !['financiamento', 'ambos'].includes(v);
+      };
+      form.existing_products.addEventListener('change', sync);
+      sync();
+    },
     async onSubmit(d) {
       d.custom = extractCustom(d);
       if (!can.manage()) delete d.owner_id;
@@ -483,7 +504,12 @@ export async function proposalDetail(id, onChange) {
       <div class="full"><span>Premissas de reajuste</span>${p.readjustment_assumptions || '—'}</div>
       <div class="full"><span>Observações</span>${p.notes || '—'}</div>
     </div>`}
+    ${p.accepted_at ? html`<div class="alert">Aceite em ${fmtDate(p.accepted_at)} via ${optLabel('canal_aceite', p.accepted_channel)}. Próxima etapa: <a href="#/leads/${p.contact_id}/prevenda">ficha de pré-venda</a>.</div>` : ''}
+    ${p.refusal_reason ? html`<div class="alert warn">Recusada: ${optLabel('motivo_recusa_proposta', p.refusal_reason)}.</div>` : ''}
     ${!final && can.write() ? html`<div class="inline-actions"><label>Alterar status para <select name="new_status"><option value="">—</option>${nextStatuses.map((s) => html`<option value="${s}">${K('proposal_status', s)}</option>`)}</select></label>
+      <label class="st-extra st-aprovada" hidden>Canal do aceite <select name="accepted_channel"><option value="">Selecione…</option>${opts('canal_aceite').map((o) => html`<option value="${o.value}">${o.label}</option>`)}</select></label>
+      <label class="st-extra st-aprovada" hidden>Data do aceite <input type="date" name="accepted_at" value="${new Date().toISOString().slice(0, 10)}"></label>
+      <label class="st-extra st-recusada" hidden>Motivo <select name="refusal_reason"><option value="">Selecione…</option>${opts('motivo_recusa_proposta').map((o) => html`<option value="${o.value}">${o.label}</option>`)}</select></label>
       <button type="button" class="btn small" data-act="apply-status">Aplicar</button></div>` : ''}
     ${p.status !== 'substituida' && can.write() ? html`<p><button type="button" class="btn small" data-act="new-version">Criar nova versão</button> <small class="muted">A versão atual será marcada como substituída (se ainda estiver em aberto) e preservada no histórico.</small></p>` : ''}
     <h3>Versões</h3>
@@ -505,11 +531,15 @@ export async function proposalDetail(id, onChange) {
         }
       : undefined,
     onMount(form, close) {
+      form.new_status?.addEventListener('change', () => {
+        $$('.st-extra', form).forEach((el) => (el.hidden = !el.classList.contains(`st-${form.new_status.value}`)));
+      });
       on(form, 'click', '[data-act=apply-status]', async () => {
         const s = form.new_status.value;
         if (!s) return;
         try {
-          await post(`/api/propostas/${p.id}/status`, { status: s });
+          await post(`/api/propostas/${p.id}/status`, { status: s, accepted_channel: form.accepted_channel?.value, accepted_at: form.accepted_at?.value, refusal_reason: form.refusal_reason?.value });
+          if (s === 'aprovada') toast('Aceite registrado. Tarefa criada para completar a ficha de pré-venda.');
           toast('Status atualizado.');
           close(true);
           onChange?.();
@@ -560,6 +590,17 @@ export function contractForm(contact, contract) {
       ${field({ name: 'status', label: 'Status do contrato', type: 'select', options: opts('status_contrato'), value: k.status || 'em_formalizacao', allowEmpty: false })}
       ${field({ name: 'payment_modality', label: 'Modalidade de pagamento', type: 'select', options: opts('modalidade_pagamento'), value: k.payment_modality })}
       ${field({ name: 'strategy', label: 'Estratégia associada', type: 'select', options: opts('estrategia'), value: k.strategy })}
+      ${field({ name: 'contract_number', label: 'Nº do contrato na administradora', value: k.contract_number })}
+      ${field({ name: 'installment_value', label: 'Valor da parcela (R$)', type: 'money', value: k.installment_value })}
+      ${field({ name: 'due_day', label: 'Dia de vencimento', type: 'number', value: k.due_day, min: 1, step: 1 })}
+      ${field({ name: 'first_due_date', label: 'Primeiro vencimento', type: 'date', value: k.first_due_date })}
+      ${field({ name: 'seller_id', label: 'Vendedor da venda', type: 'select', options: userItems(), value: k.seller_id, placeholder: 'Não informado' })}
+      ${field({ name: 'sale_value', label: 'Valor de venda da carta (R$)', type: 'money', value: k.sale_value, help: 'Para carta contemplada vendida.' })}
+      <h4 class="full">Contemplação</h4>
+      ${field({ name: 'contemplated_at', label: 'Data da contemplação', type: 'date', value: k.contemplated_at })}
+      ${field({ name: 'contemplation_type', label: 'Tipo de contemplação', type: 'select', options: opts('tipo_contemplacao'), value: k.contemplation_type })}
+      ${field({ name: 'bid_value', label: 'Valor do lance (R$)', type: 'money', value: k.bid_value })}
+      ${field({ name: 'acquired_asset', label: 'Bem adquirido', value: k.acquired_asset })}
       ${propItems.length ? field({ name: 'proposal_id', label: 'Proposta vinculada', type: 'select', options: propItems, value: k.proposal_id, placeholder: 'Nenhuma' }) : ''}
       ${field({ name: 'notes', label: 'Observações', type: 'textarea', value: k.notes, full: true })}
     </div>`,

@@ -20,7 +20,9 @@ const OPP_FIELDS = [
   'title', 'product_id', 'priority', 'company_contact_id', 'credit_category', 'credit_value', 'term_months', 'installment_min',
   'installment_max', 'quotas', 'payment_modality', 'strategy', 'contemplation_type', 'bid_own_resources', 'fgts_available',
   'embedded_bid_interest', 'urgency', 'objective', 'qualification_criteria', 'next_action', 'next_action_at', 'owner_id', 'custom',
-  'pause_reason',
+  'pause_reason', 'objective_type', 'product_type', 'credit_purpose', 'financial_moment', 'employment_type', 'has_fgts', 'decision_maker',
+  'existing_products', 'existing_consortium_value', 'existing_consortium_admin', 'existing_financing_balance', 'existing_financing_cet',
+  'existing_financing_bank',
 ];
 const OPTION_FIELDS = {
   credit_category: 'categoria_credito',
@@ -28,6 +30,13 @@ const OPTION_FIELDS = {
   strategy: 'estrategia',
   contemplation_type: 'tipo_contemplacao',
   urgency: 'urgencia',
+  objective_type: 'objetivo',
+  product_type: 'tipo_produto',
+  financial_moment: 'momento_financeiro',
+  employment_type: 'tipo_contratacao',
+  has_fgts: 'possui_fgts',
+  decision_maker: 'decisor',
+  existing_products: 'possui_produto',
 };
 
 function assertOption(db, list, value, label) {
@@ -38,7 +47,8 @@ function assertOption(db, list, value, label) {
 
 function normalizeOpp(db, data, contactId) {
   const o = {};
-  for (const f of ['title', 'objective', 'qualification_criteria', 'next_action', 'pause_reason', 'embedded_bid_interest']) {
+  for (const f of ['title', 'objective', 'qualification_criteria', 'next_action', 'pause_reason', 'embedded_bid_interest', 'credit_purpose',
+    'existing_consortium_admin', 'existing_financing_bank']) {
     if (data[f] !== undefined) o[f] = clean(data[f]);
   }
   if (o.embedded_bid_interest && !['sim', 'nao', 'avaliar', 'nao_se_aplica'].includes(o.embedded_bid_interest)) {
@@ -50,7 +60,11 @@ function normalizeOpp(db, data, contactId) {
       assertOption(db, list, o[f], f);
     }
   }
-  for (const f of ['credit_value', 'installment_min', 'installment_max', 'bid_own_resources', 'fgts_available']) {
+  if (data.existing_financing_cet !== undefined) {
+    o.existing_financing_cet = toNumber(data.existing_financing_cet);
+    if (o.existing_financing_cet != null && (o.existing_financing_cet < 0 || o.existing_financing_cet > 100)) throw badRequest('CET deve estar entre 0 e 100% ao ano.');
+  }
+  for (const f of ['credit_value', 'installment_min', 'installment_max', 'bid_own_resources', 'fgts_available', 'existing_consortium_value', 'existing_financing_balance']) {
     if (data[f] !== undefined) {
       o[f] = toNumber(data[f]);
       if (o[f] != null && o[f] < 0) throw badRequest('Valores monetários não podem ser negativos.');
@@ -203,11 +217,19 @@ function validateStrategy(db, user, id) {
 
 const STATUS_BY_KIND = { aberta: 'aberta', ganho: 'ganha', perdido: 'perdida', nutricao: 'pausada' };
 
-function moveStage(db, user, id, data) {
+function moveStage(db, user, id, data, opts = {}) {
   const o = loadOpp(db, user, id, { write: true });
   const to = db.prepare('SELECT * FROM pipeline_stages WHERE id = ? AND active = 1').get(Number(data.stage_id));
   if (!to) throw badRequest('Etapa de destino inválida.');
   if (to.id === o.stage_id) return { changed: false };
+  if (to.kind === 'ganho' && !opts.skipChecklist && getSetting(db, 'require_sale_checklist') !== false) {
+    const { saleChecklist } = require('./record');
+    const contact = db.prepare('SELECT * FROM contacts WHERE id = ?').get(o.contact_id);
+    const check = saleChecklist(db, contact);
+    if (!check.complete) {
+      throw badRequest(`Para concluir a venda, complete a ficha de pré-venda. Faltam: ${check.missing.map((m) => m.label).join('; ')}.`, { missing: check.missing, contact_id: o.contact_id });
+    }
+  }
   const from = db.prepare('SELECT * FROM pipeline_stages WHERE id = ?').get(o.stage_id);
   const lostReason = clean(data.lost_reason);
   const reason = clean(data.reason);

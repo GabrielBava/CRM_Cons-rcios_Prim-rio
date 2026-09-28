@@ -180,6 +180,10 @@ function createActivity(db, user, data) {
   });
 }
 
+// Fase do relacionamento em que a atividade ocorreu: pré-venda (antes da 1ª proposta), venda (até a conversão) e pós-venda
+const PHASE_SQL = `(CASE WHEN c.converted_at IS NOT NULL AND a.occurred_at >= c.converted_at THEN 'pos_venda'
+  WHEN EXISTS (SELECT 1 FROM proposals px WHERE px.contact_id = a.contact_id AND px.created_at <= a.occurred_at) THEN 'venda' ELSE 'pre_venda' END)`;
+
 function listActivities(db, user, q) {
   const where = [];
   const params = [];
@@ -215,6 +219,10 @@ function listActivities(db, user, q) {
     where.push('a.result = ?');
     params.push(q.result);
   }
+  if (q.phase) {
+    where.push(`${PHASE_SQL} = ?`);
+    params.push(q.phase);
+  }
   if (q.from) {
     where.push('a.occurred_at >= ?');
     params.push(toIso(q.from));
@@ -233,7 +241,7 @@ function listActivities(db, user, q) {
   const total = db.prepare(`SELECT COUNT(*) AS n ${base}`).get(...params).n;
   const rows = db
     .prepare(
-      `SELECT a.*, c.name AS contact_name, c.code AS contact_code, u.name AS user_name, cc.name AS company_contact_name, o.code AS opportunity_code
+      `SELECT a.*, ${PHASE_SQL} AS phase, c.name AS contact_name, c.code AS contact_code, u.name AS user_name, cc.name AS company_contact_name, o.code AS opportunity_code
        ${base} ORDER BY a.occurred_at DESC, a.id DESC LIMIT ? OFFSET ?`,
     )
     .all(...params, limit, offset);

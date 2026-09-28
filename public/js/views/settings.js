@@ -186,17 +186,24 @@ const RENDER = {
   async campos(box, redraw) {
     const cfg = structuredClone(state.meta.settings.field_config || {});
     const STD = {
-      contact_pf: { label: 'Pessoa física', fields: { doc: 'CPF', birth_date: 'Data de nascimento', profession: 'Profissão', phone1: 'Telefone principal', phone2: 'Telefone secundário', whatsapp: 'WhatsApp', email: 'E-mail', city: 'Cidade', state: 'UF', origin: 'Origem', campaign: 'Campanha', pref_channel: 'Canal preferido', owner_id: 'Responsável' } },
-      contact_pj: { label: 'Pessoa jurídica', fields: { legal_name: 'Razão social', trade_name: 'Nome fantasia', doc: 'CNPJ', state_registration: 'Inscrição estadual', segment: 'Segmento', company_size: 'Porte', website: 'Site', phone1: 'Telefone principal', phone2: 'Telefone secundário', whatsapp: 'WhatsApp', email: 'E-mail', city: 'Cidade', state: 'UF', origin: 'Origem', company_contact: 'Contato da empresa' } },
+      contact_pf: { label: 'Pessoa física', fields: { doc: 'CPF', rg: 'RG', birth_date: 'Data de nascimento', sex: 'Sexo', marital_status: 'Estado civil', property_regime: 'Regime de bens', spouse: 'Dados do cônjuge', birthplace: 'Naturalidade', nationality: 'Nacionalidade', mother_name: 'Nome da mãe', profession: 'Profissão', income_range: 'Renda mensal', net_worth_range: 'Patrimônio', phone1: 'Telefone 1', phone2: 'Telefone 2', whatsapp: 'WhatsApp', email: 'E-mail', address: 'Endereço completo', city: 'Cidade', state: 'UF', origin: 'Origem', temperature: 'Temperatura', pref_channel: 'Canal preferido', owner_id: 'Responsável' } },
+      contact_pj: { label: 'Pessoa jurídica', fields: { legal_name: 'Razão social', trade_name: 'Nome fantasia', doc: 'CNPJ', state_registration: 'Inscrição estadual', opening_date: 'Data de abertura', main_activity: 'Atividade / CNAE', revenue_range: 'Faturamento', segment: 'Segmento', company_size: 'Porte', website: 'Site', legal_rep: 'Representante legal', phone1: 'Telefone 1', phone2: 'Telefone 2', whatsapp: 'WhatsApp', email: 'E-mail', address: 'Endereço completo', city: 'Cidade', state: 'UF', origin: 'Origem', temperature: 'Temperatura', company_contact: 'Contato da empresa' } },
     };
-    const DEF_REC = { contact_pf: ['phone1', 'email', 'city', 'state', 'origin', 'pref_channel'], contact_pj: ['phone1', 'email', 'legal_name', 'doc', 'city', 'state', 'origin', 'company_contact'] };
+    const DEF_REC = { contact_pf: ['phone1', 'email', 'city', 'state', 'origin', 'pref_channel', 'temperature'], contact_pj: ['phone1', 'email', 'legal_name', 'doc', 'city', 'state', 'origin', 'company_contact', 'temperature'] };
+    const DEF_SALE = {
+      contact_pf: ['doc', 'rg', 'phone1', 'email', 'birthplace', 'nationality', 'sex', 'marital_status', 'birth_date', 'mother_name', 'profession', 'income_range', 'property_regime', 'spouse', 'address'],
+      contact_pj: ['legal_name', 'doc', 'phone1', 'email', 'opening_date', 'main_activity', 'revenue_range', 'legal_rep', 'address'],
+    };
     const isRec = (e, f) => (cfg[e]?.[f]?.recommended ?? DEF_REC[e].includes(f)) && cfg[e]?.[f]?.visible !== false;
     const isVis = (e, f) => cfg[e]?.[f]?.visible !== false;
+    const isSale = (e, f) => DEF_SALE[e].includes(f) && cfg[e]?.[f]?.sale_required !== false;
+    const NO_HIDE = ['phone1', 'origin', 'owner_id', 'company_contact', 'address', 'spouse', 'legal_rep'];
     const custom = state.meta.custom_fields;
     render(box, html`<form class="card" id="fcfg"><h3>Campos padrão do cadastro</h3>
-        <p class="hint">Oculte campos que não são necessários para a operação (minimização de dados) e defina quais aparecem como "recomendados" para completar depois. O nome é sempre obrigatório.</p>
-        <div class="cols">${Object.entries(STD).map(([e, g]) => html`<div><h4>${g.label}</h4><table class="compact"><thead><tr><th>Campo</th><th>Exibir</th><th>Recomendado</th></tr></thead><tbody>
-          ${Object.entries(g.fields).map(([f, l]) => html`<tr><td>${l}</td><td><input type="checkbox" name="${e}.${f}.visible" ${isVis(e, f) ? 'checked' : ''} ${['phone1', 'origin', 'owner_id', 'company_contact'].includes(f) ? 'disabled' : ''}></td><td><input type="checkbox" name="${e}.${f}.recommended" ${isRec(e, f) ? 'checked' : ''}></td></tr>`)}
+        <p class="hint">Oculte campos que não são necessários para a operação (minimização de dados), defina quais aparecem como "recomendados" para completar depois e quais são obrigatórios para concluir a venda (ficha de pré-venda). O nome é sempre obrigatório.</p>
+        <div class="cols">${Object.entries(STD).map(([e, g]) => html`<div><h4>${g.label}</h4><table class="compact"><thead><tr><th>Campo</th><th>Exibir</th><th>Recomendado</th><th>Obrigatório na venda</th></tr></thead><tbody>
+          ${Object.entries(g.fields).map(([f, l]) => html`<tr><td>${l}</td><td><input type="checkbox" name="${e}.${f}.visible" ${isVis(e, f) ? 'checked' : ''} ${NO_HIDE.includes(f) ? 'disabled' : ''}></td><td><input type="checkbox" name="${e}.${f}.recommended" ${isRec(e, f) ? 'checked' : ''} ${['address', 'spouse', 'legal_rep'].includes(f) ? 'disabled' : ''}></td>
+            <td>${DEF_SALE[e].includes(f) ? html`<input type="checkbox" name="${e}.${f}.sale_required" ${isSale(e, f) ? 'checked' : ''}>` : '—'}</td></tr>`)}
         </tbody></table></div>`)}</div>
         <button class="btn primary" type="submit">Salvar configuração</button></form>
       <section class="card"><div class="section-head"><h3>Campos adicionais</h3><button class="btn" data-act="cf-new">+ Novo campo</button></div>
@@ -216,7 +223,8 @@ const RENDER = {
         for (const f of Object.keys(g.fields)) {
           const vis = e.target.elements[`${ent}.${f}.visible`];
           const rec = e.target.elements[`${ent}.${f}.recommended`];
-          out[ent][f] = { visible: vis.disabled ? true : vis.checked, recommended: rec.checked };
+          const sale = e.target.elements[`${ent}.${f}.sale_required`];
+          out[ent][f] = { visible: vis.disabled ? true : vis.checked, recommended: rec.disabled ? false : rec.checked, ...(sale ? { sale_required: sale.checked } : {}) };
         }
       }
       try {
@@ -377,8 +385,27 @@ const RENDER = {
     render(box, html`<form class="card" id="gen"><h3>Parâmetros gerais</h3><div class="grid">
       ${field({ name: 'stalled_days', label: 'Dias sem atividade para considerar um lead parado', type: 'number', value: s.stalled_days, min: 1 })}
       ${field({ name: 'simulation_link_hours', label: 'Validade do link do simulador (horas)', type: 'number', value: s.simulation_link_hours, min: 1 })}
+      ${field({ name: 'client_link_days', label: 'Validade do link para o cliente atualizar os dados (dias)', type: 'number', value: s.client_link_days, min: 1 })}
+      ${field({ name: 'finance_user_id', label: 'Responsável financeiro (recebe os alertas de parcelas em atraso)', type: 'select', options: userItems(), value: s.finance_user_id, placeholder: 'Responsável pelo cliente' })}
+      ${field({ name: 'require_sale_checklist', label: 'Exigir a ficha de pré-venda completa para concluir a venda', type: 'checkbox', value: s.require_sale_checklist, full: true })}
     </div><button class="btn primary" type="submit">Salvar</button></form>
+    <form class="card" id="docs"><h3>Documentos obrigatórios para a venda</h3>
+      <p class="hint">Marque os tipos de documento exigidos na ficha de pré-venda de cada tipo de pessoa. Os tipos podem ser editados em Listas › Tipos de documento.</p>
+      <div class="cols">${['PF', 'PJ'].map((k) => html`<div><h4>${k === 'PF' ? 'Pessoa física' : 'Pessoa jurídica'}</h4>${(state.meta.options.tipo_documento || []).filter((o) => o.active).map((o) => html`<label class="check"><input type="checkbox" name="${k}.${o.value}" ${(s.doc_checklist?.[k] || []).includes(o.value) ? 'checked' : ''}> ${o.label}</label>`)}</div>`)}</div>
+      <button class="btn primary" type="submit">Salvar documentos</button></form>
     <section class="card"><h3>Importações recentes</h3><div id="imports"></div><p><a href="#/importar">Nova importação →</a></p></section>`);
+    $('#docs', box).addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const dc = { PF: [], PJ: [] };
+      for (const el of e.target.elements) if (el.type === 'checkbox' && el.checked) dc[el.name.split('.')[0]].push(el.name.split('.')[1]);
+      try {
+        await patch('/api/configuracoes', { doc_checklist: dc });
+        await refreshMeta();
+        toast('Documentos obrigatórios salvos.');
+      } catch (ex) {
+        toastError(ex);
+      }
+    });
     $('#gen', box).addEventListener('submit', async (e) => {
       e.preventDefault();
       try {

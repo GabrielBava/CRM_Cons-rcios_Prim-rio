@@ -24,6 +24,7 @@ const ACTIVITY_TYPES = {
   proposta: { label: 'Proposta', system: true },
   cadastro: { label: 'Cadastro', system: true },
   preferencia: { label: 'Preferência de contato', system: true },
+  financeiro: { label: 'Financeiro', system: true },
 };
 
 const CALL_ATTEMPT_TYPES = ['ligacao_realizada', 'tentativa_sem_atendimento'];
@@ -71,6 +72,8 @@ const TASK_TYPES = {
   reuniao: 'Reunião / diagnóstico',
   enviar_proposta: 'Enviar proposta',
   documentacao: 'Documentação',
+  pre_venda: 'Ficha de pré-venda',
+  financeiro: 'Financeiro',
   outra: 'Outra',
 };
 const MEETING_OUTCOMES = { realizada: 'Realizada', nao_compareceu: 'Cliente não compareceu', remarcada: 'Remarcada', cancelada: 'Cancelada' };

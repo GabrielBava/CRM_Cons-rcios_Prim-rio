@@ -14,6 +14,8 @@ import * as products from './views/products.js';
 import * as reports from './views/reports.js';
 import * as settings from './views/settings.js';
 import * as importer from './views/import.js';
+import * as financeView from './views/finance.js';
+import * as publicForm from './views/public-form.js';
 
 const NAV = [
   ['painel', 'Painel inicial', dashboard],
@@ -23,6 +25,7 @@ const NAV = [
   ['atividades', 'Ligações e atividades', activities],
   ['simulacoes', 'Simulações e propostas', sales],
   ['clientes', 'Clientes', clients],
+  ['financeiro', 'Financeiro', financeView],
   ['produtos', 'Produtos e estratégias', products],
   ['relatorios', 'Relatórios', reports],
   ['configuracoes', 'Configurações e usuários', settings],
@@ -32,6 +35,9 @@ const EXTRA = { oportunidades: pipeline, importar: importer };
 const app = document.getElementById('app');
 
 async function boot() {
+  // Link enviado ao cliente: página pública, sem login
+  const pub = location.hash.match(/^#\/ficha\/([A-Za-z0-9_-]+)/);
+  if (pub) return publicForm.show(app, pub[1]);
   setUnauthorizedHandler(() => showLogin('Sua sessão expirou. Entre novamente.'));
   try {
     const s = await get('/api/setup');
@@ -163,6 +169,7 @@ function setupSearch() {
 
 let currentCleanup = null;
 async function route() {
+  if (/^#\/ficha\//.test(location.hash)) return boot();
   if (!state.meta) return;
   const hash = location.hash.replace(/^#\/?/, '') || 'painel';
   const [path, qs] = hash.split('?');

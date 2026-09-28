@@ -94,9 +94,31 @@ const LIST_LABELS = {
   indice_reajuste: 'Índices de reajuste',
   segmento: 'Segmentos (PJ)',
   porte: 'Porte (PJ)',
+  sexo: 'Sexo',
+  estado_civil: 'Estado civil',
+  regime_bens: 'Regime de bens',
+  faixa_renda: 'Faixas de renda mensal',
+  faixa_patrimonio: 'Faixas de patrimônio',
+  faixa_faturamento: 'Faixas de faturamento (PJ)',
+  temperatura: 'Temperatura do lead',
+  objetivo: 'Objetivo (R1)',
+  tipo_produto: 'Produto (primário ou contemplada)',
+  momento_financeiro: 'Momento financeiro (R1)',
+  tipo_contratacao: 'Tipo de contratação',
+  possui_fgts: 'Possui FGTS',
+  decisor: 'Quem decide a compra',
+  possui_produto: 'Já possui consórcio ou financiamento',
+  tipo_endereco: 'Tipos de endereço',
+  tipo_documento: 'Tipos de documento',
+  relacao_socio: 'Vínculo com a empresa (PJ)',
+  canal_aceite: 'Canal do aceite da proposta',
+  motivo_recusa_proposta: 'Motivos de recusa da proposta',
+  tipo_lancamento: 'Tipos de lançamento financeiro',
+  forma_pagamento: 'Formas de pagamento',
+  etapa_pos_venda: 'Etapas do pós-venda',
 };
 // Valores usados por regras do sistema não podem ser removidos
-const PROTECTED = { resultado_ligacao: ['nao_informado', 'outro'], origem: ['importacao', 'outra'] };
+const PROTECTED = { resultado_ligacao: ['nao_informado', 'outro'], origem: ['importacao', 'outra'], tipo_documento: ['outro'] };
 
 function saveOption(db, user, data) {
   requireAdmin(user);
@@ -202,6 +224,25 @@ function saveSettings(db, user, data) {
     if (!Number.isInteger(n) || n < 1 || n > 168) throw badRequest('Validade do link do simulador: entre 1 e 168 horas.');
     setSetting(db, 'simulation_link_hours', n);
   }
+  if (data.require_sale_checklist !== undefined) setSetting(db, 'require_sale_checklist', !!data.require_sale_checklist && data.require_sale_checklist !== 'false');
+  if (data.client_link_days !== undefined) {
+    const n = Number(data.client_link_days);
+    if (!Number.isInteger(n) || n < 1 || n > 60) throw badRequest('Validade do link do cliente: entre 1 e 60 dias.');
+    setSetting(db, 'client_link_days', n);
+  }
+  if (data.finance_user_id !== undefined) {
+    const id = data.finance_user_id ? Number(data.finance_user_id) : null;
+    if (id && !db.prepare('SELECT 1 FROM users WHERE id = ? AND active = 1').get(id)) throw badRequest('Usuário financeiro inválido.');
+    setSetting(db, 'finance_user_id', id);
+  }
+  if (data.doc_checklist !== undefined) {
+    const dc = data.doc_checklist;
+    if (!dc || typeof dc !== 'object' || !Array.isArray(dc.PF) || !Array.isArray(dc.PJ)) throw badRequest('Checklist de documentos inválido.');
+    for (const t of [...dc.PF, ...dc.PJ]) {
+      if (!db.prepare("SELECT 1 FROM options WHERE list = 'tipo_documento' AND value = ?").get(t)) throw badRequest(`Tipo de documento inválido: ${t}.`);
+    }
+    setSetting(db, 'doc_checklist', { PF: [...new Set(dc.PF)], PJ: [...new Set(dc.PJ)] });
+  }
   if (data.field_config !== undefined) {
     if (typeof data.field_config !== 'object' || !data.field_config) throw badRequest('Configuração de campos inválida.');
     setSetting(db, 'field_config', data.field_config);
@@ -244,7 +285,15 @@ function meta(db, user) {
     users: listUsers(db, user).filter((u) => u.active),
     teams: listTeams(db),
     custom_fields: db.prepare('SELECT * FROM custom_fields WHERE active = 1 ORDER BY entity, position').all().map((f) => ({ ...f, options: f.options ? JSON.parse(f.options) : null })),
-    settings: { stalled_days: getSetting(db, 'stalled_days'), simulation_link_hours: getSetting(db, 'simulation_link_hours'), field_config: getSetting(db, 'field_config') || {} },
+    settings: {
+      stalled_days: getSetting(db, 'stalled_days'),
+      simulation_link_hours: getSetting(db, 'simulation_link_hours'),
+      field_config: getSetting(db, 'field_config') || {},
+      require_sale_checklist: getSetting(db, 'require_sale_checklist') !== false,
+      client_link_days: getSetting(db, 'client_link_days'),
+      finance_user_id: getSetting(db, 'finance_user_id'),
+      doc_checklist: getSetting(db, 'doc_checklist'),
+    },
     simulator: simulatorAvailability(db),
     constants: {
       activity_types: C.ACTIVITY_TYPES,

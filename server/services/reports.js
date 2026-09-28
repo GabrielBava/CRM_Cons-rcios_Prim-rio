@@ -117,6 +117,12 @@ function dashboard(db, user, q) {
     [...fo.params, from, to],
   );
 
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const finLate = one(
+    `SELECT COUNT(*) AS n, COALESCE(SUM(fe.amount), 0) AS v FROM finance_entries fe JOIN contacts c ON c.id = fe.contact_id
+     WHERE ${fc.where} AND fe.status = 'a_vencer' AND fe.due_date < ?`,
+    [...fc.params, todayStr],
+  );
   const stalledDays = Number(getSetting(db, 'stalled_days')) || 7;
   const limitDate = new Date(Date.now() - stalledDays * 86400000).toISOString();
   const parados = db
@@ -171,6 +177,7 @@ function dashboard(db, user, q) {
       { key: 'reunioes', label: 'Reuniões agendadas', value: reunioes.agendadas || 0, sub: `${reunioes.realizadas || 0} realizadas`, def: 'Agendadas = reuniões/diagnósticos criados (agendados) no período, para qualquer data. Realizadas = reuniões com data dentro do período concluídas com resultado "Realizada".' },
       { key: 'simulacoes', label: 'Simulações registradas', value: simulacoes, def: 'Simulações criadas no período (manuais ou vindas do simulador). Novas versões da mesma simulação não contam.' },
       { key: 'propostas', label: 'Propostas geradas', value: propostas, def: 'Propostas criadas no período, contando apenas a primeira versão (novas versões não inflam o número).' },
+      { key: 'fin_atraso', label: 'Parcelas em atraso', value: finLate.n, sub: finLate.v ? finLate.v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : null, link: '#/financeiro', def: 'Situação atual (independe do período): lançamentos do Financeiro "a vencer" com vencimento anterior a hoje. Filtro de responsável: responsável pelo cliente.' },
       { key: 'vendas', label: 'Vendas concluídas', value: vendas.n, sub: vendas.credito ? `Crédito: ${vendas.credito.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}` : null, def: 'Oportunidades movidas para a etapa de venda concluída com data de fechamento no período. Crédito = soma do crédito desejado dessas oportunidades.' },
     ],
     stalled_by_stage: parados,
@@ -201,6 +208,8 @@ const REPORTS = {
   tempo_etapa: 'Tempo médio em cada etapa',
   pendencias: 'Atividades pendentes e leads sem retorno',
   resultado_usuario: 'Resultado por usuário',
+  financeiro: 'Financeiro: previsto, recebido e em atraso',
+  vendas_vendedor: 'Vendas por vendedor',
 };
 
 function report(db, user, key, q) {
@@ -501,6 +510,59 @@ function report(db, user, key, q) {
         ],
         columns: [col('usuario', 'Usuário'), col('leads_novos', 'Leads novos', 'int'), col('tentativas', 'Tentativas', 'int'), col('efetivas', 'Efetivas', 'int'), col('taxa_contato', 'Taxa de contato', 'pct'), col('reunioes_realizadas', 'Reuniões realizadas', 'int'), col('simulacoes', 'Simulações', 'int'), col('propostas', 'Propostas', 'int'), col('vendas', 'Vendas', 'int'), col('credito_vendido', 'Crédito vendido', 'money'), col('conversao_coorte', 'Conversão (coorte)', 'pct')],
         rows,
+      };
+    }
+    case 'financeiro': {
+      const t = new Date().toISOString().slice(0, 10);
+      const fin = filters(db, user, { ...q, product_id: undefined, stage_id: undefined, status: undefined }, 'contact');
+      const f = from.slice(0, 10);
+      const tt = to.slice(0, 10);
+      const rows = db
+        .prepare(
+          `SELECT substr(fe.due_date, 1, 7) AS mes, COUNT(*) AS lancamentos, COALESCE(SUM(fe.amount), 0) AS previsto,
+            COALESCE(SUM(CASE WHEN fe.status = 'pago' THEN COALESCE(fe.paid_amount, fe.amount) END), 0) AS recebido,
+            COALESCE(SUM(CASE WHEN fe.status = 'a_vencer' AND fe.due_date < ? THEN fe.amount END), 0) AS em_atraso,
+            SUM(fe.status = 'a_vencer' AND fe.due_date < ?) AS qtd_atraso,
+            COALESCE(SUM(CASE WHEN fe.status = 'negociado' THEN fe.amount END), 0) AS negociado
+           FROM finance_entries fe JOIN contacts c ON c.id = fe.contact_id
+           WHERE ${fin.where} AND fe.status <> 'cancelado' AND fe.due_date BETWEEN ? AND ? GROUP BY mes ORDER BY mes`,
+        )
+        .all(t, t, ...fin.params, f, tt)
+        .map((r) => ({ ...r, adimplencia: pct(r.recebido, r.previsto - r.negociado) }));
+      const tot = rows.reduce((a, r) => ({ previsto: a.previsto + r.previsto, recebido: a.recebido + r.recebido, em_atraso: a.em_atraso + r.em_atraso }), { previsto: 0, recebido: 0, em_atraso: 0 });
+      return {
+        ...base,
+        definition: [
+          'Lançamentos do módulo Financeiro com vencimento no período, agrupados pelo mês de vencimento (cancelados não entram).',
+          'Previsto = soma dos valores; Recebido = soma dos valores pagos; Em atraso = lançamentos "a vencer" com vencimento anterior a hoje.',
+          'Adimplência (%) = recebido ÷ (previsto − negociado).',
+        ],
+        columns: [col('mes', 'Mês de vencimento'), col('lancamentos', 'Lançamentos', 'int'), col('previsto', 'Previsto', 'money'), col('recebido', 'Recebido', 'money'), col('em_atraso', 'Em atraso', 'money'), col('qtd_atraso', 'Qtd. em atraso', 'int'), col('negociado', 'Negociado', 'money'), col('adimplencia', 'Adimplência', 'pct')],
+        rows,
+        totals: { mes: 'Total', previsto: tot.previsto, recebido: tot.recebido, em_atraso: tot.em_atraso },
+      };
+    }
+    case 'vendas_vendedor': {
+      const fk = filters(db, user, { ...q, owner_id: undefined }, 'contract');
+      const rows = db
+        .prepare(
+          `SELECT COALESCE(u.name, 'Não informado') AS vendedor, COUNT(*) AS contratos, COALESCE(SUM(k.credit_value), 0) AS credito,
+            COALESCE(SUM(k.sale_value), 0) AS valor_venda_cartas, SUM(k.quotas) AS cotas
+           FROM contracts k JOIN contacts c ON c.id = k.contact_id LEFT JOIN users u ON u.id = k.seller_id
+           WHERE ${fk.where} AND k.status <> 'cancelado' AND COALESCE(k.contracted_at, substr(k.created_at, 1, 10)) BETWEEN ? AND ?
+           ${q.owner_id ? 'AND k.seller_id = ?' : ''} GROUP BY k.seller_id ORDER BY credito DESC`,
+        )
+        .all(...fk.params, from.slice(0, 10), to.slice(0, 10), ...(q.owner_id ? [Number(q.owner_id)] : []));
+      return {
+        ...base,
+        definition: [
+          'Produtos contratados (não cancelados) com data de contratação no período, agrupados pelo vendedor da venda.',
+          'Crédito = soma do crédito contratado. Valor de venda (cartas) = soma do valor de venda informado para cartas contempladas.',
+          'O filtro de usuário aplica-se ao vendedor.',
+        ],
+        columns: [col('vendedor', 'Vendedor'), col('contratos', 'Contratos', 'int'), col('cotas', 'Cotas', 'int'), col('credito', 'Crédito contratado', 'money'), col('valor_venda_cartas', 'Valor de venda (cartas)', 'money')],
+        rows,
+        totals: { vendedor: 'Total', contratos: rows.reduce((a, r) => a + r.contratos, 0), credito: rows.reduce((a, r) => a + r.credito, 0), valor_venda_cartas: rows.reduce((a, r) => a + r.valor_venda_cartas, 0) },
       };
     }
     default:

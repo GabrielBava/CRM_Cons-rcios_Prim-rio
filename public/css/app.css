@@ -347,3 +347,36 @@ details summary { cursor: pointer; font-weight: 500; margin: 6px 0; }
   .modal-backdrop { padding: 0; }
   .modal { border-radius: 0; min-height: 100vh; }
 }
+
+/* Ficha: checklist, pré-venda, financeiro */
+.rec.sale { color: var(--danger); background: var(--danger-soft); }
+.count.warn { background: var(--warn-soft); color: var(--warn); }
+.count.danger { background: var(--danger-soft); color: var(--danger); }
+.checklist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.checklist li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; }
+.checklist li.ok { background: var(--ok-soft); border-color: transparent; }
+.checklist .mark { font-weight: 700; width: 1.2em; text-align: center; color: var(--muted); }
+.checklist li.ok .mark { color: var(--ok); }
+.checklist .upload-btn { margin-left: auto; cursor: pointer; }
+.progress-bar { height: 10px; border-radius: 99px; background: var(--surface-2); overflow: hidden; margin: 8px 0 4px; }
+.progress-bar span { display: block; height: 100%; background: var(--ok); }
+.card.inner { box-shadow: none; background: var(--surface-2); margin: 0; }
+.kpi.alert-kpi { border-color: var(--danger); }
+.kpi.alert-kpi .kpi-value { color: var(--danger); }
+.badge.temp-quente { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
+.badge.temp-morno { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.badge.temp-frio { background: var(--primary-soft); color: var(--primary); border-color: transparent; }
+.badge.phase-pre_venda { color: var(--muted); }
+.badge.phase-venda { background: var(--primary-soft); color: var(--primary); border-color: transparent; }
+.badge.phase-pos_venda { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+.modal-body h4.full, .grid > h4 { grid-column: 1 / -1; margin: 10px 0 0; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.grid > .grid.full { grid-column: 1 / -1; }
+.regime-wrap { display: contents; }
+.regime-wrap[hidden] { display: none !important; }
+
+/* Página pública do cliente */
+.public-page { max-width: 820px; margin: 0 auto; padding: 24px 16px 48px; display: flex; flex-direction: column; gap: 16px; width: 100%; }
+.public-page header h1 { margin-bottom: 6px; }
+.public-page .card { margin: 0; }
+.public-page h2 { margin: 6px 0 10px; }
+.public-page .spouse { margin-top: 14px; }

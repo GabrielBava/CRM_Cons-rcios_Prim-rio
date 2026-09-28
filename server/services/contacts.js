@@ -42,13 +42,22 @@ const CONTACT_FIELDS = [
   'birth_date', 'profession', 'segment', 'company_size', 'website', 'origin', 'campaign', 'first_contact_at', 'initial_notes',
   'pref_channel', 'pref_time', 'pref_phone', 'pref_frequency', 'contact_restriction', 'pref_updated_at', 'pref_source',
   'owner_id', 'custom',
+  'rg', 'birthplace', 'nationality', 'sex', 'marital_status', 'property_regime', 'mother_name', 'income_range', 'net_worth_range',
+  'spouse_name', 'spouse_doc', 'spouse_profession', 'spouse_income_range', 'opening_date', 'main_activity', 'revenue_range',
+  'temperature', 'referred_by_id', 'nps_score', 'nps_comment', 'nps_at',
 ];
+// Campos preenchidos por listas configuráveis (validados contra a lista)
+const LIST_FIELDS = {
+  sex: 'sexo', marital_status: 'estado_civil', property_regime: 'regime_bens', income_range: 'faixa_renda',
+  net_worth_range: 'faixa_patrimonio', spouse_income_range: 'faixa_renda', revenue_range: 'faixa_faturamento',
+  temperature: 'temperatura', segment: 'segmento', company_size: 'porte', origin: 'origem',
+};
 const AUDITED_FIELDS = CONTACT_FIELDS.filter((f) => !f.endsWith('_norm') && f !== 'pref_updated_at');
 const PREF_FIELDS = ['pref_channel', 'pref_time', 'pref_phone', 'pref_frequency', 'contact_restriction'];
 
 const DEFAULT_RECOMMENDED = {
-  PF: ['phone1', 'email', 'city', 'state', 'origin', 'pref_channel'],
-  PJ: ['phone1', 'email', 'legal_name', 'doc', 'city', 'state', 'origin', 'company_contact'],
+  PF: ['phone1', 'email', 'city', 'state', 'origin', 'pref_channel', 'temperature'],
+  PJ: ['phone1', 'email', 'legal_name', 'doc', 'city', 'state', 'origin', 'company_contact', 'temperature'],
 };
 
 function recommendedFields(db, kind) {
@@ -96,8 +105,33 @@ function normalizeInput(db, data, kind) {
   }
   const k = o.kind || kind;
   for (const f of ['name', 'trade_name', 'legal_name', 'state_registration', 'city', 'profession', 'segment', 'company_size',
-    'website', 'origin', 'campaign', 'initial_notes', 'pref_channel', 'pref_time', 'pref_phone', 'pref_frequency', 'contact_restriction']) {
+    'website', 'origin', 'campaign', 'initial_notes', 'pref_channel', 'pref_time', 'pref_phone', 'pref_frequency', 'contact_restriction',
+    'rg', 'birthplace', 'nationality', 'mother_name', 'spouse_name', 'spouse_profession', 'main_activity', 'nps_comment',
+    'sex', 'marital_status', 'property_regime', 'income_range', 'net_worth_range', 'spouse_income_range', 'revenue_range', 'temperature']) {
     set(f, clean(data[f]));
+  }
+  for (const [f, list] of Object.entries(LIST_FIELDS)) {
+    if (o[f] && !db.prepare('SELECT 1 FROM options WHERE list = ? AND value = ?').get(list, o[f])) {
+      throw badRequest(`Valor inválido para o campo ${f}.`);
+    }
+  }
+  if (data.spouse_doc !== undefined) {
+    const d = digits(data.spouse_doc);
+    if (d && !isValidCPF(d)) throw badRequest('CPF do cônjuge inválido.');
+    o.spouse_doc = d || null;
+  }
+  set('opening_date', toDateOnly(data.opening_date));
+  if (data.nps_score !== undefined) {
+    const n = data.nps_score === '' || data.nps_score === null ? null : Number(data.nps_score);
+    if (n != null && (!Number.isInteger(n) || n < 0 || n > 10)) throw badRequest('A nota NPS deve ser um número inteiro de 0 a 10.');
+    o.nps_score = n;
+    if (n != null) o.nps_at = nowIso();
+  }
+  if (data.referred_by_id !== undefined) {
+    o.referred_by_id = data.referred_by_id ? Number(data.referred_by_id) : null;
+    if (o.referred_by_id && !db.prepare('SELECT 1 FROM contacts WHERE id = ? AND merged_into_id IS NULL').get(o.referred_by_id)) {
+      throw badRequest('Cadastro indicado não encontrado.');
+    }
   }
   if (o.name !== undefined && !o.name) throw badRequest('Informe o nome completo ou nome de contato.');
   if (data.state !== undefined) {
@@ -427,6 +461,7 @@ function listContacts(db, user, q) {
   multi('c.client_status', q.client_status);
   multi('c.kind', q.kind);
   multi('c.origin', q.origin);
+  multi('c.temperature', q.temperature);
   if (q.owner_id) {
     if (q.owner_id === 'none') where.push('c.owner_id IS NULL');
     else {
@@ -474,7 +509,7 @@ function listContacts(db, user, q) {
     .prepare(
       `SELECT c.id, c.code, c.uid, c.kind, c.name, c.trade_name, c.legal_name, c.phone1, c.phone2, c.whatsapp, c.email, c.city, c.state,
         c.relationship, c.lead_status, c.client_status, c.origin, c.campaign, c.owner_id, c.doc, c.optouts, c.created_at, c.updated_at,
-        c.first_contact_at, c.anonymized_at, u.name AS owner_name,
+        c.first_contact_at, c.anonymized_at, c.temperature, u.name AS owner_name,
         (SELECT MAX(a.occurred_at) FROM activities a WHERE a.contact_id = c.id AND a.type NOT IN ('cadastro','preferencia')) AS last_activity_at,
         ${NEXT_TASK_SQL} AS next_task, ${NEXT_OPP_SQL} AS next_opp
        ${base} ORDER BY ${order} LIMIT ? OFFSET ?`,
@@ -527,6 +562,13 @@ function getContact(db, user, id) {
     .prepare('SELECT pr.*, o.code AS opportunity_code, p.name AS product_name FROM proposals pr LEFT JOIN opportunities o ON o.id = pr.opportunity_id LEFT JOIN products p ON p.id = pr.product_id WHERE pr.contact_id = ? ORDER BY pr.created_at DESC')
     .all(c.id);
   const mergedFrom = db.prepare('SELECT id, code, name FROM contacts WHERE merged_into_id = ?').all(c.id);
+  const record = require('./record');
+  const finance = require('./finance');
+  const addresses = db.prepare('SELECT * FROM addresses WHERE contact_id = ? ORDER BY is_primary DESC, id').all(c.id);
+  const partners = db.prepare('SELECT * FROM partners WHERE contact_id = ? ORDER BY active DESC, is_legal_rep DESC, name').all(c.id);
+  const referredBy = c.referred_by_id ? db.prepare('SELECT id, code, name FROM contacts WHERE id = ?').get(c.referred_by_id) : null;
+  const referrals = db.prepare('SELECT id, code, name, relationship, created_at FROM contacts WHERE referred_by_id = ? AND merged_into_id IS NULL ORDER BY created_at DESC').all(c.id);
+  const activeLink = db.prepare('SELECT created_at, expires_at, last_used_at, submissions FROM client_links WHERE contact_id = ? AND revoked_at IS NULL AND expires_at > ? ORDER BY id DESC LIMIT 1').get(c.id, nowIso());
   const row = db.prepare(`SELECT ${NEXT_TASK_SQL} AS next_task, ${NEXT_OPP_SQL} AS next_opp FROM contacts c WHERE c.id = ?`).get(c.id);
   const recommended = recommendedFields(db, c.kind);
   const missing = recommended.filter((f) => (f === 'company_contact' ? !companyContacts.some((x) => x.active) : !c[f]));
@@ -547,6 +589,15 @@ function getContact(db, user, id) {
     simulations,
     proposals,
     merged_from: mergedFrom,
+    addresses,
+    partners,
+    attachments: record.listAttachments(db, c.id),
+    sale_checklist: record.saleChecklist(db, c),
+    finance_summary: finance.summary(db, c.id),
+    post_sale: record.postSaleItems(db, c.id),
+    referred_by: referredBy,
+    referrals,
+    client_link: activeLink || null,
     next_action: nextActionFrom(row),
     recommended_fields: recommended,
     missing_recommended: missing,
@@ -744,6 +795,7 @@ function anonymizeContact(db, user, id, reason) {
       `UPDATE contacts SET name = ?, trade_name = NULL, legal_name = NULL, doc = NULL, state_registration = NULL, phone1 = NULL, phone1_norm = NULL,
         phone2 = NULL, phone2_norm = NULL, whatsapp = NULL, whatsapp_norm = NULL, email = NULL, email_norm = NULL, city = NULL,
         birth_date = NULL, profession = NULL, website = NULL, initial_notes = NULL, pref_phone = NULL, contact_restriction = NULL,
+        rg = NULL, birthplace = NULL, mother_name = NULL, spouse_name = NULL, spouse_doc = NULL, spouse_profession = NULL, nps_comment = NULL,
         custom = '{}', optouts = '["todos"]', anonymized_at = ?, updated_at = ?, updated_by = ? WHERE id = ?`,
     ).run(`Titular anonimizado (${c.code})`, now, now, user.id, c.id);
     db.prepare(
@@ -756,6 +808,10 @@ function anonymizeContact(db, user, id, reason) {
     db.prepare("UPDATE inbound_events SET payload = '{}' WHERE contact_id = ?").run(c.id);
     db.prepare("UPDATE contact_origins SET other_params = NULL WHERE contact_id = ?").run(c.id);
     db.prepare("UPDATE simulation_links SET revoked_at = COALESCE(revoked_at, ?) WHERE contact_id = ?").run(now, c.id);
+    db.prepare("UPDATE client_links SET revoked_at = COALESCE(revoked_at, ?) WHERE contact_id = ?").run(now, c.id);
+    db.prepare("UPDATE attachments SET content = X'', filename = 'removido', status = 'removido', notes = NULL WHERE contact_id = ?").run(c.id);
+    db.prepare("UPDATE addresses SET cep = NULL, street = NULL, number = NULL, complement = NULL, district = NULL WHERE contact_id = ?").run(c.id);
+    db.prepare("UPDATE partners SET name = 'Anonimizado', doc = NULL, email = NULL, phone = NULL WHERE contact_id = ?").run(c.id);
     db.prepare("UPDATE tasks SET status = 'cancelada', updated_at = ? WHERE contact_id = ? AND status = 'pendente'").run(now, c.id);
     audit(db, user, 'contact', c.id, 'anonimizado', { motivo: clean(reason) }, c.id);
   });
@@ -778,11 +834,12 @@ function mergeContacts(db, user, targetId, sourceId) {
       ['activities', 'contact_id'], ['opportunities', 'contact_id'], ['tasks', 'contact_id'], ['contact_origins', 'contact_id'],
       ['consents', 'contact_id'], ['data_requests', 'contact_id'], ['company_contacts', 'company_id'], ['simulations', 'contact_id'],
       ['simulation_links', 'contact_id'], ['proposals', 'contact_id'], ['contracts', 'contact_id'], ['call_events', 'contact_id'],
-      ['inbound_events', 'contact_id'],
+      ['inbound_events', 'contact_id'], ['addresses', 'contact_id'], ['partners', 'contact_id'], ['attachments', 'contact_id'],
+      ['finance_entries', 'contact_id'], ['finance_issues', 'contact_id'], ['post_sale_items', 'contact_id'], ['client_links', 'contact_id'],
     ];
     const moved = {};
     for (const [t, col] of tables) {
-      moved[t] = db.prepare(`UPDATE ${t} SET ${col} = ? WHERE ${col} = ?`).run(target.id, source.id).changes;
+      moved[t] = db.prepare(`UPDATE OR IGNORE ${t} SET ${col} = ? WHERE ${col} = ?`).run(target.id, source.id).changes;
     }
     // Completa campos vazios do destino com dados da origem (nunca sobrescreve)
     const fill = {};
@@ -806,6 +863,7 @@ function mergeContacts(db, user, targetId, sourceId) {
     fill.updated_by = user.id;
     const u = buildUpdate('contacts', target.id, fill, Object.keys(fill));
     db.prepare(u.sql).run(...u.params);
+    db.prepare('UPDATE contacts SET referred_by_id = ? WHERE referred_by_id = ?').run(target.id, source.id);
     db.prepare('UPDATE contacts SET merged_into_id = ?, updated_at = ?, updated_by = ? WHERE id = ?').run(target.id, now, user.id, source.id);
     insertActivity(db, {
       contact_id: target.id,

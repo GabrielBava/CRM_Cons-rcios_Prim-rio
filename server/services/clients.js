@@ -7,7 +7,8 @@ const { assertOption } = require('./opportunities');
 
 const CONTRACT_FIELDS = [
   'product_id', 'category', 'administrator', 'group_code', 'quota_code', 'credit_value', 'term_months', 'contracted_at', 'quotas',
-  'status', 'payment_modality', 'strategy', 'notes', 'proposal_id',
+  'status', 'payment_modality', 'strategy', 'notes', 'proposal_id', 'contract_number', 'installment_value', 'due_day', 'first_due_date',
+  'contemplated_at', 'contemplation_type', 'bid_value', 'acquired_asset', 'seller_id', 'sale_value',
 ];
 
 function normalizeContract(db, data, contactId) {
@@ -34,6 +35,27 @@ function normalizeContract(db, data, contactId) {
     assertOption(db, 'estrategia', o.strategy, 'estratégia');
   }
   if (data.credit_value !== undefined) o.credit_value = toNumber(data.credit_value);
+  for (const f of ['contract_number', 'acquired_asset']) if (data[f] !== undefined) o[f] = clean(data[f]);
+  for (const f of ['installment_value', 'bid_value', 'sale_value']) {
+    if (data[f] !== undefined) {
+      o[f] = toNumber(data[f]);
+      if (o[f] != null && o[f] < 0) throw badRequest('Valores não podem ser negativos.');
+    }
+  }
+  if (data.due_day !== undefined) {
+    const n = toNumber(data.due_day);
+    if (n != null && (!Number.isInteger(n) || n < 1 || n > 31)) throw badRequest('Dia de vencimento deve estar entre 1 e 31.');
+    o.due_day = n;
+  }
+  for (const f of ['first_due_date', 'contemplated_at']) if (data[f] !== undefined) o[f] = toDateOnly(data[f]);
+  if (data.contemplation_type !== undefined) {
+    o.contemplation_type = clean(data.contemplation_type);
+    assertOption(db, 'tipo_contemplacao', o.contemplation_type, 'tipo de contemplação');
+  }
+  if (data.seller_id !== undefined) {
+    o.seller_id = data.seller_id ? Number(data.seller_id) : null;
+    if (o.seller_id && !db.prepare('SELECT 1 FROM users WHERE id = ?').get(o.seller_id)) throw badRequest('Vendedor inválido.');
+  }
   for (const f of ['term_months', 'quotas']) {
     if (data[f] !== undefined) {
       const n = toNumber(data[f]);
@@ -68,7 +90,7 @@ function createContractRow(db, user, data) {
   if (o.product_id && !o.administrator) o.administrator = db.prepare('SELECT administrator FROM products WHERE id = ?').get(o.product_id)?.administrator ?? null;
   const now = nowIso();
   const code = nextCode(db, 'contract', 'CT');
-  const row = { status: 'em_formalizacao', ...o, code, contact_id: contactId, opportunity_id: opp?.id ?? null, owner_id: opp?.owner_id ?? user.id, created_by: user.id, created_at: now, updated_at: now };
+  const row = { status: 'em_formalizacao', seller_id: opp?.owner_id ?? user.id, ...o, code, contact_id: contactId, opportunity_id: opp?.id ?? null, owner_id: opp?.owner_id ?? user.id, created_by: user.id, created_at: now, updated_at: now };
   const cols = Object.keys(row);
   const r = db.prepare(`INSERT INTO contracts (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...cols.map((c) => row[c] ?? null));
   const id = Number(r.lastInsertRowid);
@@ -120,6 +142,10 @@ function listContracts(db, user, q) {
     where.push('k.owner_id = ?');
     params.push(Number(q.owner_id));
   }
+  if (q.seller_id) {
+    where.push('k.seller_id = ?');
+    params.push(Number(q.seller_id));
+  }
   if (q.contact_id) {
     where.push('k.contact_id = ?');
     params.push(Number(q.contact_id));
@@ -138,7 +164,7 @@ function listContracts(db, user, q) {
     WHERE ${where.join(' AND ')}`;
   const total = db.prepare(`SELECT COUNT(*) AS n ${base}`).get(...params).n;
   const rows = db
-    .prepare(`SELECT k.*, c.name AS contact_name, c.code AS contact_code, p.name AS product_name, u.name AS owner_name, pr.code AS proposal_code, o.code AS opportunity_code
+    .prepare(`SELECT k.*, c.name AS contact_name, c.code AS contact_code, p.name AS product_name, u.name AS owner_name, (SELECT name FROM users su WHERE su.id = k.seller_id) AS seller_name, pr.code AS proposal_code, o.code AS opportunity_code
       ${base} ORDER BY k.created_at DESC LIMIT ? OFFSET ?`)
     .all(...params, limit, offset);
   return { total, page, limit, rows };

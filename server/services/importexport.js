@@ -339,8 +339,22 @@ function exportData(db, user, entity, q) {
         { label: 'Cota', key: 'quota_code' }, { label: 'Crédito', key: 'credit_value' }, { label: 'Prazo', key: 'term_months' }, { label: 'Cotas', key: 'quotas' },
         { label: 'Contratação', key: 'contracted_at' }, { label: 'Status', get: (r) => L('status_contrato', r.status) }, { label: 'Modalidade', get: (r) => L('modalidade_pagamento', r.payment_modality) },
         { label: 'Estratégia', get: (r) => L('estrategia', r.strategy) }, { label: 'Proposta', key: 'proposal_code' }, { label: 'Responsável', key: 'owner_name' },
+        { label: 'Nº contrato administradora', key: 'contract_number' }, { label: 'Valor da parcela', key: 'installment_value' }, { label: 'Dia de vencimento', key: 'due_day' },
+        { label: 'Contemplado em', key: 'contemplated_at' }, { label: 'Vendedor', key: 'seller_name' }, { label: 'Valor de venda (carta)', key: 'sale_value' },
       ];
       break;
+    case 'financeiro': {
+      const { listEntries, STATUS_LABEL } = require('./finance');
+      rows = listEntries(db, user, all).rows;
+      columns = [
+        { label: 'Código', key: 'code' }, { label: 'Cadastro', key: 'contact_code' }, { label: 'Cliente', key: 'contact_name' }, { label: 'Contrato', key: 'contract_code' },
+        { label: 'Nº contrato administradora', key: 'contract_number' }, { label: 'Tipo', get: (r) => L('tipo_lancamento', r.type) }, { label: 'Parcela', key: 'installment_number' },
+        { label: 'Vencimento', key: 'due_date' }, { label: 'Valor', key: 'amount' }, { label: 'Situação', get: (r) => STATUS_LABEL[r.display_status] },
+        { label: 'Dias em atraso', key: 'days_late' }, { label: 'Pago em', key: 'paid_at' }, { label: 'Valor pago', key: 'paid_amount' },
+        { label: 'Forma de pagamento', get: (r) => L('forma_pagamento', r.payment_method) }, { label: 'Responsável', key: 'owner_name' }, { label: 'Observações', key: 'notes' },
+      ];
+      break;
+    }
     case 'lista_discadora': {
       // Lista para campanhas da discadora: exclui quem se opôs a ligações e cadastros sem telefone
       const list = listContacts(db, user, all).rows.filter((r) => !r.optouts.includes('todos') && !r.optouts.includes('ligacao') && (r.phone1 || r.whatsapp) && !r.anonymized_at);
