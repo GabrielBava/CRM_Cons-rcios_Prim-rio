@@ -698,14 +698,19 @@ function seedDefaults(db) {
   }
 }
 
-function openDb(file) {
-  if (file !== ':memory:') fs.mkdirSync(path.dirname(file), { recursive: true });
-  const db = new DatabaseSync(file);
+/** Cria as tabelas e os valores iniciais (idempotente). Aceita qualquer conexão compatível com DatabaseSync. */
+function initDb(db) {
   db.exec('PRAGMA foreign_keys = ON;');
-  if (file !== ':memory:') db.exec('PRAGMA journal_mode = WAL;');
   db.exec(SCHEMA);
   seedDefaults(db);
   return db;
+}
+
+function openDb(file) {
+  if (file !== ':memory:') fs.mkdirSync(path.dirname(file), { recursive: true });
+  const db = new DatabaseSync(file);
+  if (file !== ':memory:') db.exec('PRAGMA journal_mode = WAL;');
+  return initDb(db);
 }
 
 /** Executa fn dentro de uma transação (aninhamento via SAVEPOINT). */
@@ -744,4 +749,4 @@ function setSetting(db, key, value) {
   );
 }
 
-module.exports = { openDb, tx, nextCode, getSetting, setSetting, DEFAULT_SETTINGS };
+module.exports = { openDb, initDb, tx, nextCode, getSetting, setSetting, DEFAULT_SETTINGS };

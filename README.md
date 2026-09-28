@@ -37,6 +37,15 @@ CRM_DB=data/demo.db npm start
 
 O comando cria os usuários `admin@demo.local`, `gestora@demo.local`, `consultor1@demo.local`, `consultor2@demo.local` e `leitura@demo.local`, além de 20 leads fictícios. Ele não roda em um banco que já tenha cadastros.
 
+### Versão de teste no navegador (sem servidor)
+
+```bash
+npm install                  # instala o sql.js (só para montar a versão de teste)
+npm run build:preview        # gera dist/preview/
+```
+
+O comando empacota o mesmo servidor, com um SQLite compilado para JavaScript (sql.js), para rodar dentro do navegador. A pasta gerada pode ser publicada como página estática. Os dados ficam só no navegador de quem abre a página. Na primeira visita são carregados dados fictícios, e uma barra no topo permite trocar de usuário e recomeçar do zero. Nessa versão a senha usa uma derivação simplificada e o download de arquivos fica desativado. **Ela serve apenas para testes.**
+
 ### Testes
 
 ```bash

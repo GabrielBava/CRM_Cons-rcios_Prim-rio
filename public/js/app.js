@@ -191,6 +191,8 @@ async function route() {
 }
 
 window.addEventListener('hashchange', route);
+// Permite reiniciar a aplicação sem recarregar a página (usado pela versão de teste no navegador)
+window.CRM_BOOT = boot;
 window.addEventListener('crm:refresh-meta', async () => {
   state.meta = await get('/api/meta');
 });

@@ -50,6 +50,9 @@ export const patch = (url, body = {}) => api('PATCH', url, body);
 
 /** Baixa um arquivo (CSV) respeitando a sessão. */
 export async function download(url, params) {
+  if (window.CRM_PREVIEW) {
+    throw new ApiError(0, 'Na versão de teste no navegador o download de arquivos fica desativado. No CRM instalado a exportação funciona normalmente.');
+  }
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(params || {})) if (v !== undefined && v !== null && v !== '') q.set(k, v);
   const full = url + (q.toString() ? `?${q}` : '');
