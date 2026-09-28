@@ -3,7 +3,7 @@ import {
   html, render, $, $$, on, state, selectOptions, opts, toItems, userItems, productItems, stageItems, fmtMoney, fmtDateTime, fmtDate, relTime,
   badge, optoutBadge, optLabel, K, can, toast, toastError, table, empty, fresh,
 } from '../ui.js';
-import { moveStage, opportunityForm, activityForm, taskForm, simulatorButton, openSimulator, simulationForm, proposalForm, proposalDetail } from '../forms.js';
+import { moveStage, opportunityForm, activityForm, taskForm, simulationForm, proposalForm, proposalDetail, quickSimulation, openProposalSimulator } from '../forms.js';
 import { timeline, tasksTable, bindTasks } from './contact.js';
 
 let saved = {};
@@ -185,25 +185,20 @@ async function showOpp(view, id) {
         </section>
       </div>
       <section class="card">
-        <div class="section-head"><h3>Simulações</h3><span>${can.write() ? html`${simulatorButton(contact, o)} <button class="btn" data-act="sim-manual">Registrar simulação manual</button>` : ''}</span></div>
+        <div class="section-head"><h3>Simulações</h3>${can.write() ? html`<button class="btn primary" data-act="sim-quick">Gerar simulação</button>` : ''}</div>
         ${table(
           [
-            { label: 'Código', render: (s) => html`<a href="#" data-sim="${s.id}">${s.code}</a> v${s.version}` },
-            { label: 'Origem', render: (s) => s.source },
-            { label: 'Crédito', render: (s) => fmtMoney(s.credit_value), cls: 'num' },
-            { label: 'Prazo', render: (s) => s.term_months ?? '—' },
-            { label: 'Parcela', render: (s) => fmtMoney(s.installment), cls: 'num' },
-            { label: 'Estratégia', render: (s) => optLabel('estrategia', s.strategy) },
-            { label: 'Status', render: (s) => K('simulation_status', s.status) },
-            { label: 'Data', render: (s) => fmtDateTime(s.created_at) },
-            { label: '', render: (s) => (can.write() ? html`<button class="btn small" data-act="prop-from-sim" data-sim="${s.id}">Gerar proposta</button>` : '') },
+            { label: 'Código', render: (s) => (s.source === 'crm' ? html`<strong>${s.code}</strong>` : html`<a href="#" data-sim="${s.id}">${s.code}</a>`) },
+            { label: 'Data e hora', render: (s) => fmtDateTime(s.created_at) },
+            { label: 'Gerada por', render: (s) => s.user_name || (s.source === 'simulador' ? 'Simulador' : '—') },
+            { label: 'Valores', render: (s) => (s.credit_value != null ? html`${fmtMoney(s.credit_value)}${s.term_months ? ` · ${s.term_months} m` : ''}` : html`<span class="muted small">no simulador</span>`) },
           ],
           o.simulations,
           { emptyMsg: 'Nenhuma simulação.' },
         )}
       </section>
       <section class="card">
-        <div class="section-head"><h3>Propostas</h3>${can.write() ? html`<button class="btn" data-act="prop-new">+ Nova proposta</button>` : ''}</div>
+        <div class="section-head"><h3>Propostas</h3>${can.write() ? html`<span class="inline-actions"><button class="btn primary" data-act="proposal-sim">Gerar proposta</button><button class="btn" data-act="prop-new">Registrar proposta gerada</button></span>` : ''}</div>
         ${table(
           [
             { label: 'Código', render: (p) => html`<a href="#" data-prop="${p.id}">${p.code}</a> v${p.version}` },
@@ -241,15 +236,14 @@ async function showOpp(view, id) {
       toastError(e);
     }
   });
-  on(view, 'click', '[data-act=open-simulator]', (e, b) => openSimulator(o.contact_id, o.id, 'oportunidade').then(() => setTimeout(reload, 500)));
-  on(view, 'click', '[data-act=sim-manual]', async () => (await simulationForm(contact, { opportunity_id: o.id })) && reload());
+  on(view, 'click', '[data-act=sim-quick]', async () => (await quickSimulation(o.contact_id, o.id)) && reload());
+  on(view, 'click', '[data-act=proposal-sim]', async () => (await openProposalSimulator(contact, o.id)) && setTimeout(reload, 300));
   on(view, 'click', '[data-sim]:not([data-act])', async (e, a) => {
     e.preventDefault();
     const s = await get(`/api/simulacoes/${a.dataset.sim}`);
     if (await simulationForm(contact, { simulation: s })) reload();
   });
   on(view, 'click', '[data-act=prop-new]', async () => (await proposalForm(o, o.simulations)) && reload());
-  on(view, 'click', '[data-act=prop-from-sim]', async (e, b) => (await proposalForm(o, o.simulations, { simulation_id: Number(b.dataset.sim) })) && reload());
   on(view, 'click', '[data-prop]', (e, a) => {
     e.preventDefault();
     proposalDetail(a.dataset.prop, reload);

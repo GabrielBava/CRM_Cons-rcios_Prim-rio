@@ -396,3 +396,132 @@ test('financeiro: gera parcelas, baixa pagamento, alerta atraso e respeita escop
   assert.equal(rep.status, 200);
   assert.ok(rep.data.rows.length > 0);
 });
+
+test('link de cadastro: um ativo por vez, registra acessos e é revogado ao inativar o cadastro', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Link Único', phone1: '11 95555-0101' });
+  const id = c.data.id;
+  const l = await call('c1', 'POST', `/api/cadastros/${id}/link-cliente`);
+  assert.equal(l.status, 200);
+  assert.equal((await call('c1', 'POST', `/api/cadastros/${id}/link-cliente`)).status, 409, 'não gera outro com um ativo');
+  await call(null, 'GET', `/api/publico/ficha?token=${encodeURIComponent(l.data.token)}`);
+  await call(null, 'GET', `/api/publico/ficha?token=${encodeURIComponent(l.data.token)}`);
+  let d = (await call('c1', 'GET', `/api/cadastros/${id}`)).data;
+  assert.equal(d.client_link.token, l.data.token, 'a equipe pode copiar o link ativo novamente');
+  assert.equal(d.client_link.access_count, 2);
+  assert.ok(d.client_link.first_used_at);
+  // revogado com o cadastro ativo: pode gerar outro
+  await call('c1', 'POST', `/api/cadastros/${id}/link-cliente/revogar`, { reason: 'Enviado ao número errado' });
+  const l2 = await call('c1', 'POST', `/api/cadastros/${id}/link-cliente`);
+  assert.equal(l2.status, 200);
+  // inativar revoga automaticamente e bloqueia novos links
+  assert.equal((await call('c1', 'PATCH', `/api/cadastros/${id}`, { active: false, inactive_reason: 'Sem interesse' })).status, 200);
+  assert.equal((await call(null, 'GET', `/api/publico/ficha?token=${encodeURIComponent(l2.data.token)}`)).status, 401);
+  assert.equal((await call('c1', 'POST', `/api/cadastros/${id}/link-cliente`)).status, 400);
+  d = (await call('c1', 'GET', `/api/cadastros/${id}`)).data;
+  assert.equal(d.active, 0);
+  assert.equal(d.client_link, null);
+  assert.equal(d.client_links.length, 2);
+  assert.ok(d.client_links.every((x) => x.status === 'revogado' && x.token === undefined));
+  const inactive = (await call('c1', 'GET', '/api/cadastros?active=0')).data.rows;
+  assert.ok(inactive.some((r) => r.id === id));
+  assert.equal((await call('c1', 'PATCH', `/api/cadastros/${id}`, { active: true })).status, 200);
+  assert.equal((await call('c1', 'POST', `/api/cadastros/${id}/link-cliente`)).status, 200, 'reativado volta a gerar link');
+});
+
+test('documentos: equipe aprova direto, cliente aguarda validação, reprovação exige motivo e anexo vale para várias vendas', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Docs Vendas', phone1: '11 95555-0102' });
+  const id = c.data.id;
+  const o2 = await call('c1', 'POST', '/api/oportunidades', { contact_id: id, credit_value: 50000 });
+  assert.equal(o2.status, 200, JSON.stringify(o2.data));
+  let d = (await call('c1', 'GET', `/api/cadastros/${id}`)).data;
+  const oppIds = d.opportunities.map((o) => o.id);
+  assert.equal(oppIds.length, 2);
+  const team = await call('c1', 'POST', `/api/cadastros/${id}/anexos`, { doc_type: 'comprovante_endereco', filename: 'luz.pdf', content_base64: PDF, opportunity_ids: oppIds });
+  assert.equal(team.status, 200);
+  const other = await call('c2', 'POST', '/api/cadastros', { name: 'Outro Dono', phone1: '11 95555-0103' });
+  const foreignOpp = (await call('c2', 'GET', `/api/cadastros/${other.data.id}`)).data.opportunities[0].id;
+  assert.equal((await call('c1', 'POST', `/api/cadastros/${id}/anexos`, { doc_type: 'outro', filename: 'x.pdf', content_base64: PDF, opportunity_ids: [foreignOpp] })).status, 400);
+  const l = await call('c1', 'POST', `/api/cadastros/${id}/link-cliente`);
+  await call(null, 'POST', '/api/publico/ficha/anexo', { token: l.data.token, doc_type: 'identificacao', filename: 'rg.pdf', content_base64: PDF });
+  d = (await call('c1', 'GET', `/api/cadastros/${id}`)).data;
+  const fromTeam = d.attachments.find((a) => a.id === team.data.id);
+  const fromClient = d.attachments.find((a) => a.source === 'cliente');
+  assert.equal(fromTeam.status, 'aprovado');
+  assert.deepEqual(fromTeam.opportunity_ids.sort(), [...oppIds].sort());
+  assert.equal(fromClient.status, 'recebido');
+  const idItem = d.sale_checklist.items.find((i) => i.key === 'doc:identificacao');
+  assert.equal(idItem.ok, false, 'documento do cliente só conta depois de aprovado');
+  assert.equal(idItem.status, 'recebido');
+  assert.equal((await call('c1', 'PATCH', `/api/anexos/${fromClient.id}`, { status: 'recusado' })).status, 400);
+  assert.equal((await call('c1', 'PATCH', `/api/anexos/${fromClient.id}`, { status: 'recusado', notes: 'Foto ilegível' })).status, 200);
+  d = (await call('c1', 'GET', `/api/cadastros/${id}`)).data;
+  assert.equal(d.sale_checklist.items.find((i) => i.key === 'doc:identificacao').status, 'recusado');
+  const again = await call(null, 'POST', '/api/publico/ficha/anexo', { token: l.data.token, doc_type: 'identificacao', filename: 'rg2.pdf', content_base64: PDF });
+  assert.equal(again.status, 200);
+  const newest = (await call('c1', 'GET', `/api/cadastros/${id}`)).data.attachments.find((a) => a.filename === 'rg2.pdf');
+  assert.equal((await call('c1', 'PATCH', `/api/anexos/${newest.id}`, { status: 'aprovado' })).status, 200);
+  d = (await call('c1', 'GET', `/api/cadastros/${id}`)).data;
+  assert.equal(d.sale_checklist.items.find((i) => i.key === 'doc:identificacao').ok, true);
+  // vencido não conta
+  await call('c1', 'POST', `/api/cadastros/${id}/anexos`, { doc_type: 'comprovante_renda', filename: 'renda.pdf', content_base64: PDF, valid_until: '2020-01-01' });
+  d = (await call('c1', 'GET', `/api/cadastros/${id}`)).data;
+  assert.equal(d.sale_checklist.items.find((i) => i.key === 'doc:comprovante_renda').status, 'vencido');
+});
+
+test('pós-venda: pesquisa NPS por link com histórico, cancelamento justificado e estratégia de lance', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Pós', phone1: '11 95555-0104' });
+  const id = c.data.id;
+  await completeForSale(id);
+  let d = (await call('c1', 'GET', `/api/cadastros/${id}`)).data;
+  const won = (await call('c1', 'GET', '/api/meta')).data.stages.find((s) => s.kind === 'ganho');
+  const mv = await call('c1', 'POST', `/api/oportunidades/${d.opportunities[0].id}/etapa`, { stage_id: won.id, contract: { administrator: 'Adm X', group_code: 'G1', quota_code: '10', credit_value: 200000 } });
+  assert.equal(mv.status, 200, JSON.stringify(mv.data));
+  d = (await call('c1', 'GET', `/api/cadastros/${id}`)).data;
+  assert.deepEqual(d.post_sale.map((p) => p.item), ['primeira_parcela', 'onboarding', 'estrategia_lance', 'recebimento_boletos', 'indicacao']);
+  const k = d.contracts[0];
+  // NPS
+  const n1 = await call('c1', 'POST', `/api/cadastros/${id}/nps`, { contract_id: k.id });
+  assert.equal(n1.status, 200, JSON.stringify(n1.data));
+  assert.equal((await call('c1', 'POST', `/api/cadastros/${id}/nps`, {})).status, 409, 'uma pesquisa pendente por vez');
+  assert.equal((await call('c1', 'POST', `/api/nps/${n1.data.id}/cancelar`, {})).status, 400, 'cancelamento exige justificativa');
+  assert.equal((await call('c1', 'POST', `/api/nps/${n1.data.id}/cancelar`, { reason: 'Cliente pediu para responder depois' })).status, 200);
+  assert.equal((await call(null, 'GET', `/api/publico/nps?token=${n1.data.token}`)).data.status, 'cancelada');
+  const n2 = await call('c1', 'POST', `/api/cadastros/${id}/nps`, {});
+  const form = await call(null, 'GET', `/api/publico/nps?token=${n2.data.token}`);
+  assert.equal(form.status, 200);
+  assert.equal(form.data.status, 'pendente');
+  assert.ok(form.data.questions.length >= 3);
+  assert.equal((await call(null, 'POST', '/api/publico/nps', { token: n2.data.token, score: 11 })).status, 400);
+  assert.equal((await call(null, 'POST', '/api/publico/nps', { token: n2.data.token, score: 5, answers: { atendimento: 3 }, comment: 'Demorou' })).status, 200);
+  assert.equal((await call(null, 'POST', '/api/publico/nps', { token: n2.data.token, score: 9 })).status, 400, 'não responde duas vezes');
+  assert.equal((await call('c1', 'POST', `/api/nps/${n2.data.id}/cancelar`, { reason: 'x' })).status, 400, 'respondida não é cancelada');
+  d = (await call('c1', 'GET', `/api/cadastros/${id}`)).data;
+  assert.deepEqual(d.nps_surveys.map((n) => n.status), ['respondida', 'cancelada'], 'nada é excluído');
+  assert.equal(d.nps_score, 5);
+  assert.ok(d.nps_surveys[0].first_access_at);
+  assert.ok(d.tasks.some((t) => t.type === 'pos_venda' && /NPS/.test(t.title)), 'detrator gera tarefa');
+  // Estratégia de lance
+  assert.equal((await call('c1', 'POST', `/api/contratos/${k.id}/estrategia-lance`, { will_bid: true, bid_type: 'livre' })).status, 400, 'livre exige percentual');
+  assert.equal((await call('c1', 'POST', `/api/contratos/${k.id}/estrategia-lance`, { will_bid: true, bid_type: 'livre', bid_pct: 30, use_embedded: true, use_fgts: true })).status, 200);
+  d = (await call('c1', 'GET', `/api/cadastros/${id}`)).data;
+  assert.equal(d.bid_strategies[0].bid_pct, 30);
+  assert.equal(d.bid_strategies[0].use_fgts, 1);
+  assert.ok(d.post_sale.find((p) => p.item === 'estrategia_lance').done_at, 'marca o item do checklist');
+  assert.equal((await call('c2', 'POST', `/api/contratos/${k.id}/estrategia-lance`, { will_bid: false })).status, 404, 'fora do escopo');
+});
+
+test('simulação registra data, hora e autor; proposta abre o simulador com nome e contato', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Maria Simulada', phone1: '11 95555-0105', whatsapp: '11 95555-0106' });
+  const s = await call('c1', 'POST', `/api/cadastros/${c.data.id}/simulacao-rapida`, {});
+  assert.equal(s.status, 200);
+  const d = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data;
+  assert.equal(d.simulations[0].code, s.data.code);
+  assert.equal(d.simulations[0].user_name, 'Cons 1');
+  assert.equal(d.simulations[0].credit_value, null);
+  const p = await call('c1', 'POST', `/api/cadastros/${c.data.id}/simulador-proposta`, {});
+  assert.equal(p.status, 200);
+  const u = new URL(p.data.url);
+  assert.equal(u.searchParams.get('nome'), 'Maria Simulada');
+  assert.equal(u.searchParams.get('contato').replace(/\D/g, ''), '11955550106', 'usa o WhatsApp do cliente');
+  assert.equal((await call('leitor', 'POST', `/api/cadastros/${c.data.id}/simulador-proposta`, {})).status, 403);
+});

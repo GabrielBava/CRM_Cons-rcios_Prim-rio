@@ -246,13 +246,13 @@ export function opportunityFields(o = {}, companyContacts = []) {
   const ccItems = companyContacts.filter((c) => c.active !== 0).map((c) => ({ value: c.id, label: c.name }));
   return html`<div class="grid">
     ${field({ name: 'title', label: 'Título (opcional)', value: o.title, placeholder: 'ex.: Imóvel para moradia', full: true })}
-    <h4 class="full">Qualificação (R1)</h4>
-    ${field({ name: 'objective_type', label: '(R1) Objetivo', type: 'select', options: opts('objetivo'), value: o.objective_type })}
-    ${field({ name: 'product_type', label: '(R1) Produto', type: 'select', options: opts('tipo_produto'), value: o.product_type })}
-    ${field({ name: 'credit_purpose', label: '(R1) Para que é o crédito', value: o.credit_purpose, placeholder: 'ex.: apartamento para morar', full: true })}
-    ${field({ name: 'financial_moment', label: '(R1) Momento financeiro', type: 'select', options: opts('momento_financeiro'), value: o.financial_moment })}
+    <h4 class="full">Qualificação</h4>
+    ${field({ name: 'objective_type', label: 'Objetivo', type: 'select', options: opts('objetivo'), value: o.objective_type })}
+    ${field({ name: 'product_type', label: 'Produto', type: 'select', options: opts('tipo_produto'), value: o.product_type })}
+    ${field({ name: 'credit_purpose', label: 'Para que é o crédito', value: o.credit_purpose, placeholder: 'ex.: apartamento para morar', full: true })}
+    ${field({ name: 'financial_moment', label: 'Momento financeiro', type: 'select', options: opts('momento_financeiro'), value: o.financial_moment })}
     ${field({ name: 'employment_type', label: 'Tipo de contratação', type: 'select', options: opts('tipo_contratacao'), value: o.employment_type })}
-    ${field({ name: 'has_fgts', label: '(R1) Possui FGTS (PF)', type: 'select', options: opts('possui_fgts'), value: o.has_fgts })}
+    ${field({ name: 'has_fgts', label: 'Possui FGTS (PF)', type: 'select', options: opts('possui_fgts'), value: o.has_fgts })}
     ${field({ name: 'decision_maker', label: 'Quem decide a compra', type: 'select', options: opts('decisor'), value: o.decision_maker })}
     ${field({ name: 'existing_products', label: 'Já possui consórcio ou financiamento', type: 'select', options: opts('possui_produto'), value: o.existing_products })}
     <div class="grid full existing-cons">${field({ name: 'existing_consortium_value', label: 'Consórcio atual: valor (R$)', type: 'money', value: o.existing_consortium_value })}${field({ name: 'existing_consortium_admin', label: 'Consórcio atual: administradora', value: o.existing_consortium_admin })}</div>
@@ -262,16 +262,16 @@ export function opportunityFields(o = {}, companyContacts = []) {
     ${field({ name: 'credit_category', label: 'Categoria do crédito', type: 'select', options: opts('categoria_credito'), value: o.credit_category })}
     ${field({ name: 'credit_value', label: 'Crédito desejado (R$)', type: 'money', value: o.credit_value, min: 0 })}
     ${field({ name: 'term_months', label: 'Prazo de interesse (meses)', type: 'number', value: o.term_months, min: 1, step: 1 })}
-    ${field({ name: 'installment_max', label: '(R1) Capacidade de parcela (R$/mês)', type: 'money', value: o.installment_max, min: 0 })}
+    ${field({ name: 'installment_max', label: 'Capacidade de parcela (R$/mês)', type: 'money', value: o.installment_max, min: 0 })}
     ${field({ name: 'installment_min', label: 'Parcela mínima desejada (R$)', type: 'money', value: o.installment_min, min: 0 })}
     ${field({ name: 'quotas', label: 'Quantidade de cotas', type: 'number', value: o.quotas, min: 1, step: 1 })}
     ${field({ name: 'payment_modality', label: 'Modalidade de pagamento pretendida', type: 'select', options: opts('modalidade_pagamento'), value: o.payment_modality })}
     ${field({ name: 'strategy', label: 'Estratégia', type: 'select', options: opts('estrategia'), value: o.strategy, help: 'A estratégia só é considerada recomendação após validação do consultor.' })}
     ${field({ name: 'contemplation_type', label: 'Contemplação de interesse', type: 'select', options: opts('tipo_contemplacao'), value: o.contemplation_type })}
-    ${field({ name: 'bid_own_resources', label: '(R1) Capital/reserva para lance (R$)', type: 'money', value: o.bid_own_resources, min: 0 })}
-    ${field({ name: 'fgts_available', label: '(R1) FGTS disponível (R$)', type: 'money', value: o.fgts_available, min: 0, help: 'Somente PF.' })}
+    ${field({ name: 'bid_own_resources', label: 'Capital/reserva para lance (R$)', type: 'money', value: o.bid_own_resources, min: 0 })}
+    ${field({ name: 'fgts_available', label: 'FGTS disponível (R$)', type: 'money', value: o.fgts_available, min: 0, help: 'Somente PF.' })}
     ${field({ name: 'embedded_bid_interest', label: 'Interesse em lance embutido', type: 'select', options: [{ value: 'sim', label: 'Sim' }, { value: 'nao', label: 'Não' }, { value: 'avaliar', label: 'Avaliar' }, { value: 'nao_se_aplica', label: 'Não se aplica / não permitido' }], value: o.embedded_bid_interest })}
-    ${field({ name: 'urgency', label: '(R1) Prazo objetivo', type: 'select', options: opts('urgencia'), value: o.urgency })}
+    ${field({ name: 'urgency', label: 'Prazo objetivo', type: 'select', options: opts('urgencia'), value: o.urgency })}
     ${field({ name: 'priority', label: 'Prioridade', type: 'select', options: toItems(state.meta.constants.priorities), value: o.priority || 'media', allowEmpty: false })}
     ${ccItems.length ? field({ name: 'company_contact_id', label: 'Contato da empresa', type: 'select', options: ccItems, value: o.company_contact_id }) : ''}
     ${field({ name: 'owner_id', label: 'Responsável', type: 'select', options: userItems(), value: o.owner_id || state.user.id, allowEmpty: false, disabled: !can.manage() })}
@@ -384,6 +384,46 @@ export async function openSimulator(contactId, oppId, originScreen) {
   } catch (e) {
     if (w) w.close();
     toastError(e);
+  }
+}
+
+/** "Gerar simulação": registra data, hora e quem gerou (os valores ficam no simulador). */
+export async function quickSimulation(contactId, oppId) {
+  try {
+    const r = await post(`/api/cadastros/${contactId}/simulacao-rapida`, { opportunity_id: oppId || undefined });
+    toast(`Simulação ${r.code} registrada em ${fmtDateTime(r.created_at)}.`);
+    return r;
+  } catch (e) {
+    toastError(e);
+    return null;
+  }
+}
+
+/**
+ * "Gerar proposta": abre o simulador de propostas já com o nome completo e o contato do cliente.
+ * A janela é aberta antes da chamada à API para não ser bloqueada pelo navegador.
+ */
+export async function openProposalSimulator(contact, oppId) {
+  const w = window.open('about:blank', '_blank');
+  try {
+    const r = await post(`/api/cadastros/${contact.id}/simulador-proposta`, { opportunity_id: oppId || undefined });
+    if (w) {
+      w.opener = null;
+      w.location.href = r.url;
+      toast('Simulador aberto com o nome e o contato do cliente.');
+    } else {
+      await modal({
+        title: 'Abrir simulador de propostas',
+        body: html`<p>O navegador bloqueou a nova janela. Use o link abaixo:</p>
+          <p><a class="btn primary" href="${r.url}" target="_blank" rel="noopener noreferrer">Abrir simulador</a></p>
+          <div class="kv">${html`<div><span>Nome completo</span>${r.name || '—'}</div><div><span>Contato</span>${r.phone || '—'}</div>`}</div>`,
+      });
+    }
+    return true;
+  } catch (e) {
+    if (w) w.close();
+    toastError(e);
+    return false;
   }
 }
 

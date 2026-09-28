@@ -526,6 +526,14 @@ CREATE TABLE IF NOT EXISTS imports (
 );
 `;
 
+const POS_VENDA_ITEMS = [
+  ['primeira_parcela', '1ª parcela confirmada'],
+  ['onboarding', 'Onboarding'],
+  ['estrategia_lance', 'Cadastro de estratégia de lance'],
+  ['recebimento_boletos', 'Cadastro de recebimento de boletos'],
+  ['indicacao', 'Pedido de indicação'],
+];
+
 const DEFAULT_OPTIONS = {
   origem: [
     ['indicacao', 'Indicação'],
@@ -709,13 +717,7 @@ const DEFAULT_OPTIONS = {
     ['debito', 'Débito em conta'],
     ['outro', 'Outro'],
   ],
-  etapa_pos_venda: [
-    ['boas_vindas', 'Boas-vindas enviadas'],
-    ['primeira_parcela', '1ª parcela confirmada'],
-    ['assembleias', 'Acompanhamento das assembleias combinado'],
-    ['contemplacao', 'Contemplação acompanhada'],
-    ['indicacao', 'Pedido de indicação feito'],
-  ],
+  etapa_pos_venda: POS_VENDA_ITEMS,
   motivo_perda: [
     ['sem_interesse', 'Sem interesse'],
     ['sem_contato', 'Não foi possível contato'],
@@ -816,6 +818,10 @@ const DEFAULT_SETTINGS = {
   require_sale_checklist: true,
   client_link_days: 7,
   finance_user_id: null,
+  company_name: '',
+  nps_link_days: 15,
+  // Simulador usado para gerar propostas (o CRM envia nome e contato do cliente no endereço)
+  proposal_simulator_url: 'https://claude.ai/artifact/Fk7ApKUi2U4BqAfvzfGgpd',
   doc_checklist: {
     PF: ['identificacao', 'comprovante_endereco', 'comprovante_renda', 'comprovante_estado_civil'],
     PJ: ['contrato_social', 'cartao_cnpj', 'comprovante_endereco', 'faturamento', 'doc_representante'],
@@ -838,6 +844,17 @@ function seedDefaults(db) {
   for (const [key, name] of DEFAULT_INTEGRATIONS) insInt.run(key, name, now);
   const insSet = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
   for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) insSet.run(k, JSON.stringify(v));
+  // Checklist do pós-venda revisado: desativa as etapas antigas (o histórico é mantido) e inclui as novas
+  if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_pos_venda_v2'").get()) {
+    const old = ['boas_vindas', 'assembleias', 'contemplacao'];
+    db.prepare(`UPDATE options SET active = 0 WHERE list = 'etapa_pos_venda' AND value IN (${old.map(() => '?').join(',')})`).run(...old);
+    POS_VENDA_ITEMS.forEach(([value, label], i) => {
+      const cur = db.prepare("SELECT id FROM options WHERE list = 'etapa_pos_venda' AND value = ?").get(value);
+      if (cur) db.prepare('UPDATE options SET label = ?, position = ?, active = 1 WHERE id = ?').run(label, i, cur.id);
+      else ins.run('etapa_pos_venda', value, label, i, '{}');
+    });
+    db.prepare("INSERT INTO settings (key, value) VALUES ('migr_pos_venda_v2', 'true')").run();
+  }
   if (db.prepare('SELECT COUNT(*) AS n FROM products').get().n === 0) {
     const ins = db.prepare(
       'INSERT INTO products (name, category, administrator, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
@@ -857,7 +874,10 @@ const ADDED_COLUMNS = {
     ['opening_date', 'TEXT'], ['main_activity', 'TEXT'], ['revenue_range', 'TEXT'],
     ['temperature', 'TEXT'], ['referred_by_id', 'INTEGER REFERENCES contacts(id)'],
     ['nps_score', 'INTEGER'], ['nps_comment', 'TEXT'], ['nps_at', 'TEXT'],
+    ['active', 'INTEGER NOT NULL DEFAULT 1'], ['inactive_reason', 'TEXT'], ['inactivated_at', 'TEXT'],
   ],
+  addresses: [['notes', 'TEXT']],
+  client_links: [['token', 'TEXT'], ['first_used_at', 'TEXT'], ['access_count', 'INTEGER NOT NULL DEFAULT 0'], ['revoked_by', 'INTEGER'], ['revoke_reason', 'TEXT']],
   opportunities: [
     ['objective_type', 'TEXT'], ['product_type', 'TEXT'], ['credit_purpose', 'TEXT'], ['financial_moment', 'TEXT'],
     ['employment_type', 'TEXT'], ['has_fgts', 'TEXT'], ['decision_maker', 'TEXT'], ['existing_products', 'TEXT'],
@@ -989,6 +1009,51 @@ CREATE TABLE IF NOT EXISTS post_sale_items (
   notes TEXT,
   UNIQUE (contact_id, contract_id, item)
 );
+
+-- Um anexo pode servir a mais de uma venda (negócio) do mesmo cliente
+CREATE TABLE IF NOT EXISTS attachment_opportunities (
+  attachment_id INTEGER NOT NULL REFERENCES attachments(id),
+  opportunity_id INTEGER NOT NULL REFERENCES opportunities(id),
+  PRIMARY KEY (attachment_id, opportunity_id)
+);
+
+-- Pesquisas de satisfação (NPS) enviadas por link. Nunca são excluídas, apenas canceladas com justificativa.
+CREATE TABLE IF NOT EXISTS nps_surveys (
+  id INTEGER PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id),
+  contract_id INTEGER REFERENCES contracts(id),
+  token_hash TEXT NOT NULL UNIQUE,
+  token TEXT,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  first_access_at TEXT,
+  last_access_at TEXT,
+  answered_at TEXT,
+  score INTEGER,
+  answers TEXT,
+  comment TEXT,
+  cancelled_at TEXT,
+  cancelled_by INTEGER REFERENCES users(id),
+  cancel_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_nps_contact ON nps_surveys(contact_id);
+
+-- Estratégia de lance por produto contratado
+CREATE TABLE IF NOT EXISTS bid_strategies (
+  id INTEGER PRIMARY KEY,
+  contract_id INTEGER NOT NULL UNIQUE REFERENCES contracts(id),
+  contact_id INTEGER NOT NULL REFERENCES contacts(id),
+  will_bid INTEGER NOT NULL DEFAULT 0,
+  bid_type TEXT,
+  bid_pct REAL,
+  use_embedded INTEGER NOT NULL DEFAULT 0,
+  use_fgts INTEGER NOT NULL DEFAULT 0,
+  notes TEXT,
+  updated_by INTEGER REFERENCES users(id),
+  updated_at TEXT NOT NULL
+);
 `;
 
 function migrate(db) {
@@ -999,6 +1064,8 @@ function migrate(db) {
       if (!existing.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
     }
   }
+  // Clientes marcados como inativos antes do status Ativo/Inativo do cadastro
+  db.exec("UPDATE contacts SET active = 0 WHERE client_status = 'inativo' AND active = 1");
 }
 
 /** Cria as tabelas e os valores iniciais (idempotente). Aceita qualquer conexão compatível com DatabaseSync. */

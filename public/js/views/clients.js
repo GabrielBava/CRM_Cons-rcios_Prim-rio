@@ -25,7 +25,7 @@ export async function show(view, ctx) {
 
 async function contracts(box) {
   render(box, html`<div class="page-head"><h1>Produtos contratados</h1>${state.user.role !== 'leitura' ? html`<div class="actions"><button class="btn" data-act="export">Exportar CSV</button></div>` : ''}</div>
-    <p class="hint">Um cliente pode ter vários produtos contratados. Para registrar um novo, abra o cadastro do cliente (aba Produtos contratados) ou conclua uma venda no funil.</p>
+    <p class="hint">Um cliente pode ter vários produtos contratados. Eles são lançados somente na conclusão da venda (funil › Venda concluída).</p>
     <form class="filters" data-f>
       <label>Status<select name="status">${selectOptions(opts('status_contrato'), '', { placeholder: 'Todos' })}</select></label>
       <label>Produto<select name="product_id">${selectOptions(productItems(), '', { placeholder: 'Todos' })}</select></label>

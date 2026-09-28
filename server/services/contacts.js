@@ -44,7 +44,7 @@ const CONTACT_FIELDS = [
   'owner_id', 'custom',
   'rg', 'birthplace', 'nationality', 'sex', 'marital_status', 'property_regime', 'mother_name', 'income_range', 'net_worth_range',
   'spouse_name', 'spouse_doc', 'spouse_profession', 'spouse_income_range', 'opening_date', 'main_activity', 'revenue_range',
-  'temperature', 'referred_by_id', 'nps_score', 'nps_comment', 'nps_at',
+  'temperature', 'referred_by_id', 'nps_score', 'nps_comment', 'nps_at', 'active', 'inactive_reason', 'inactivated_at',
 ];
 // Campos preenchidos por listas configuráveis (validados contra a lista)
 const LIST_FIELDS = {
@@ -121,6 +121,10 @@ function normalizeInput(db, data, kind) {
     o.spouse_doc = d || null;
   }
   set('opening_date', toDateOnly(data.opening_date));
+  if (data.active !== undefined) {
+    o.active = data.active === false || data.active === 0 || data.active === '0' || data.active === 'false' ? 0 : 1;
+    if (o.active === 0) o.inactive_reason = clean(data.inactive_reason) ?? null;
+  }
   if (data.nps_score !== undefined) {
     const n = data.nps_score === '' || data.nps_score === null ? null : Number(data.nps_score);
     if (n != null && (!Number.isInteger(n) || n < 0 || n > 10)) throw badRequest('A nota NPS deve ser um número inteiro de 0 a 10.');
@@ -388,6 +392,15 @@ function updateContact(db, user, id, data) {
   input.updated_at = now;
   input.updated_by = user.id;
   if (input.relationship === 'cliente' && !before.converted_at) input.converted_at = now;
+  // O status Ativo/Inativo do cadastro e o status do cliente são o mesmo dado: um acompanha o outro
+  const rel = input.relationship || before.relationship;
+  if (input.active === undefined && input.client_status && input.client_status !== before.client_status && rel === 'cliente') input.active = input.client_status === 'inativo' ? 0 : 1;
+  if (input.active !== undefined && rel === 'cliente') input.client_status = input.active ? 'ativo' : 'inativo';
+  const activeChanged = input.active !== undefined && input.active !== (before.active ?? 1);
+  if (activeChanged) {
+    input.inactivated_at = input.active ? null : now;
+    if (input.active) input.inactive_reason = null;
+  }
   tx(db, () => {
     const u = buildUpdate('contacts', before.id, input, [...CONTACT_FIELDS, 'updated_at', 'updated_by', 'converted_at']);
     if (u) db.prepare(u.sql).run(...u.params);
@@ -397,6 +410,21 @@ function updateContact(db, user, id, data) {
         contact_id: before.id,
         type: 'preferencia',
         notes: `Preferências de contato atualizadas: ${PREF_FIELDS.filter((f) => changes[f]).map((f) => `${f} = ${changes[f][1] ?? '—'}`).join('; ')}`,
+        user_id: user.id,
+      });
+    }
+    if (activeChanged) {
+      let revoked = 0;
+      if (!input.active) {
+        // Cadastro inativo não pode continuar recebendo dados pelo link do cliente
+        revoked = db.prepare("UPDATE client_links SET revoked_at = ?, revoked_by = ?, revoke_reason = 'Cadastro inativado', token = NULL WHERE contact_id = ? AND revoked_at IS NULL").run(now, user.id, before.id).changes;
+      }
+      insertActivity(db, {
+        contact_id: before.id,
+        type: 'cadastro',
+        notes: input.active
+          ? 'Cadastro reativado.'
+          : `Cadastro inativado${input.inactive_reason ? `: ${input.inactive_reason}` : ''}.${revoked ? ' O link de cadastro enviado ao cliente foi revogado automaticamente.' : ''}`,
         user_id: user.id,
       });
     }
@@ -462,6 +490,10 @@ function listContacts(db, user, q) {
   multi('c.kind', q.kind);
   multi('c.origin', q.origin);
   multi('c.temperature', q.temperature);
+  if (q.active === '1' || q.active === '0') {
+    where.push('COALESCE(c.active, 1) = ?');
+    params.push(Number(q.active));
+  }
   if (q.owner_id) {
     if (q.owner_id === 'none') where.push('c.owner_id IS NULL');
     else {
@@ -508,7 +540,7 @@ function listContacts(db, user, q) {
   const rows = db
     .prepare(
       `SELECT c.id, c.code, c.uid, c.kind, c.name, c.trade_name, c.legal_name, c.phone1, c.phone2, c.whatsapp, c.email, c.city, c.state,
-        c.relationship, c.lead_status, c.client_status, c.origin, c.campaign, c.owner_id, c.doc, c.optouts, c.created_at, c.updated_at,
+        c.relationship, c.lead_status, c.client_status, COALESCE(c.active, 1) AS active, c.origin, c.campaign, c.owner_id, c.doc, c.optouts, c.created_at, c.updated_at,
         c.first_contact_at, c.anonymized_at, c.temperature, u.name AS owner_name,
         (SELECT MAX(a.occurred_at) FROM activities a WHERE a.contact_id = c.id AND a.type NOT IN ('cadastro','preferencia')) AS last_activity_at,
         ${NEXT_TASK_SQL} AS next_task, ${NEXT_OPP_SQL} AS next_opp
@@ -568,7 +600,7 @@ function getContact(db, user, id) {
   const partners = db.prepare('SELECT * FROM partners WHERE contact_id = ? ORDER BY active DESC, is_legal_rep DESC, name').all(c.id);
   const referredBy = c.referred_by_id ? db.prepare('SELECT id, code, name FROM contacts WHERE id = ?').get(c.referred_by_id) : null;
   const referrals = db.prepare('SELECT id, code, name, relationship, created_at FROM contacts WHERE referred_by_id = ? AND merged_into_id IS NULL ORDER BY created_at DESC').all(c.id);
-  const activeLink = db.prepare('SELECT created_at, expires_at, last_used_at, submissions FROM client_links WHERE contact_id = ? AND revoked_at IS NULL AND expires_at > ? ORDER BY id DESC LIMIT 1').get(c.id, nowIso());
+  const activeLink = record.activeClientLink(db, c.id);
   const row = db.prepare(`SELECT ${NEXT_TASK_SQL} AS next_task, ${NEXT_OPP_SQL} AS next_opp FROM contacts c WHERE c.id = ?`).get(c.id);
   const recommended = recommendedFields(db, c.kind);
   const missing = recommended.filter((f) => (f === 'company_contact' ? !companyContacts.some((x) => x.active) : !c[f]));
@@ -598,6 +630,10 @@ function getContact(db, user, id) {
     referred_by: referredBy,
     referrals,
     client_link: activeLink || null,
+    client_links: record.clientLinkHistory(db, c.id),
+    nps_surveys: record.listNps(db, c.id),
+    bid_strategies: record.listBidStrategies(db, c.id),
+    open_value: opportunities.filter((o) => ['aberta', 'pausada'].includes(o.status)).reduce((t, o) => t + (Number(o.credit_value) || 0), 0),
     next_action: nextActionFrom(row),
     recommended_fields: recommended,
     missing_recommended: missing,
@@ -808,9 +844,11 @@ function anonymizeContact(db, user, id, reason) {
     db.prepare("UPDATE inbound_events SET payload = '{}' WHERE contact_id = ?").run(c.id);
     db.prepare("UPDATE contact_origins SET other_params = NULL WHERE contact_id = ?").run(c.id);
     db.prepare("UPDATE simulation_links SET revoked_at = COALESCE(revoked_at, ?) WHERE contact_id = ?").run(now, c.id);
-    db.prepare("UPDATE client_links SET revoked_at = COALESCE(revoked_at, ?) WHERE contact_id = ?").run(now, c.id);
+    db.prepare("UPDATE client_links SET revoked_at = COALESCE(revoked_at, ?), token = NULL WHERE contact_id = ?").run(now, c.id);
+    db.prepare("UPDATE nps_surveys SET token = NULL, comment = NULL, answers = NULL, cancelled_at = COALESCE(cancelled_at, CASE WHEN answered_at IS NULL THEN ? END), cancel_reason = COALESCE(cancel_reason, CASE WHEN answered_at IS NULL THEN 'Cadastro anonimizado' END) WHERE contact_id = ?").run(now, c.id);
+    db.prepare('UPDATE bid_strategies SET notes = NULL WHERE contact_id = ?').run(c.id);
     db.prepare("UPDATE attachments SET content = X'', filename = 'removido', status = 'removido', notes = NULL WHERE contact_id = ?").run(c.id);
-    db.prepare("UPDATE addresses SET cep = NULL, street = NULL, number = NULL, complement = NULL, district = NULL WHERE contact_id = ?").run(c.id);
+    db.prepare("UPDATE addresses SET cep = NULL, street = NULL, number = NULL, complement = NULL, district = NULL, notes = NULL WHERE contact_id = ?").run(c.id);
     db.prepare("UPDATE partners SET name = 'Anonimizado', doc = NULL, email = NULL, phone = NULL WHERE contact_id = ?").run(c.id);
     db.prepare("UPDATE tasks SET status = 'cancelada', updated_at = ? WHERE contact_id = ? AND status = 'pendente'").run(now, c.id);
     audit(db, user, 'contact', c.id, 'anonimizado', { motivo: clean(reason) }, c.id);
@@ -836,6 +874,7 @@ function mergeContacts(db, user, targetId, sourceId) {
       ['simulation_links', 'contact_id'], ['proposals', 'contact_id'], ['contracts', 'contact_id'], ['call_events', 'contact_id'],
       ['inbound_events', 'contact_id'], ['addresses', 'contact_id'], ['partners', 'contact_id'], ['attachments', 'contact_id'],
       ['finance_entries', 'contact_id'], ['finance_issues', 'contact_id'], ['post_sale_items', 'contact_id'], ['client_links', 'contact_id'],
+      ['nps_surveys', 'contact_id'], ['bid_strategies', 'contact_id'],
     ];
     const moved = {};
     for (const [t, col] of tables) {
@@ -844,7 +883,7 @@ function mergeContacts(db, user, targetId, sourceId) {
     // Completa campos vazios do destino com dados da origem (nunca sobrescreve)
     const fill = {};
     for (const f of CONTACT_FIELDS) {
-      if (['owner_id', 'custom', 'kind', 'relationship', 'lead_status'].includes(f)) continue;
+      if (['owner_id', 'custom', 'kind', 'relationship', 'lead_status', 'active', 'inactive_reason', 'inactivated_at'].includes(f)) continue;
       if ((target[f] == null || target[f] === '') && source[f] != null && source[f] !== '') fill[f] = source[f];
     }
     if (REL_RANK[source.relationship] > REL_RANK[target.relationship]) {

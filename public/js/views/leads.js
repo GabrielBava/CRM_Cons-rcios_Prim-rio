@@ -13,13 +13,15 @@ export function nextActionCell(na) {
   return html`<div class="${late ? 'overdue' : ''}"><strong>${na.title}</strong><br><small>${na.due_at ? `${fmtDateTime(na.due_at)} · ${relTime(na.due_at)}` : 'sem data'}</small></div>`;
 }
 
+export const recordHref = (r) => `#/${r.relationship === 'cliente' ? 'clientes' : 'leads'}/${r.id}`;
+
 export function contactsTable(rows) {
   return table(
     [
-      { label: 'Código', render: (r) => html`<a href="#/leads/${r.id}">${r.code}</a>` },
+      { label: 'Código', render: (r) => html`<a href="${recordHref(r)}">${r.code}</a>` },
       {
         label: 'Nome',
-        render: (r) => html`<a href="#/leads/${r.id}"><strong>${r.name}</strong></a> <small class="muted">${r.kind}</small><br>${relBadge(r.relationship)} ${r.temperature ? badge(optLabel('temperatura', r.temperature), `temp-${r.temperature}`) : ''} ${r.relationship !== 'cliente' ? badge(K('lead_status', r.lead_status)) : badge(K('client_status', r.client_status), 'ok')} ${optoutBadge(r.optouts)}`,
+        render: (r) => html`<a href="${recordHref(r)}"><strong>${r.name}</strong></a> <small class="muted">${r.kind}</small>${r.active === 0 ? html` ${badge('Inativo', 'muted')}` : ''}<br>${relBadge(r.relationship)} ${r.temperature ? badge(optLabel('temperatura', r.temperature), `temp-${r.temperature}`) : ''} ${r.relationship !== 'cliente' ? badge(K('lead_status', r.lead_status)) : badge(K('client_status', r.client_status), 'ok')} ${optoutBadge(r.optouts)}`,
       },
       { label: 'Contato', render: (r) => html`${r.phone1 || r.whatsapp || html`<span class="warn-text">sem telefone</span>`}<br><small>${r.email || ''}</small>` },
       { label: 'Cidade/UF', render: (r) => [r.city, r.state].filter(Boolean).join('/') || '—' },
@@ -50,6 +52,7 @@ export async function show(view, { params }, preset = {}) {
       ${fixed ? '' : html`<label>Tipo de registro<select name="relationship">${selectOptions(toItems(state.meta.constants.relationships), s.relationship, { placeholder: 'Todos' })}</select></label>`}
       ${fixed ? html`<label>Status do cliente<select name="client_status">${selectOptions(toItems(state.meta.constants.client_status), s.client_status, { placeholder: 'Todos' })}</select></label>`
         : html`<label>Status do lead<select name="lead_status">${selectOptions(toItems(state.meta.constants.lead_status), s.lead_status, { placeholder: 'Todos' })}</select></label>`}
+      <label>Situação<select name="active">${selectOptions([{ value: '1', label: 'Ativos' }, { value: '0', label: 'Inativos' }], s.active, { placeholder: 'Todos' })}</select></label>
       <label>PF/PJ<select name="kind">${selectOptions([{ value: 'PF', label: 'Pessoa física' }, { value: 'PJ', label: 'Pessoa jurídica' }], s.kind, { placeholder: 'Todos' })}</select></label>
       <label>Responsável<select name="owner_id">${selectOptions([...userItems(), ...(can.manage() ? [{ value: 'none', label: 'Sem responsável' }] : [])], s.owner_id, { placeholder: 'Todos' })}</select></label>
       <label>Origem<select name="origin">${selectOptions(opts('origem'), s.origin, { placeholder: 'Todas' })}</select></label>

@@ -1,6 +1,6 @@
 # ERP/CRM de Consórcios Primários
 
-CRM para a venda de consórcios contratados do zero. Cobre o processo do primeiro contato ao pós-venda: prospects, leads, oportunidades, atividades, tarefas, simulações, propostas, clientes e produtos contratados. Inclui um módulo ERP: ficha do cliente em 9 blocos, documentos, checklist de venda, link para o cliente atualizar os próprios dados, financeiro (parcelas, atrasos e avisos), pós-venda e NPS. As integrações com discadora, simulador, Meta Ads, WhatsApp, agenda externa e NPS por link estão preparadas ou marcadas como pendentes até serem validadas.
+CRM para a venda de consórcios contratados do zero. Cobre o processo do primeiro contato ao pós-venda: prospects, leads, oportunidades, atividades, tarefas, simulações, propostas, clientes e produtos contratados. Inclui um módulo ERP: ficha do cliente em 9 blocos, documentos com validação, checklist de venda, link para o cliente atualizar os próprios dados, financeiro (parcelas, atrasos e avisos), pós-venda com pesquisa NPS por link e estratégia de lance. As integrações com discadora, simulador, Meta Ads, WhatsApp e agenda externa estão preparadas ou marcadas como pendentes até serem validadas.
 
 - **Especificação funcional (itens de entrega 1 a 11):** [`docs/ESPECIFICACAO.md`](docs/ESPECIFICACAO.md)
 - **Contratos de integração (discadora, simulador, leads, WhatsApp):** [`docs/INTEGRACOES.md`](docs/INTEGRACOES.md)
@@ -70,7 +70,11 @@ Os testes automatizados cobrem:
 - documentos (escopo e tipos de arquivo);
 - link para o cliente (acesso, atualização, expiração e revogação);
 - aceite e recusa de proposta;
-- financeiro (geração de parcelas, pagamento, atraso com tarefa, escopo e relatório).
+- financeiro (geração de parcelas, pagamento, atraso com tarefa, escopo e relatório);
+- link de cadastro (um ativo por vez, acessos, revogação ao inativar o cadastro);
+- documentos (aprovação automática da equipe, validação dos enviados pelo cliente, vínculo com várias vendas, validade);
+- pós-venda (pesquisa NPS por link, cancelamento justificado, estratégia de lance);
+- simulação rápida e abertura do simulador de propostas com nome e contato.
 
 ## Estrutura
 

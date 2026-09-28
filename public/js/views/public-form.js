@@ -1,7 +1,7 @@
 // Página aberta pelo cliente (sem login) para atualizar os dados externos: cadastro, endereço e documentos.
 import { get, post } from '../api.js';
 import { html, raw, render, $, on, field, formData, toast, toastError, fmtDateTime } from '../ui.js';
-import { fileToBase64 } from './record-tabs.js';
+import { fileToBase64, bindCepAutofill } from './record-tabs.js';
 
 const LABELS = {
   name: 'Nome completo', doc: 'CPF', rg: 'RG', phone1: 'Telefone 1', phone2: 'Telefone 2', whatsapp: 'WhatsApp', email: 'E-mail',
@@ -13,6 +13,7 @@ const LABELS = {
 };
 const LISTS = { sex: 'sexo', marital_status: 'estado_civil', property_regime: 'regime_bens', income_range: 'faixa_renda', spouse_income_range: 'faixa_renda', revenue_range: 'faixa_faturamento' };
 const TYPES = { birth_date: 'date', opening_date: 'date', email: 'email', phone1: 'tel', phone2: 'tel', whatsapp: 'tel', website: 'url' };
+const DOC_PUBLIC = { pendente: ['Pendente', 'warn'], recebido: ['Recebido: em conferência', ''], aprovado: ['Aprovado', 'ok'], recusado: ['Reprovado: envie novamente', 'danger'], vencido: ['Vencido: envie um atualizado', 'danger'] };
 const SPOUSE = ['spouse_name', 'spouse_doc', 'spouse_profession', 'spouse_income_range', 'property_regime'];
 
 export async function show(app, token) {
@@ -38,37 +39,31 @@ export async function show(app, token) {
         ${d.kind === 'PF' ? html`<div class="spouse" ${married() ? '' : raw('hidden')}><h3>Cônjuge</h3><div class="grid">${fieldsFor(SPOUSE)}</div></div>` : ''}
         <h2>Endereço</h2>
         <div class="grid">
-          <div class="field"><label>CEP</label><div class="inline-actions"><input name="cep" value="${d.address?.cep || ''}" inputmode="numeric" style="flex:1"><button type="button" class="btn small" data-act="cep">Buscar</button></div><small class="cep-msg"></small></div>
+          <div class="field"><label>CEP</label><input name="cep" value="${d.address?.cep || ''}" inputmode="numeric" maxlength="9" autocomplete="postal-code"><small class="cep-msg">Digite o CEP para preencher o endereço automaticamente.</small></div>
           ${field({ name: 'street', label: 'Logradouro', value: d.address?.street })}
           ${field({ name: 'number', label: 'Número', value: d.address?.number })}
           ${field({ name: 'complement', label: 'Complemento', value: d.address?.complement })}
           ${field({ name: 'district', label: 'Bairro', value: d.address?.district })}
           ${field({ name: 'city', label: 'Cidade', value: d.address?.city })}
           ${field({ name: 'state', label: 'Estado (UF)', value: d.address?.state, maxlength: 2 })}
+          ${field({ name: 'notes', label: 'Observação sobre o endereço', type: 'textarea', value: d.address?.notes, full: true, rows: 2 })}
         </div>
         <div class="modal-error" hidden></div>
         <div class="form-actions"><button class="btn primary" type="submit">Salvar meus dados</button></div>
       </form>
-      <section class="card"><h2>Documentos</h2>
-        <p class="muted">Envie os documentos abaixo em PDF ou foto legível (até 8 MB cada).</p>
-        <ul class="checklist">${d.documents.map((doc) => html`<li class="${doc.status !== 'pendente' ? 'ok' : ''}"><span class="mark">${doc.status !== 'pendente' ? '✓' : '○'}</span> ${doc.label} <small class="muted">${doc.status === 'pendente' ? 'pendente' : doc.status === 'aprovado' ? 'aprovado' : 'recebido'}</small>
-          <label class="btn small upload-btn">Enviar arquivo<input type="file" data-doc="${doc.type}" accept=".pdf,.jpg,.jpeg,.png,.webp,.heic" hidden></label></li>`)}</ul>
+      <section class="card"><h2>Documentos obrigatórios</h2>
+        <p class="muted">Envie os documentos abaixo em PDF ou foto legível (até 8 MB cada). Cada arquivo é conferido pelo seu consultor.</p>
+        <ul class="checklist doc-list">${d.documents.map((doc) => {
+          const st = DOC_PUBLIC[doc.status] || DOC_PUBLIC.pendente;
+          return html`<li class="${doc.status === 'aprovado' ? 'ok' : ''}"><span class="mark">${doc.status === 'aprovado' ? '✓' : '○'}</span> <span class="grow">${doc.label}</span> <span class="badge ${st[1]}">${st[0]}</span>
+          ${['pendente', 'recusado', 'vencido'].includes(doc.status) ? html`<label class="btn small primary upload-btn">${doc.status === 'pendente' ? 'Enviar arquivo' : 'Enviar novamente'}<input type="file" data-doc="${doc.type}" accept=".pdf,.jpg,.jpeg,.png,.webp,.heic" hidden></label>` : ''}</li>`;
+        })}</ul>
         <p class="upload-msg small muted"></p>
       </section>
     </div>`);
     const form = $('#pf', app);
     form.marital_status?.addEventListener('change', () => ($('.spouse', app).hidden = !married()));
-    on(form, 'click', '[data-act=cep]', async () => {
-      const msg = $('.cep-msg', form);
-      msg.textContent = 'Buscando…';
-      try {
-        const r = await get(`/api/publico/cep/${form.cep.value.replace(/\D/g, '')}`, { token });
-        for (const f of ['street', 'district', 'city', 'state']) if (r[f]) form[f].value = r[f];
-        msg.textContent = 'Endereço encontrado. Confira e informe o número.';
-      } catch (e) {
-        msg.textContent = e.message;
-      }
-    });
+    bindCepAutofill(form, (cep) => get(`/api/publico/cep/${cep}`, { token }));
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const err = $('.modal-error', form);
@@ -77,7 +72,7 @@ export async function show(app, token) {
       const values = {};
       for (const f of Object.keys(d.values)) if (f in all) values[f] = all[f];
       const address = {};
-      for (const f of ['cep', 'street', 'number', 'complement', 'district', 'city', 'state']) address[f] = all[f];
+      for (const f of ['cep', 'street', 'number', 'complement', 'district', 'city', 'state', 'notes']) address[f] = all[f];
       try {
         await post('/api/publico/ficha', { token, values, address });
         toast('Dados salvos. Obrigado!');
@@ -109,4 +104,56 @@ export async function show(app, token) {
     }
   });
   draw();
+}
+
+/* ------------------------- Pesquisa de satisfação (NPS) ------------------------- */
+
+export async function showNps(app, token) {
+  render(app, html`<div class="public-page"><div class="card">Carregando…</div></div>`);
+  let d;
+  try {
+    d = await get('/api/publico/nps', { token });
+  } catch (e) {
+    render(app, html`<div class="public-page"><div class="card"><h1>Pesquisa indisponível</h1><p>${e.message}</p></div></div>`);
+    return;
+  }
+  const company = d.company || 'nossa empresa';
+  if (d.status !== 'pendente') {
+    const msg = { respondida: 'Esta pesquisa já foi respondida. Muito obrigado pela sua avaliação!', expirada: 'Esta pesquisa expirou. Se quiser nos avaliar, fale com seu consultor.', cancelada: 'Esta pesquisa foi cancelada.' }[d.status];
+    render(app, html`<div class="public-page"><div class="card"><h1>Pesquisa de satisfação</h1><p>${msg}</p></div></div>`);
+    return;
+  }
+  const scale = (name, from, to) => html`<div class="scale" role="radiogroup">${Array.from({ length: to - from + 1 }, (_, i) => from + i).map((n) => html`<label class="scale-opt"><input type="radio" name="${name}" value="${n}"><span>${n}</span></label>`)}</div>`;
+  render(app, html`<div class="public-page">
+    <header><h1>Pesquisa de satisfação</h1><p class="muted">Olá, ${d.first_name}! Sua opinião nos ajuda a melhorar. Leva menos de 1 minuto.</p></header>
+    <form class="card nps-form" id="nps" novalidate>
+      <div class="q"><h2>De 0 a 10, quanto você recomendaria ${company} a um amigo ou familiar? <span class="req">*</span></h2>
+        ${scale('score', 0, 10)}<div class="scale-legend"><span>Nada provável</span><span>Muito provável</span></div></div>
+      ${d.questions.map((q) => html`<div class="q"><h3>${q.label}</h3>${scale(`q_${q.key}`, 1, 5)}<div class="scale-legend"><span>Muito ruim</span><span>Excelente</span></div></div>`)}
+      ${field({ name: 'comment', label: 'O que podemos melhorar? (opcional)', type: 'textarea', full: true, rows: 3 })}
+      <div class="modal-error" hidden></div>
+      <div class="form-actions"><button class="btn primary" type="submit">Enviar avaliação</button></div>
+      <p class="small muted">Pesquisa válida até ${fmtDateTime(d.expires_at)}.</p>
+    </form></div>`);
+  const form = $('#nps', app);
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = $('.modal-error', form);
+    err.hidden = true;
+    const all = formData(form);
+    if (all.score === undefined) {
+      err.hidden = false;
+      err.textContent = 'Escolha uma nota de 0 a 10.';
+      return;
+    }
+    const answers = {};
+    for (const q of d.questions) if (all[`q_${q.key}`] !== undefined) answers[q.key] = Number(all[`q_${q.key}`]);
+    try {
+      await post('/api/publico/nps', { token, score: Number(all.score), answers, comment: all.comment });
+      render(app, html`<div class="public-page"><div class="card"><h1>Obrigado!</h1><p>Sua avaliação foi registrada. Ela é muito importante para ${company}.</p></div></div>`);
+    } catch (ex) {
+      err.hidden = false;
+      err.textContent = ex.message;
+    }
+  });
 }

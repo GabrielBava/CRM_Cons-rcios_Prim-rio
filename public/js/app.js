@@ -38,6 +38,9 @@ async function boot() {
   // Link enviado ao cliente: página pública, sem login
   const pub = location.hash.match(/^#\/ficha\/([A-Za-z0-9_-]+)/);
   if (pub) return publicForm.show(app, pub[1]);
+  // Pesquisa de satisfação enviada ao cliente: página pública, sem login
+  const nps = location.hash.match(/^#\/nps\/([A-Za-z0-9_-]+)/);
+  if (nps) return publicForm.showNps(app, nps[1]);
   setUnauthorizedHandler(() => showLogin('Sua sessão expirou. Entre novamente.'));
   try {
     const s = await get('/api/setup');
@@ -169,7 +172,7 @@ function setupSearch() {
 
 let currentCleanup = null;
 async function route() {
-  if (/^#\/ficha\//.test(location.hash)) return boot();
+  if (/^#\/(ficha|nps)\//.test(location.hash)) return boot();
   if (!state.meta) return;
   const hash = location.hash.replace(/^#\/?/, '') || 'painel';
   const [path, qs] = hash.split('?');
@@ -189,7 +192,8 @@ async function route() {
   const params = Object.fromEntries(new URLSearchParams(qs || ''));
   render(view, html`<div class="page loading">Carregando…</div>`);
   try {
-    const target = key === 'leads' && parts[1] ? contact : mod;
+    // A ficha abre tanto em #/leads/<id> quanto em #/clientes/<id>
+    const target = (key === 'leads' || key === 'clientes') && /^\d+$/.test(parts[1] || '') ? contact : mod;
     currentCleanup = (await target.show(view, { id: parts[1], sub: parts[2], params, key })) || null;
     view.focus({ preventScroll: true });
   } catch (e) {

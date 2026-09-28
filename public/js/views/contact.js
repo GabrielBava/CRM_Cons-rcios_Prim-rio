@@ -4,7 +4,7 @@ import {
   fmtDate, fmtDateTime, fmtMoney, fmtDuration, relTime, modal, confirmDialog, toast, toastError, can, empty, userName,
 } from '../ui.js';
 import {
-  activityForm, taskForm, completeTask, cancelTask, opportunityForm, simulatorButton, openSimulator, simulationForm, proposalForm,
+  activityForm, taskForm, completeTask, cancelTask, opportunityForm, simulationForm, proposalForm, quickSimulation, openProposalSimulator,
   proposalDetail, contractForm, consentForm, extractCustom, dupList,
 } from '../forms.js';
 import { nextActionCell } from './leads.js';
@@ -44,29 +44,43 @@ export async function show(view, { id, sub }) {
   };
   const draw = () => {
     const tabs = TABS;
+    const base = c.relationship === 'cliente' ? 'clientes' : 'leads';
+    // O menu lateral acompanha o tipo do registro: cliente fica em "Clientes"; prospect e lead, em "Prospects e leads"
+    document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === base));
+    const active = c.active !== 0;
+    const openOpps = c.opportunities.filter((o) => ['aberta', 'pausada'].includes(o.status));
+    const referral = c.referred_by || c.origin === 'indicacao';
+    const w = can.write() && !c.anonymized_at;
     render(view, html`<div class="page">
-      <div class="page-head">
-        <div>
-          <div class="crumbs"><a href="#/${c.relationship === 'cliente' ? 'clientes' : 'leads'}">${c.relationship === 'cliente' ? 'Clientes' : 'Prospects e leads'}</a> / ${c.code}</div>
-          <h1>${c.name} <small class="muted">${c.kind === 'PJ' ? 'Pessoa jurídica' : 'Pessoa física'}</small></h1>
-          <div class="badges">${relBadge(c.relationship)} ${c.relationship === 'cliente' ? badge(`Cliente ${K('client_status', c.client_status)}`, 'ok') : ''} ${badge(`Lead: ${K('lead_status', c.lead_status)}`)} ${c.temperature ? badge(optLabel('temperatura', c.temperature), `temp-${c.temperature}`) : ''} ${optoutBadge(c.optouts)} ${c.finance_summary.qtd_atrasado ? badge(`Financeiro: ${c.finance_summary.qtd_atrasado} em atraso`, 'danger') : ''} ${c.anonymized_at ? badge('Anonimizado', 'danger') : ''}</div>
-          <div class="muted small">Responsável: <strong>${c.owner_name || 'sem responsável'}</strong> · criado em ${fmtDateTime(c.created_at)}${c.created_by_name ? ` por ${c.created_by_name}` : ''} · atualizado ${relTime(c.updated_at)}${c.updated_by_name ? ` por ${c.updated_by_name}` : ''}</div>
+      <div class="record-head">
+        <div class="crumbs"><a href="#/${base}">${c.relationship === 'cliente' ? 'Clientes' : 'Prospects e leads'}</a> / ${c.code}</div>
+        <div class="title-row"><h1>${c.name}</h1><span class="kind-chip" title="${c.kind === 'PJ' ? 'Pessoa jurídica' : 'Pessoa física'}">${c.kind}</span></div>
+        <div class="id-cards">
+          <div class="id-card"><span>ID</span><strong>${c.code}</strong></div>
+          <div class="id-card"><span>Tipo</span><strong>${K('relationships', c.relationship)}</strong>${c.relationship === 'cliente' ? '' : html`<small>${K('lead_status', c.lead_status)}</small>`}</div>
+          <div class="id-card ${active ? 'ok' : 'off'}"><span>Status</span><strong>${active ? 'Ativo' : 'Inativo'}</strong>${w ? html`<button class="link-btn" data-act="toggle-active">${active ? 'Inativar' : 'Reativar'}</button>` : ''}${!active && c.inactive_reason ? html`<small>${c.inactive_reason}</small>` : ''}</div>
+          <div class="id-card"><span>Responsável</span><strong>${c.owner_name || 'Sem responsável'}</strong></div>
+          <div class="id-card"><span>Origem</span><strong>${optLabel('origem', c.origin)}</strong>${c.temperature ? html`<small>${badge(optLabel('temperatura', c.temperature), `temp-${c.temperature}`)}</small>` : ''}</div>
+          <div class="id-card"><span>Valor em oportunidades</span><strong>${fmtMoney(c.open_value)}</strong><small>${openOpps.length} em andamento</small></div>
+          ${referral ? html`<div class="id-card flag"><span>Indicação</span><strong>★ Indicado</strong><small>${c.referred_by ? html`por <a href="#/leads/${c.referred_by.id}">${c.referred_by.name}</a>` : 'indicante não informado'}</small></div>` : ''}
         </div>
-        ${can.write() && !c.anonymized_at
-          ? html`<div class="actions">
+        ${c.optouts.length || c.finance_summary.qtd_atrasado || c.anonymized_at ? html`<div class="badges">${optoutBadge(c.optouts)} ${c.finance_summary.qtd_atrasado ? badge(`Financeiro: ${c.finance_summary.qtd_atrasado} em atraso`, 'danger') : ''} ${c.anonymized_at ? badge('Anonimizado', 'danger') : ''}</div>` : ''}
+        ${w
+          ? html`<div class="actions record-actions">
             <button class="btn primary" data-act="activity">Registrar atividade</button>
             <button class="btn" data-act="task">Nova tarefa</button>
             <button class="btn" data-act="opp">Novo negócio</button>
-            <button class="btn" data-act="client-link" title="O cliente atualiza cadastro, endereço e documentos">Link para o cliente</button>
-            ${simulatorButton(c, c.opportunities.find((o) => o.status === 'aberta'))}
+            <button class="btn" data-act="client-link" title="${active ? 'Link para o cliente atualizar cadastro, endereço e documentos' : 'Cadastro inativo'}" ${active ? '' : raw('disabled')}>Link cadastro${c.client_link ? html` <span class="dot-ok" title="Link ativo"></span>` : ''}</button>
+            <button class="btn" data-act="proposal-sim" title="Abre o simulador com o nome e o contato do cliente">Gerar proposta</button>
           </div>`
           : ''}
+        <div class="muted small">Criado em ${fmtDateTime(c.created_at)}${c.created_by_name ? ` por ${c.created_by_name}` : ''} · atualizado ${relTime(c.updated_at)}${c.updated_by_name ? ` por ${c.updated_by_name}` : ''}</div>
       </div>
       <div class="next-action ${!c.next_action ? 'missing' : c.next_action.due_at && new Date(c.next_action.due_at) < new Date() ? 'late' : ''}">
         <span>Próxima ação:</span> ${nextActionCell(c.next_action)}
       </div>
-      ${c.missing_recommended.length && !c.anonymized_at ? html`<div class="alert warn">Cadastro incompleto. Recomendado completar: ${c.missing_recommended.map((f) => FIELD_LABELS[f] || f).join(', ')}. <a href="#/leads/${c.id}/cadastro">Completar</a></div>` : ''}
-      <nav class="tabs">${tabs.map(([k, l]) => html`<a href="#/leads/${c.id}/${k}" class="${tab === k ? 'active' : ''}" data-tab="${k}">${l}${countFor(c, k)}</a>`)}</nav>
+      ${c.missing_recommended.length && !c.anonymized_at ? html`<div class="alert warn">Cadastro incompleto. Recomendado completar: ${c.missing_recommended.map((f) => FIELD_LABELS[f] || f).join(', ')}. <a href="#/${base}/${c.id}/cadastro" data-tab="cadastro">Completar</a></div>` : ''}
+      <nav class="tabs">${tabs.map(([k, l]) => html`<a href="#/${base}/${c.id}/${k}" class="${tab === k ? 'active' : ''}" data-tab="${k}">${l}${countFor(c, k)}</a>`)}</nav>
       <div id="tab"></div>
     </div>`);
     drawTab();
@@ -82,8 +96,8 @@ export async function show(view, { id, sub }) {
   on(view, 'click', '[data-tab]', (e, a) => {
     e.preventDefault();
     tab = a.dataset.tab;
-    history.replaceState(null, '', `#/leads/${c.id}/${tab}`);
-    $$('[data-tab]', view).forEach((x) => x.classList.toggle('active', x === a));
+    history.replaceState(null, '', `#/${c.relationship === 'cliente' ? 'clientes' : 'leads'}/${c.id}/${tab}`);
+    $$('.tabs [data-tab]', view).forEach((x) => x.classList.toggle('active', x.dataset.tab === tab));
     drawTab();
   });
   on(view, 'click', '[data-act=activity]', async (e, b) => {
@@ -97,7 +111,25 @@ export async function show(view, { id, sub }) {
     if (r) reload();
   });
   on(view, 'click', '[data-act=client-link]', () => RT.clientLinkDialog(c, reload).catch(toastError));
-  on(view, 'click', '[data-act=open-simulator]', (e, b) => openSimulator(Number(b.dataset.contact), b.dataset.opp ? Number(b.dataset.opp) : null, 'cadastro').then(() => setTimeout(reload, 500)));
+  on(view, 'click', '[data-act=proposal-sim]', async () => {
+    if (await openProposalSimulator(c, c.opportunities.find((o) => o.status === 'aberta')?.id)) setTimeout(reload, 300);
+  });
+  on(view, 'click', '[data-act=toggle-active]', async () => {
+    const activating = c.active === 0;
+    const ok = await modal({
+      title: activating ? 'Reativar cadastro' : 'Inativar cadastro',
+      body: activating
+        ? html`<p>O cadastro volta a ficar ativo e poderá receber um novo link de cadastro.</p>`
+        : html`<p>Cadastros inativos não recebem link de cadastro nem pesquisa. <strong>O link de cadastro enviado ao cliente será revogado automaticamente.</strong></p>${field({ name: 'inactive_reason', label: 'Motivo da inativação', type: 'textarea', full: true })}`,
+      submitLabel: activating ? 'Reativar' : 'Inativar',
+      danger: !activating,
+      onSubmit: (d) => patch(`/api/cadastros/${c.id}`, { active: activating, inactive_reason: d.inactive_reason }),
+    });
+    if (ok) {
+      toast(activating ? 'Cadastro reativado.' : 'Cadastro inativado.');
+      reload();
+    }
+  });
   draw();
 }
 
@@ -123,6 +155,35 @@ function countFor(c, k) {
 
 /* ------------------------- Abas ------------------------- */
 
+const WA_ICON = raw('<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38a9.87 9.87 0 0 0 4.74 1.21h.01c5.46 0 9.91-4.45 9.91-9.91C21.96 6.45 17.5 2 12.04 2Zm0 18.15h-.01a8.2 8.2 0 0 1-4.19-1.15l-.3-.18-3.12.82.83-3.04-.2-.31a8.23 8.23 0 0 1-1.26-4.38c0-4.54 3.7-8.24 8.25-8.24a8.24 8.24 0 0 1 8.24 8.25c0 4.54-3.7 8.23-8.24 8.23Zm4.52-6.16c-.25-.12-1.47-.72-1.69-.81-.23-.08-.39-.12-.56.12-.16.25-.64.81-.78.97-.14.17-.29.19-.54.06-.25-.12-1.05-.39-1.99-1.23-.74-.66-1.23-1.47-1.38-1.72-.14-.25-.02-.38.11-.5.11-.11.25-.29.37-.43.13-.15.17-.25.25-.41.08-.17.04-.31-.02-.43-.06-.13-.56-1.34-.76-1.84-.2-.48-.41-.42-.56-.43h-.48c-.17 0-.43.06-.66.31-.22.25-.86.85-.86 2.07 0 1.22.89 2.4 1.01 2.56.12.17 1.75 2.67 4.23 3.74.59.26 1.05.41 1.41.52.59.19 1.13.16 1.56.1.48-.07 1.47-.6 1.67-1.18.21-.58.21-1.07.14-1.18-.06-.1-.22-.16-.47-.28Z"/></svg>');
+
+/** Abre a conversa no WhatsApp com o número do cliente (padrão Brasil quando vier sem DDI). */
+export function waButton(phone) {
+  let d = String(phone || '').replace(/\D/g, '');
+  if (!d) return '';
+  if (d.length <= 11) d = `55${d}`;
+  return html`<a class="wa-btn" href="https://wa.me/${d}" target="_blank" rel="noopener noreferrer" title="Abrir conversa no WhatsApp">${WA_ICON}<span>WhatsApp</span></a>`;
+}
+
+function preVendaCard(c) {
+  const ck = c.sale_checklist;
+  const done = ck.items.length - ck.missing.length;
+  return html`<section class="card"><div class="section-head"><h3>Pré-venda</h3><a href="#" data-tab="prevenda" class="small">abrir</a></div>
+    <div class="progress-bar"><span style="width:${ck.items.length ? (done / ck.items.length) * 100 : 100}%"></span></div>
+    ${ck.complete ? html`<p>${badge('Ficha completa', 'ok')} Venda liberada.</p>` : html`<p>${done} de ${ck.items.length} itens completos. Faltam: ${ck.missing.slice(0, 5).map((m) => m.label).join(', ')}${ck.missing.length > 5 ? '…' : ''}</p>`}
+    <p class="small muted">Link de cadastro: ${c.client_link ? `ativo até ${fmtDateTime(c.client_link.expires_at)}${c.client_link.last_used_at ? ` · último acesso ${relTime(c.client_link.last_used_at)}` : ' · ainda não acessado'}` : 'nenhum link ativo'}</p></section>`;
+}
+
+function posVendaCard(c) {
+  const done = c.post_sale.filter((p) => p.done_at).length;
+  const last = c.nps_surveys.find((n) => n.status === 'respondida');
+  const pending = c.nps_surveys.find((n) => n.status === 'pendente');
+  return html`<section class="card"><div class="section-head"><h3>Pós-venda</h3><a href="#" data-tab="posvenda" class="small">abrir</a></div>
+    <div class="progress-bar"><span style="width:${c.post_sale.length ? (done / c.post_sale.length) * 100 : 0}%"></span></div>
+    <p>${done} de ${c.post_sale.length} etapas concluídas${c.post_sale.find((p) => !p.done_at) ? html`. Próxima: <strong>${c.post_sale.find((p) => !p.done_at).label}</strong>` : '.'}</p>
+    <p class="small muted">NPS: ${last ? `nota ${last.score} em ${fmtDate(last.answered_at)}` : 'nenhuma resposta'}${pending ? ' · pesquisa aguardando resposta' : ''} · Estratégias de lance: ${c.bid_strategies.length} de ${c.contracts.length} produto(s)</p></section>`;
+}
+
 const kvs = (label, v) => html`<div><span>${label}</span>${v ?? '—'}</div>`;
 
 const TAB_RENDER = {
@@ -134,7 +195,7 @@ const TAB_RENDER = {
         <h3>Dados principais</h3>
         <div class="kv">
           <div><span>Telefone</span>${c.phone1 || '—'}${c.phone2 ? html`<br>${c.phone2}` : ''}</div>
-          <div><span>WhatsApp</span>${c.whatsapp || '—'}</div>
+          <div><span>WhatsApp</span>${c.whatsapp || '—'} ${waButton(c.whatsapp || c.phone1)}</div>
           <div><span>E-mail</span>${c.email || '—'}</div>
           <div><span>Cidade/UF</span>${[c.city, c.state].filter(Boolean).join('/') || '—'}</div>
           <div><span>Origem</span>${optLabel('origem', c.origin)}${c.campaign ? html`<br><small>${c.campaign}</small>` : ''}</div>
@@ -156,8 +217,7 @@ const TAB_RENDER = {
       </section>
     </div>
     <div class="cols">
-      <section class="card"><div class="section-head"><h3>Pré-venda</h3><a href="#/leads/${c.id}/prevenda" data-tab="prevenda" class="small">abrir</a></div>
-        ${c.sale_checklist.complete ? html`<p>${badge('Ficha completa', 'ok')} Venda liberada.</p>` : html`<p>${c.sale_checklist.items.length - c.sale_checklist.missing.length} de ${c.sale_checklist.items.length} itens completos. Faltam: ${c.sale_checklist.missing.slice(0, 5).map((m) => m.label).join(', ')}${c.sale_checklist.missing.length > 5 ? '…' : ''}</p>`}</section>
+      ${c.relationship === 'cliente' ? posVendaCard(c) : preVendaCard(c)}
       <section class="card"><div class="section-head"><h3>Financeiro</h3><a href="#/leads/${c.id}/financeiro" data-tab="financeiro" class="small">abrir</a></div>
         <div class="kv">${kvs('Pago', fmtMoney(c.finance_summary.pago))}${kvs('A vencer', fmtMoney(c.finance_summary.a_vencer))}${kvs('Em atraso', html`<span class="${c.finance_summary.qtd_atrasado ? 'overdue' : ''}">${fmtMoney(c.finance_summary.atrasado)} (${c.finance_summary.qtd_atrasado})</span>`)}${kvs('Próximo vencimento', fmtDate(c.finance_summary.proximo_vencimento))}</div></section>
     </div>
@@ -193,7 +253,6 @@ const TAB_RENDER = {
         ${F('whatsapp', { label: 'WhatsApp', type: 'tel' })}${F('email', { label: 'E-mail', type: 'email' })}
         ${field({ name: 'relationship', label: 'Tipo de registro', type: 'select', options: toItems(state.meta.constants.relationships), value: c.relationship, allowEmpty: false })}
         ${field({ name: 'lead_status', label: 'Status do lead', type: 'select', options: toItems(state.meta.constants.lead_status), value: c.lead_status, allowEmpty: false })}
-        ${field({ name: 'client_status', label: 'Status do cliente', type: 'select', options: toItems(state.meta.constants.client_status), value: c.client_status, placeholder: 'Não é cliente' })}
         <div class="field full"><label>Documentos e arquivos</label><p class="small">${c.attachments.length} arquivo(s) anexado(s). <a href="#/leads/${c.id}/documentos" data-tab="documentos">Anexar documento de identificação, comprovantes e outros arquivos</a>.</p></div>
         ${customFieldsFor('contact', c.custom)}
       </div>
@@ -328,29 +387,24 @@ const TAB_RENDER = {
 
   async simulacoes(box, c, reload) {
     const openOpp = c.opportunities.find((o) => o.status === 'aberta');
+    const w = can.write() && !c.anonymized_at;
     render(box, html`<section class="card">
-      <div class="section-head"><h3>Simulações</h3>
-        <span>${can.write() ? html`${simulatorButton(c, openOpp)} <button class="btn" data-act="sim-manual">Registrar simulação manual</button>` : ''}</span></div>
-      ${!state.meta.simulator.available ? html`<p class="hint">${state.meta.simulator.message}</p>` : ''}
+      <div class="section-head"><h3>Simulações</h3>${w ? html`<button class="btn primary" data-act="sim-quick">Gerar simulação</button>` : ''}</div>
+      <p class="hint">Cada simulação registra a data, a hora e quem a gerou. Quando o simulador for conectado, os valores simulados passam a aparecer aqui (a simulação não gera proposta nem PDF).</p>
       ${table(
         [
-          { label: 'Código', render: (s) => html`<a href="#" data-sim="${s.id}">${s.code}</a> <small>v${s.version}</small>` },
-          { label: 'Origem', render: (s) => (s.source === 'simulador' ? badge('Simulador', 'ok') : badge('Manual')) },
-          { label: 'Oportunidade', render: (s) => s.opportunity_code || '—' },
-          { label: 'Crédito', render: (s) => fmtMoney(s.credit_value), cls: 'num' },
-          { label: 'Prazo', render: (s) => (s.term_months ? `${s.term_months} m` : '—') },
-          { label: 'Parcela', render: (s) => fmtMoney(s.installment), cls: 'num' },
-          { label: 'Modalidade / estratégia', render: (s) => html`${optLabel('modalidade_pagamento', s.payment_modality)}<br><small>${optLabel('estrategia', s.strategy)}</small>` },
-          { label: 'Status', render: (s) => K('simulation_status', s.status) },
-          { label: 'Responsável', render: (s) => s.user_name || '—' },
-          { label: 'Data', render: (s) => fmtDateTime(s.created_at) },
-          { label: '', render: (s) => html`${s.view_url ? html`<a href="${s.view_url}" target="_blank" rel="noopener noreferrer">consultar</a> ` : ''}${can.write() && s.opportunity_id ? html`<button class="btn small" data-act="prop-from-sim" data-sim="${s.id}" data-opp="${s.opportunity_id}">Gerar proposta</button>` : ''}` },
+          { label: 'Código', render: (s) => (s.source === 'crm' ? html`<strong>${s.code}</strong>` : html`<a href="#" data-sim="${s.id}">${s.code}</a>`) },
+          { label: 'Data e hora', render: (s) => fmtDateTime(s.created_at) },
+          { label: 'Gerada por', render: (s) => s.user_name || (s.source === 'simulador' ? 'Simulador' : '—') },
+          { label: 'Negócio', render: (s) => s.opportunity_code || '—' },
+          { label: 'Valores', render: (s) => (s.credit_value != null ? html`${fmtMoney(s.credit_value)}${s.term_months ? ` · ${s.term_months} m` : ''}${s.installment ? html`<br><small>parcela ${fmtMoney(s.installment)}</small>` : ''}` : html`<span class="muted small">no simulador</span>`) },
         ],
         c.simulations,
-        { emptyMsg: 'Nenhuma simulação registrada.' },
+        { emptyMsg: 'Nenhuma simulação gerada.' },
       )}</section>
       <section class="card">
-        <div class="section-head"><h3>Propostas</h3>${can.write() && c.opportunities.length ? html`<button class="btn" data-act="prop-new">+ Nova proposta</button>` : ''}</div>
+        <div class="section-head"><h3>Propostas</h3>${w ? html`<span class="inline-actions"><button class="btn primary" data-act="proposal-sim">Gerar proposta</button>${c.opportunities.length ? html`<button class="btn" data-act="prop-new">Registrar proposta gerada</button>` : ''}</span>` : ''}</div>
+        <p class="hint">"Gerar proposta" abre o simulador com o nome completo e o contato do cliente preenchidos. Depois de gerar o PDF, registre a proposta aqui com o link e o anexo.</p>
         ${table(
           [
             { label: 'Código', render: (p) => html`<a href="#" data-prop="${p.id}">${p.code}</a> <small>v${p.version}</small>` },
@@ -366,15 +420,11 @@ const TAB_RENDER = {
           c.proposals,
           { emptyMsg: 'Nenhuma proposta.' },
         )}</section>`);
-    on(box, 'click', '[data-act=sim-manual]', async () => (await simulationForm(c, { opportunity_id: openOpp?.id })) && reload());
+    on(box, 'click', '[data-act=sim-quick]', async () => (await quickSimulation(c.id, openOpp?.id)) && reload());
     on(box, 'click', '[data-sim]:not([data-act])', async (e, a) => {
       e.preventDefault();
       const s = await get(`/api/simulacoes/${a.dataset.sim}`);
       if (await simulationForm(c, { simulation: s })) reload();
-    });
-    on(box, 'click', '[data-act=prop-from-sim]', async (e, b) => {
-      const opp = c.opportunities.find((o) => o.id === Number(b.dataset.opp));
-      if (await proposalForm(opp, c.simulations.filter((s) => s.opportunity_id === opp.id), { simulation_id: Number(b.dataset.sim) })) reload();
     });
     on(box, 'click', '[data-act=prop-new]', async () => {
       const items = c.opportunities.map((o) => ({ value: o.id, label: `${o.code} — ${o.stage_name}` }));
@@ -391,10 +441,9 @@ const TAB_RENDER = {
 
   async produtos(box, c, reload) {
     render(box, html`<section class="card">
-      <div class="section-head"><h3>Produtos contratados</h3>${can.write() ? html`<button class="btn" data-act="contract-new">+ Registrar produto contratado</button>` : ''}</div>
+      <div class="section-head"><h3>Produtos contratados</h3></div>
       ${contractsTable(c.contracts)}
-      <p class="hint">As parcelas de cada contrato são acompanhadas na aba Financeiro, onde é possível gerá-las automaticamente.</p></section>`);
-    on(box, 'click', '[data-act=contract-new]', async () => (await contractForm(c)) && reload());
+      <p class="hint">Os produtos contratados são lançados somente na conclusão da venda (funil › Venda concluída). Aqui é possível consultar e atualizar os dados de cada contrato; as parcelas ficam na aba Financeiro.</p></section>`);
     on(box, 'click', '[data-contract]', async (e, a) => {
       e.preventDefault();
       if (!can.write()) return;
@@ -717,8 +766,9 @@ export function contractsTable(rows, { showContact = false } = {}) {
     [
       { label: 'Código', render: (k) => html`<a href="#" data-contract="${k.id}">${k.code}</a>${k.contract_number ? html`<br><small>Nº ${k.contract_number}</small>` : ''}` },
       ...(showContact ? [{ label: 'Cliente', render: (k) => html`<a href="#/leads/${k.contact_id}">${k.contact_name}</a>` }] : []),
-      { label: 'Produto / categoria', render: (k) => html`${k.product_name || '—'}<br><small>${optLabel('categoria_credito', k.category)}</small>` },
-      { label: 'Administradora / grupo / cota', render: (k) => [k.administrator, k.group_code, k.quota_code].map((x) => x || '—').join(' / ') },
+      { label: 'Categoria', render: (k) => optLabel('categoria_credito', k.category || state.meta.products.find((p) => p.id === k.product_id)?.category) },
+      { label: 'Administradora', render: (k) => k.administrator || '—' },
+      { label: 'Grupo / cota', render: (k) => `${k.group_code || '—'} / ${k.quota_code || '—'}` },
       { label: 'Crédito', render: (k) => fmtMoney(k.credit_value), cls: 'num' },
       { label: 'Parcela', render: (k) => html`${fmtMoney(k.installment_value)}${k.due_day ? html`<br><small>vence dia ${k.due_day}</small>` : ''}`, cls: 'num' },
       { label: 'Prazo / cotas', render: (k) => `${k.term_months ? `${k.term_months} m` : '—'} · ${k.quotas ?? '—'}` },

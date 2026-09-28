@@ -387,6 +387,9 @@ const RENDER = {
       ${field({ name: 'simulation_link_hours', label: 'Validade do link do simulador (horas)', type: 'number', value: s.simulation_link_hours, min: 1 })}
       ${field({ name: 'client_link_days', label: 'Validade do link para o cliente atualizar os dados (dias)', type: 'number', value: s.client_link_days, min: 1 })}
       ${field({ name: 'finance_user_id', label: 'Responsável financeiro (recebe os alertas de parcelas em atraso)', type: 'select', options: userItems(), value: s.finance_user_id, placeholder: 'Responsável pelo cliente' })}
+      ${field({ name: 'company_name', label: 'Nome da empresa (usado na pesquisa de satisfação)', value: s.company_name })}
+      ${field({ name: 'nps_link_days', label: 'Validade do link da pesquisa de satisfação (dias)', type: 'number', value: s.nps_link_days, min: 1 })}
+      ${field({ name: 'proposal_simulator_url', label: 'Endereço do simulador de propostas', type: 'url', value: s.proposal_simulator_url, full: true, help: 'O botão "Gerar proposta" abre este endereço com o nome completo e o contato do cliente (parâmetros nome e contato).' })}
       ${field({ name: 'require_sale_checklist', label: 'Exigir a ficha de pré-venda completa para concluir a venda', type: 'checkbox', value: s.require_sale_checklist, full: true })}
     </div><button class="btn primary" type="submit">Salvar</button></form>
     <form class="card" id="docs"><h3>Documentos obrigatórios para a venda</h3>

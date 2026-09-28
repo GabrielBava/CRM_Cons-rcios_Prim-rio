@@ -235,6 +235,17 @@ function saveSettings(db, user, data) {
     if (id && !db.prepare('SELECT 1 FROM users WHERE id = ? AND active = 1').get(id)) throw badRequest('Usuário financeiro inválido.');
     setSetting(db, 'finance_user_id', id);
   }
+  if (data.company_name !== undefined) setSetting(db, 'company_name', String(data.company_name || '').trim().slice(0, 120));
+  if (data.nps_link_days !== undefined) {
+    const n = Number(data.nps_link_days);
+    if (!Number.isInteger(n) || n < 1 || n > 90) throw badRequest('Validade do link de NPS: entre 1 e 90 dias.');
+    setSetting(db, 'nps_link_days', n);
+  }
+  if (data.proposal_simulator_url !== undefined) {
+    const u = String(data.proposal_simulator_url || '').trim();
+    if (u && !/^https?:\/\/[^\s]+$/i.test(u)) throw badRequest('Endereço do simulador de propostas inválido (use http:// ou https://).');
+    setSetting(db, 'proposal_simulator_url', u);
+  }
   if (data.doc_checklist !== undefined) {
     const dc = data.doc_checklist;
     if (!dc || typeof dc !== 'object' || !Array.isArray(dc.PF) || !Array.isArray(dc.PJ)) throw badRequest('Checklist de documentos inválido.');
@@ -293,6 +304,9 @@ function meta(db, user) {
       client_link_days: getSetting(db, 'client_link_days'),
       finance_user_id: getSetting(db, 'finance_user_id'),
       doc_checklist: getSetting(db, 'doc_checklist'),
+      company_name: getSetting(db, 'company_name') || '',
+      nps_link_days: getSetting(db, 'nps_link_days'),
+      proposal_simulator_url: getSetting(db, 'proposal_simulator_url') || '',
     },
     simulator: simulatorAvailability(db),
     constants: {

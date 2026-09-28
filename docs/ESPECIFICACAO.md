@@ -201,7 +201,8 @@ Os relatórios mostram dados pessoais apenas quando necessário (nome e código)
 | Meta Ads | Campos de origem (IDs e UTMs), importação CSV, API de entrada de leads com deduplicação | Conector direto (app Meta, webhooks, Graph API) ou ferramenta intermediária |
 | WhatsApp | Endpoint de registro de mensagens com idempotência e vínculo por telefone | Provedor. **Envio** de mensagens não faz parte desta versão. |
 | Agenda externa (Google Agenda / Outlook) | Cadastro da integração com status "pendente" | Sincronização das reuniões e tarefas |
-| Pesquisa de NPS por link | Registro manual da nota (0 a 10) e do comentário na aba Pós-venda | Link para o cliente responder a pesquisa com perguntas sobre a empresa |
+| Pesquisa de NPS por link | Link para o cliente responder, histórico, cancelamento justificado e tarefa para detratores | — |
+| Simulador de propostas | "Gerar proposta" abre o simulador com nome e contato do cliente (endereço configurável em Configurações › Geral) | Retorno automático da proposta gerada para o CRM; valores da simulação no CRM |
 | Consulta de CEP (ViaCEP) | Busca do endereço pelo CEP na ficha e na página do cliente. Se a consulta falhar, o endereço é preenchido manualmente. | — |
 | Importação/exportação | CSV (`;` ou `,`) com mapeamento, prévia, deduplicação e erros por linha. Exportação CSV compatível com Excel. | Leitura direta de `.xlsx` (hoje é preciso salvar como CSV) |
 
@@ -248,7 +249,7 @@ Um gestor sem equipe vê apenas os próprios registros. Quando um consultor tent
 - O link da gravação e o texto das mensagens só são guardados se a opção estiver habilitada.
 - Exportações ficam registradas na auditoria.
 - O CRM não armazena dados de cartão ou conta bancária. Os documentos enviados (identificação, comprovantes, contrato social) ficam no banco, com acesso restrito ao escopo do usuário, e o conteúdo é apagado quando o documento é removido ou o cadastro é anonimizado.
-- O link para o cliente é aleatório, temporário (padrão de 7 dias), guardado como hash e pode ser revogado. Ele só permite alterar os campos externos (cadastro, endereço e documentos).
+- O link para o cliente e o link da pesquisa são aleatórios, temporários e guardados como hash. Enquanto estão ativos, o endereço também fica disponível para a equipe copiar; ele é apagado quando o link é revogado, expira, é respondido (pesquisa) ou o cadastro é inativado. O link de cadastro só permite alterar os campos externos (cadastro, endereço e documentos).
 
 ## 11. Campos e regras que ainda dependem de definição
 
@@ -261,7 +262,8 @@ Um gestor sem equipe vê apenas os próprios registros. Quando um consultor tent
 7. **Estrutura da equipe:** equipes, gestores e regra de distribuição de leads sem responsável (hoje a distribuição é manual).
 8. **LGPD:** base legal por finalidade, prazo de retenção e rotina de eliminação, encarregado (DPO) e texto de consentimento nos formulários de captação.
 9. **Status de contrato e pós-venda:** valores definitivos (hoje: em formalização, ativo, contemplado, quitado, cancelado). As etapas do checklist de pós-venda podem ser ajustadas em Configurações › Listas.
-11. **NPS e agenda externa:** perguntas da pesquisa de NPS e escolha entre Google Agenda e Outlook.
+11. **Agenda externa:** escolha entre Google Agenda e Outlook.
+12. **Simulador:** retorno da proposta e da simulação para o CRM (hoje o CRM registra quem gerou e quando; a proposta gerada é registrada manualmente com link e anexo).
 10. **Hospedagem:** servidor, HTTPS, backup e política de acesso externo.
 
 ## 12. Módulo ERP: ficha em 9 blocos, financeiro, pré-venda e pós-venda
@@ -272,24 +274,34 @@ Implementa a ficha aprovada na página de proposta (`docs/proposta-ficha/index.h
 |---|---|---|
 | 1. Cadastro | Externo | PF: nome, CPF, RG, data de nascimento, naturalidade, nacionalidade, sexo, estado civil, regime de bens (casado ou união estável), nome da mãe, profissão, faixa de renda e de patrimônio. PJ: razão social, nome fantasia, CNPJ, IE, data de abertura, atividade, faixa de faturamento e representante legal. Campos com a marca **venda** são exigidos para concluir a venda. |
 | 2. Origem | Interno | Origem, campanha, UTMs, **indicado por** (vínculo com outro cadastro, com lista de indicações feitas) e **temperatura** (fria, morna, quente). |
-| 3. Endereço | Externo | Vários endereços (residencial, comercial, correspondência, cobrança), um principal. Busca por CEP. |
-| 4. Negócio | Interno | Campos da R1: objetivo, tipo de produto (primário ou contemplada, no mesmo funil), finalidade do crédito, prazo, momento financeiro, tipo de contratação, FGTS, **quem decide a compra**, produtos que já possui. Consórcio: valor e administradora. Financiamento: saldo devedor, CET e banco. |
+| 3. Endereço | Externo | Vários endereços (residencial, comercial, correspondência, cobrança), um principal, com observação. Ao digitar o CEP o endereço é buscado automaticamente; se não for localizado, o preenchimento é manual. |
+| 4. Negócio | Interno | Qualificação da primeira reunião: objetivo, tipo de produto (primário ou contemplada, no mesmo funil), finalidade do crédito, prazo, momento financeiro, tipo de contratação, FGTS, **quem decide a compra**, produtos que já possui. Consórcio: valor e administradora. Financiamento: saldo devedor, CET e banco. |
 | 5. Financeiro | Interno | Parcelas e demais valores que o cliente paga. Situações: a vencer, pago, negociado, cancelado e **em atraso** (calculado). Geração de parcelas a partir do contrato. Pendências financeiras. |
-| 6. Propostas | — | Simulações e propostas com versões. Aprovar exige o **canal e a data do aceite** e cria a tarefa "Completar ficha de pré-venda". Recusar exige o **motivo da recusa** (lista). |
+| 6. Propostas | — | "Gerar simulação" registra apenas a data, a hora e quem gerou (sem simulação manual). "Gerar proposta" abre o simulador de propostas com o nome completo e o contato do cliente preenchidos; a proposta gerada é registrada com link e anexo. Aprovar exige o **canal e a data do aceite** e cria a tarefa "Completar ficha de pré-venda". Recusar exige o **motivo da recusa** (lista). |
 | 7. Agenda e tarefas | Interno | Tarefas e reuniões. Novos tipos: pré-venda e financeiro. Sincronização com agenda externa: **integração pendente**. |
-| 8. Produtos contratados | Externo | Contrato: nº na administradora, grupo e cota, valor da parcela, dia de vencimento, primeira parcela, **vendedor** e **valor da venda**, contemplação (data, tipo, lance e bem adquirido). |
+| 8. Produtos contratados | Externo | Lançados somente na conclusão da venda (não há cadastro avulso na ficha). Lista com categoria (Imóvel, Veículo, Serviço), administradora e grupo/cota. Contrato: nº na administradora, grupo e cota, valor da parcela, dia de vencimento, primeira parcela, **vendedor** e **valor da venda**, contemplação (data, tipo, lance e bem adquirido). |
 | 9. Histórico | — | Linha do tempo com filtro por **fase**: pré-venda (antes da primeira proposta), venda (depois da primeira proposta) e pós-venda (depois da conversão em cliente). |
+
+**Cabeçalho da ficha.** Ao lado do nome aparece só PF ou PJ. Abaixo, cartões com ID, tipo (prospect, lead ou cliente), status (ativo ou inativo), responsável, origem, valor em oportunidades em andamento e a marca de indicação. Botões: Registrar atividade, Nova tarefa, Novo negócio, Link cadastro e Gerar proposta. O menu lateral acompanha o tipo do registro (cliente em "Clientes"; prospect e lead em "Prospects e leads"). No resumo, o botão do WhatsApp abre a conversa com o cliente, e o cartão exibido é o de pré-venda (prospect e lead) ou o de pós-venda (cliente).
+
+**Status ativo/inativo.** Inativar pede um motivo opcional, revoga automaticamente o link de cadastro e impede gerar link ou pesquisa até reativar. Para clientes, o status do cliente acompanha esse campo.
 
 **Relacionamentos.** PF: dados do cônjuge (nome, CPF, profissão, renda), exibidos quando o estado civil pede. PJ: sócios (nome, CPF, participação, relação) e contatos da empresa.
 
-**Documentos.** Envio de PDF ou imagem (até 8 MB), com situação: pendente, recebido, aprovado, recusado ou removido. A lista exigida para PF e para PJ é definida em Configurações › Geral. Padrão PF: identificação, comprovante de endereço, comprovante de renda e comprovante de estado civil. Padrão PJ: contrato social, cartão CNPJ, comprovante de endereço, faturamento e documento do representante.
+**Documentos.** Os obrigatórios são enviados pela própria lista: o formulário pede só o arquivo (obrigatório), a venda vinculada, a validade e a observação. Um anexo pode valer para mais de uma venda (negócio) do cliente. "Anexar arquivo" oferece apenas os tipos que não são obrigatórios, para não haver sobreposição. Arquivos anexados pela equipe entram aprovados; os enviados pelo cliente pelo link ficam "aguardando validação" até o vendedor abrir em "Verificar" e aprovar ou reprovar (com motivo). Só documentos aprovados e dentro da validade contam para a venda. Situações: pendente, aguardando validação, aprovado, reprovado, vencido ou removido. A lista exigida para PF e para PJ é definida em Configurações › Geral. Padrão PF: identificação, comprovante de endereço, comprovante de renda e comprovante de estado civil. Padrão PJ: contrato social, cartão CNPJ, comprovante de endereço, faturamento e documento do representante.
 
 **Checklist de venda (pré-venda).** Mover a oportunidade para "Ganho" só é possível com a ficha completa: campos marcados como obrigatórios na venda (Configurações › Campos), endereço principal completo, dados do cônjuge e regime de bens quando aplicável, e documentos exigidos recebidos ou aprovados. O CRM informa exatamente o que falta. A regra pode ser desligada em Configurações › Geral.
 
-**Link para o cliente.** Na ficha, o botão "Link para o cliente" gera um endereço (`#/ficha/<token>`) que o cliente abre sem login para conferir e atualizar cadastro, endereço (com busca por CEP) e documentos. Cada envio fica no histórico com a origem "cliente" e cria a tarefa "Conferir dados atualizados pelo cliente" para o responsável. O link expira no prazo configurado (1 a 60 dias) e pode ser revogado.
+**Pré-venda.** Tela com o percentual da ficha, as pendências agrupadas (cadastro, relacionamentos, endereço, documentos) e o atalho para completar cada item.
+
+**Link para o cliente.** Só existe um link ativo por cadastro: enquanto ele vale, o botão "Link cadastro" mostra o link para copiar (sem gerar outro). Depois de revogado, com o cadastro ativo, é possível gerar um novo. A ficha mostra quando o link foi gerado e por quem, o primeiro e o último acesso do cliente, a quantidade de acessos e de envios, e o histórico de links. Na ficha, o botão "Link cadastro" gera um endereço (`#/ficha/<token>`) que o cliente abre sem login para conferir e atualizar cadastro, endereço (com busca por CEP) e documentos. Cada envio fica no histórico com a origem "cliente" e cria a tarefa "Conferir dados atualizados pelo cliente" para o responsável. O link expira no prazo configurado (1 a 60 dias) e pode ser revogado.
 
 **Financeiro.** Quem paga é sempre o cliente, e a empresa acompanha para avisar. Parcelas vencidas e não pagas aparecem em atraso na ficha, no menu Financeiro e no painel ("Parcelas em atraso"). Cada atraso gera uma tarefa do tipo financeiro para o **responsável financeiro** definido em Configurações › Geral (ou para o responsável pelo cliente). A tarefa é concluída automaticamente quando a parcela é paga, negociada ou cancelada. Relatórios: **Financeiro** (previsto, recebido, em atraso e adimplência por mês de vencimento) e **Vendas por vendedor**.
 
-**Pós-venda.** Checklist por cliente com etapas configuráveis (boas-vindas, primeira parcela, acompanhamento das assembleias, contemplação e pedido de indicação) e registro de NPS (nota de 0 a 10 e comentário). O link de NPS para o cliente responder é uma **integração pendente**.
+**Pós-venda.** Checklist por cliente com etapas configuráveis: 1ª parcela confirmada, onboarding, cadastro de estratégia de lance (marcado automaticamente ao salvar a estratégia), cadastro de recebimento de boletos e pedido de indicação.
+
+**Pesquisa de satisfação (NPS) por link.** A equipe gera o link (`#/nps/<token>`, validade configurável) e o cliente responde, sem login, a nota de 0 a 10 e quatro avaliações de 1 a 5 (atendimento, clareza, agilidade e confiança), com comentário opcional. O histórico mostra cada pesquisa com a data de geração, quem gerou, o acesso do cliente, a situação (aguardando resposta, respondida, expirada ou cancelada) e as respostas. Só existe uma pesquisa pendente por vez. Pesquisas nunca são excluídas: são canceladas com justificativa obrigatória. Notas de 0 a 6 criam uma tarefa de pós-venda para o responsável.
+
+**Estratégia de lance por produto.** Para cada produto contratado (com categoria, administradora, grupo/cota e crédito): se vai ofertar lance e o tipo (embutido, fixo ou livre). No lance livre, informa-se o percentual e se usará o lance embutido e o FGTS.
 
 **Itens recusados na aprovação** (não implementados): PEP, evento de origem, página de conversão, responsáveis por fase, checklist de FGTS, transcrição automática da R1 e visões adicionais da agenda.

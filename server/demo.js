@@ -49,6 +49,9 @@ function seedDemo(db, password) {
   const lost = db.prepare("SELECT * FROM pipeline_stages WHERE kind = 'perdido'").get();
   const products = db.prepare('SELECT * FROM products').all();
   const rnd = (arr, i) => arr[i % arr.length];
+  const ids = [];
+  // Imagem fictícia usada como documento enviado pelo cliente
+  const SAMPLE_DOC = 'iVBORw0KGgoAAAANSUhEUgAAAPAAAACWCAIAAABvmpKCAAABsUlEQVR42u3cMQ5AQBRF0VmMPVmxRKVUqZR6orQDiQhexknOCrjVz8uUpu2gGsUnQNAgaBA0CBpBg6BB0CBoEDSCBkGDoEHQIGgEDYIGQYOgQdAIGgQNggZBg6ARNAgaPgl63XaohqARNAgaBA2CRtAgaBA0CBoEjaBB0CBoEDQIGkGf6YcRXiNoBC1oBA2ChrCgwdmOUNO8BBI0ghY0gkbQgkbQgkbQgkbQgha0oBG0oBF0YtDWBTXJDNo4CUELGkELWtCCRtDBQePK4WyHoAWNoAWNoP1XQQsaQQsaQQsaQQsaQSNoQSNoe2hsOQSNoAWNoAUtaEEjaFcOXDkEjaAFjaARtKARtKARtKARtKARNIIWNIIWNIK25cDbdoJG0IIWtKARtKARtPehceUQNIJG0IJG0IJG0IJG0IIWtKARtKARtKARtKARtC2HLYdxEoIWNFwiaAQtaH4bNCQTNIIGQYOgQdAIGgQNggZBg6ARtC0H96YUgkbQgkbQgkbQgha0KwcIGgQNgkbQIGgQNAgaBI2gQdBgywEea0TQgkbQvjKCBu9Dg6ARNAgaBA3POgC0qxx3509tawAAAABJRU5ErkJggg==';
 
   tx(db, () => {
     names.forEach((name, i) => {
@@ -73,6 +76,7 @@ function seedDemo(db, password) {
         },
         { skipDuplicateCheck: true },
       );
+      ids.push(id);
       const opp = db.prepare('SELECT * FROM opportunities WHERE contact_id = ?').get(id);
       if (i % 4 !== 3) {
         activities.createActivity(db, owner, { contact_id: id, type: 'tentativa_sem_atendimento', result: 'nao_atendida', occurred_at: new Date(Date.now() - (6 - (i % 5)) * 86400000).toISOString() });
@@ -94,16 +98,34 @@ function seedDemo(db, password) {
       }
       if (target === 9) {
         contacts.updateContact(db, admin, id, { rg: `${12345670 + i}`, birthplace: 'São Paulo/SP', nationality: 'Brasileira', sex: i % 2 ? 'masculino' : 'feminino', marital_status: 'solteiro', mother_name: 'Nome fictício da mãe', profession: 'Analista', income_range: '6k_10k', birth_date: '1988-05-10' });
-      record.saveAddress(db, admin, id, { cep: '01001000', street: 'Praça da Sé', number: `${100 + i}`, district: 'Sé', city: 'São Paulo', state: 'SP', is_primary: true });
+      record.saveAddress(db, admin, id, { cep: '01001000', street: 'Praça da Sé', number: `${100 + i}`, district: 'Sé', city: 'São Paulo', state: 'SP', is_primary: true, notes: i === 9 ? 'Portaria 24h: deixar documentos com o zelador.' : null });
       const r = opps.moveStage(db, owner, opp.id, { stage_id: won.id, contract: { administrator: 'Administradora (preencher)', group_code: `G${100 + i}`, quota_code: `${i}`, contract_number: `CTR-DEMO-${i}`, installment_value: 1450, due_day: 10, contracted_at: new Date(Date.now() - 95 * 86400000).toISOString().slice(0, 10) } }, { skipChecklist: true });
       if (r.contract) {
         const first = new Date(Date.now() - 80 * 86400000);
         finance.generateInstallments(db, admin, r.contract.id, { first_due_date: first.toISOString().slice(0, 10), count: 12 });
         const entries = db.prepare("SELECT id FROM finance_entries WHERE contract_id = ? ORDER BY installment_number").all(r.contract.id);
         entries.slice(0, i % 3 === 0 ? 1 : 2).forEach((e) => finance.updateEntry(db, admin, e.id, { action: 'pagar', payment_method: 'boleto' }));
+        record.togglePostSale(db, owner, id, { item: 'primeira_parcela', done: true });
+        if (i === 9) {
+          record.togglePostSale(db, owner, id, { item: 'onboarding', done: true });
+          record.saveBidStrategy(db, owner, r.contract.id, { will_bid: true, bid_type: 'livre', bid_pct: 25, use_embedded: true, use_fgts: true, notes: 'Ofertar a partir da 6ª assembleia.' });
+          const n = record.createNps(db, owner, id, { contract_id: r.contract.id });
+          record.publicNpsForm(db, n.token);
+          record.publicNpsSubmit(db, n.token, { score: 9, answers: { atendimento: 5, clareza: 4, agilidade: 4, confianca: 5 }, comment: 'Atendimento muito atencioso.' });
+        } else {
+          record.createNps(db, owner, id, { contract_id: r.contract.id });
+        }
       }
+      }
+      if (target === 8) {
+        // Lead em pré-venda: link de cadastro ativo, já acessado, com documento enviado pelo cliente aguardando validação
+        const link = record.createClientLink(db, owner, id);
+        record.publicForm(db, link.token);
+        record.publicUpload(db, link.token, { doc_type: 'identificacao', filename: 'documento-identidade.png', mime: 'image/png', content_base64: SAMPLE_DOC });
       }
       if (i === 10 || i === 15) opps.moveStage(db, owner, opp.id, { stage_id: lost.id, lost_reason: 'optou_financiamento' });
+      if (i === 15) contacts.updateContact(db, admin, id, { active: false, inactive_reason: 'Optou por financiamento bancário.' });
+      if (i === 12) contacts.updateContact(db, admin, id, { referred_by_id: ids[9] });
       if (i % 5 === 1) tasks.createTask(db, owner, { contact_id: id, opportunity_id: opp.id, type: 'reuniao', title: 'Diagnóstico financeiro', due_at: new Date(Date.now() + (i % 3) * 86400000 + 3600000).toISOString() });
     });
   });

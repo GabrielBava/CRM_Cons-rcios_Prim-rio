@@ -100,7 +100,18 @@ function createRouter(db) {
   add('PATCH', '/api/anexos/:id', ({ user, params, body }) => (record.reviewAttachment(db, user, params.id, body), { ok: true }));
   add('GET', '/api/cadastros/:id/checklist-venda', ({ user, params }) => record.saleChecklist(db, core.loadContact(db, user, params.id)));
   add('POST', '/api/cadastros/:id/link-cliente', ({ user, params }) => record.createClientLink(db, user, params.id));
-  add('POST', '/api/cadastros/:id/link-cliente/revogar', ({ user, params }) => ({ revogados: record.revokeClientLinks(db, user, params.id) }));
+  add('POST', '/api/cadastros/:id/link-cliente/revogar', ({ user, params, body }) => ({ revogados: record.revokeClientLinks(db, user, params.id, body) }));
+  add('GET', '/api/cadastros/:id/link-cliente', ({ user, params }) => {
+    const c = core.loadContact(db, user, params.id);
+    return { active: record.activeClientLink(db, c.id), history: record.clientLinkHistory(db, c.id) };
+  });
+  add('POST', '/api/cadastros/:id/nps', ({ user, params, body }) => record.createNps(db, user, params.id, body));
+  add('POST', '/api/nps/:id/cancelar', ({ user, params, body }) => (record.cancelNps(db, user, params.id, body), { ok: true }));
+  add('POST', '/api/contratos/:id/estrategia-lance', ({ user, params, body }) => (record.saveBidStrategy(db, user, params.id, body), { ok: true }));
+  add('POST', '/api/cadastros/:id/simulacao-rapida', ({ user, params, body }) => sims.registerQuick(db, user, { ...body, contact_id: params.id }));
+  add('POST', '/api/cadastros/:id/simulador-proposta', ({ user, params, body }) => record.proposalSimulatorLink(db, user, params.id, body));
+  add('GET', '/api/publico/nps', ({ query }) => record.publicNpsForm(db, query.token), { public: true });
+  add('POST', '/api/publico/nps', ({ body }) => record.publicNpsSubmit(db, body.token, body), { public: true });
   add('POST', '/api/cadastros/:id/pos-venda', ({ user, params, body }) => (record.togglePostSale(db, user, params.id, body), { ok: true }));
   add('GET', '/api/publico/ficha', ({ query }) => record.publicForm(db, query.token), { public: true });
   add('GET', '/api/publico/cep/:cep', ({ params, query }) => record.publicCep(db, query.token, params.cep), { public: true });
