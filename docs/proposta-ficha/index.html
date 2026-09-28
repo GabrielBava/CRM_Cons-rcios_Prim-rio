@@ -1,0 +1,568 @@
+<title>Ficha do Lead e do Cliente</title>
+<style>
+  :root {
+    --bg: #f4f6f9;
+    --surface: #ffffff;
+    --surface-2: #eef1f6;
+    --border: #d9dee7;
+    --text: #1b2230;
+    --muted: #5b6678;
+    --primary: #2457c5;
+    --primary-soft: #e5edfc;
+    --ok: #1d7a46;
+    --ok-soft: #e1f3e8;
+    --warn: #8a5a00;
+    --warn-soft: #fff2d1;
+    --danger: #b42318;
+    --danger-soft: #fde9e7;
+    --sugg: #6b3fb3;
+    --sugg-soft: #f0e9fb;
+    --radius: 8px;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #11151c; --surface: #1a2029; --surface-2: #222a35; --border: #2f3947; --text: #e6e9ee; --muted: #9aa5b4;
+      --primary: #7aa4ff; --primary-soft: #1d2b47; --ok: #5cc98a; --ok-soft: #173325; --warn: #f0b95a; --warn-soft: #3a2e14;
+      --danger: #ff7b6e; --danger-soft: #3d1c1a; --sugg: #c3a4ff; --sugg-soft: #2c2342;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #11151c; --surface: #1a2029; --surface-2: #222a35; --border: #2f3947; --text: #e6e9ee; --muted: #9aa5b4;
+    --primary: #7aa4ff; --primary-soft: #1d2b47; --ok: #5cc98a; --ok-soft: #173325; --warn: #f0b95a; --warn-soft: #3a2e14;
+    --danger: #ff7b6e; --danger-soft: #3d1c1a; --sugg: #c3a4ff; --sugg-soft: #2c2342;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-size: 15px; line-height: 1.5; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding-inline: 16px; padding-block: 28px 64px; display: flex; flex-direction: column; gap: 22px; }
+  h1 { font-size: 1.7rem; margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
+  h2 { font-size: 1.2rem; margin: 0 0 4px; text-wrap: balance; }
+  h3 { font-size: 1rem; margin: 0; }
+  p { margin: 0; }
+  .muted { color: var(--muted); }
+  .small { font-size: 0.87rem; }
+  section.block { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+  .lead-in { max-width: 70ch; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 9px; border-radius: 999px; font-size: 0.78rem; font-weight: 600; white-space: nowrap; border: 1px solid transparent; }
+  .chip.pedido { background: var(--primary-soft); color: var(--primary); }
+  .chip.existe { background: var(--ok-soft); color: var(--ok); }
+  .chip.sugestao { background: var(--sugg-soft); color: var(--sugg); }
+  .chip.venda { background: var(--warn-soft); color: var(--warn); }
+  .chip.neutral { background: var(--surface-2); color: var(--muted); border-color: var(--border); }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+  .legend span.desc { color: var(--muted); font-size: 0.87rem; }
+
+  /* Painel de aprovação */
+  .status-panel { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .stat { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; background: var(--surface); }
+  .stat .n { font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat .l { color: var(--muted); font-size: 0.85rem; }
+  .stat.ok .n { color: var(--ok); } .stat.no .n { color: var(--danger); } .stat.adj .n { color: var(--warn); } .stat.pend .n { color: var(--sugg); }
+  .progress { height: 8px; border-radius: 99px; background: var(--surface-2); overflow: hidden; display: flex; }
+  .progress i { display: block; height: 100%; }
+  .save-state { font-size: 0.85rem; color: var(--muted); }
+  .save-state.err { color: var(--danger); }
+
+  /* Fases */
+  .phases { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+  .phase { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; display: flex; flex-direction: column; gap: 6px; background: var(--surface-2); }
+  .phase .step { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
+  .phase ul { margin: 0; padding-left: 18px; font-size: 0.9rem; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); background: var(--surface-2); font-weight: 600; }
+  td.c { text-align: center; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
+  .dot.req { background: var(--warn); } .dot.opt { background: transparent; border: 2px solid var(--muted); } .dot.auto { background: var(--ok); }
+
+  /* Ficha com abas */
+  .record-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; align-items: flex-start; }
+  .record-name { font-size: 1.15rem; font-weight: 700; }
+  .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: thin; }
+  .tabs button { font: inherit; background: none; border: 0; border-bottom: 2px solid transparent; padding: 9px 12px; color: var(--muted); cursor: pointer; white-space: nowrap; display: inline-flex; gap: 6px; align-items: center; }
+  .tabs button:hover { color: var(--text); }
+  .tabs button[aria-selected="true"] { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+  .tabs button.sugg { color: var(--sugg); }
+  .tabs button.sugg[aria-selected="true"] { border-bottom-color: var(--sugg); }
+  .tabs button:focus-visible, button:focus-visible, textarea:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+  .tab-intro { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; justify-content: space-between; }
+  .tab-intro p { max-width: 75ch; }
+  .note { background: var(--surface-2); border-radius: 6px; padding: 10px 12px; font-size: 0.9rem; }
+  .note.sugg { background: var(--sugg-soft); }
+  .fields td:first-child { min-width: 190px; }
+  .fields .fname { font-weight: 600; }
+  .fields .fdesc { color: var(--muted); font-size: 0.85rem; }
+  .decide { display: flex; flex-direction: column; gap: 6px; min-width: 220px; }
+  .decide .btns { display: flex; gap: 4px; flex-wrap: wrap; }
+  .decide button { font: inherit; font-size: 0.82rem; padding: 3px 9px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+  .decide button[aria-pressed="true"].ok { background: var(--ok); border-color: var(--ok); color: #fff; }
+  .decide button[aria-pressed="true"].no { background: var(--danger); border-color: var(--danger); color: #fff; }
+  .decide button[aria-pressed="true"].adj { background: var(--warn); border-color: var(--warn); color: #fff; }
+  .decide textarea { font: inherit; font-size: 0.85rem; width: 100%; min-height: 34px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); resize: vertical; }
+  .fixed-state { color: var(--muted); font-size: 0.85rem; }
+  tr.is-sugg { background: color-mix(in srgb, var(--sugg-soft) 45%, transparent); }
+  .tab-decision { border: 1px dashed var(--sugg); border-radius: var(--radius); padding: 12px; display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: flex-start; }
+  .tab-decision .decide { flex: 1; max-width: 420px; }
+
+  .rules, .questions { display: flex; flex-direction: column; gap: 10px; }
+  .rule, .question { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; }
+  .rule > div:first-child, .question > div:first-child { flex: 1 1 360px; display: flex; flex-direction: column; gap: 4px; }
+  .question textarea { font: inherit; width: 100%; min-height: 70px; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); resize: vertical; }
+  .question .answer { flex: 1 1 320px; display: flex; flex-direction: column; gap: 4px; }
+  .final { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; border: 1px solid var(--primary); background: var(--primary-soft); border-radius: var(--radius); padding: 14px 16px; }
+  .final button { font: inherit; font-weight: 600; padding: 9px 16px; border-radius: 6px; border: 1px solid var(--primary); background: var(--primary); color: #fff; cursor: pointer; }
+  .final button:disabled { opacity: 0.55; cursor: not-allowed; }
+  .final button.done { background: var(--ok); border-color: var(--ok); }
+  .sources { margin: 0; padding-left: 18px; font-size: 0.9rem; }
+  .sources a { color: var(--primary); }
+
+  @media (max-width: 760px) {
+    .phases { grid-template-columns: 1fr 1fr; }
+    table.fields, table.fields tbody, table.fields tr, table.fields td { display: block; }
+    table.fields thead { display: none; }
+    table.fields tr { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 10px; padding: 6px 10px; }
+    table.fields td { border: 0; padding: 4px 0; }
+    table.fields td[data-l]::before { content: attr(data-l); display: block; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+    .decide { min-width: 0; }
+  }
+  @media (max-width: 460px) { .phases { grid-template-columns: 1fr; } }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header style="display:flex;flex-direction:column;gap:8px">
+    <p class="muted small">CRM de Consórcios · proposta de estrutura para aprovação · 28/09/2026</p>
+    <h1>Ficha do Lead e do Cliente</h1>
+    <p class="lead-in">Estes são os blocos que você pediu, organizados como abas da ficha, com o que o CRM já tem e o que a pesquisa indicou que costuma faltar em cadastros de consórcio. Avalie cada <strong>sugestão</strong>: aprovar, recusar ou pedir ajuste (com comentário). Suas escolhas ficam salvas nesta página e eu as uso para alterar o CRM.</p>
+    <div class="legend">
+      <span class="chip pedido">Seu pedido</span><span class="chip existe">Já existe no CRM</span><span class="chip sugestao">Sugestão</span><span class="chip venda">Obrigatório na venda</span>
+      <span class="desc">Só as sugestões precisam da sua decisão. Campos do seu pedido entram como você descreveu.</span>
+    </div>
+  </header>
+
+  <section class="block" aria-labelledby="st-title">
+    <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;align-items:baseline">
+      <h2 id="st-title">Sua avaliação</h2>
+      <span class="save-state" id="save-state">Conectando…</span>
+    </div>
+    <div class="progress" id="progress" aria-hidden="true"></div>
+    <div class="status-panel" id="stats"></div>
+  </section>
+
+  <section class="block" aria-labelledby="ph-title">
+    <div>
+      <h2 id="ph-title">Como o cadastro evolui</h2>
+      <p class="muted lead-in">O lead nasce com o mínimo (nome e um contato) e a ficha vai sendo completada. Os dados marcados como "obrigatório na venda" só são exigidos para concluir a venda, quando o lead vira cliente.</p>
+    </div>
+    <div class="phases">
+      <div class="phase"><span class="step">1 · Lead</span><strong>Cadastro primário</strong><ul><li>Nome e telefone ou e-mail</li><li>Origem e campanha</li><li>Responsável</li></ul></div>
+      <div class="phase"><span class="step">2 · Qualificação (R1)</span><strong>Negócio</strong><ul><li>Objetivo, produto, crédito</li><li>Capacidade de parcela, reserva, FGTS</li><li>Resumo da R1</li></ul></div>
+      <div class="phase"><span class="step">3 · Proposta</span><strong>Negociação</strong><ul><li>Simulações e propostas</li><li>Agenda e follow-ups</li><li>Endereço completo</li></ul></div>
+      <div class="phase"><span class="step">4 · Venda e pós-venda</span><strong>Cliente</strong><ul><li>Documentos e dados completos</li><li>Produto contratado</li><li>Financeiro e acompanhamento</li></ul></div>
+    </div>
+    <div class="table-wrap"><table id="matrix" aria-label="Quando cada aba é preenchida"></table></div>
+    <p class="small muted"><span class="dot req"></span> obrigatório nessa fase · <span class="dot opt"></span> preenchimento opcional · <span class="dot auto"></span> preenchido automaticamente pelo sistema</p>
+  </section>
+
+  <section class="block" aria-labelledby="rec-title">
+    <div class="record-head">
+      <div>
+        <h2 id="rec-title">Ficha, aba por aba</h2>
+        <p class="muted small">Exemplo de cabeçalho: <span class="record-name">Maria Souza</span> · C-000123 · Lead em qualificação · Responsável: Consultor 1</p>
+      </div>
+    </div>
+    <div class="tabs" role="tablist" id="tabs"></div>
+    <div id="panel" role="tabpanel"></div>
+  </section>
+
+  <section class="block" aria-labelledby="rules-title">
+    <div><h2 id="rules-title">Regras sugeridas</h2><p class="muted small">Comportamentos da ficha além dos campos.</p></div>
+    <div class="rules" id="rules"></div>
+  </section>
+
+  <section class="block" aria-labelledby="q-title">
+    <div><h2 id="q-title">Perguntas para você decidir</h2><p class="muted small">Pontos que mudam a forma de construir. Responda com suas palavras; o texto é salvo ao sair do campo.</p></div>
+    <div class="questions" id="questions"></div>
+  </section>
+
+  <div class="final" id="final">
+    <div><strong>Terminou de avaliar?</strong><p class="small">Ao liberar, eu leio suas decisões e respostas e aplico as mudanças no CRM e na versão de teste.</p></div>
+    <button type="button" id="release">Liberar para implementação</button>
+  </div>
+
+  <section class="block" aria-labelledby="src-title">
+    <h2 id="src-title">Base da pesquisa</h2>
+    <ul class="sources">
+      <li><a href="https://normativos.bcb.gov.br/Lists/Normativos/Attachments/50905/Circ_3978_v3_P.pdf" target="_blank" rel="noopener">Circular BCB nº 3.978/2020</a>: prevenção à lavagem de dinheiro. Pede qualificação do cliente com capacidade financeira (renda ou faturamento) e identificação de pessoa exposta politicamente (PEP). Vale para administradoras de consórcio.</li>
+      <li><a href="https://www.consorciocred.com/documentacao-exigida-consorcio/" target="_blank" rel="noopener">Documentação exigida no consórcio</a> e <a href="https://finanzero.com.br/blog/documentacao-para-consorcio-confira-a-lista-completa/" target="_blank" rel="noopener">lista de documentos</a>: fichas cadastrais de administradoras pedem filiação, estado civil, dados do cônjuge, renda e comprovantes.</li>
+      <li><a href="https://rodobens.com.br/blog/consorcio/consorcio-imobiliario-um-checklist-com-todos-os-documentos-que-voce-precisa" target="_blank" rel="noopener">Checklist de documentos para PJ</a>: contrato social, cartão CNPJ, faturamento dos últimos 12 meses e documentos dos sócios.</li>
+      <li><a href="https://www.cnnbrasil.com.br/economia/negocios/como-utilizar-fgts-em-consorcio-imobiliario-regras-vantagens-e-cuidados/" target="_blank" rel="noopener">Regras do FGTS no consórcio imobiliário</a>: 3 anos de FGTS, sem imóvel residencial na cidade, sem financiamento ativo no SFH, imóvel para moradia.</li>
+      <li><a href="https://viacep.com.br/" target="_blank" rel="noopener">ViaCEP</a>: serviço gratuito de consulta de endereço por CEP, sem cadastro.</li>
+    </ul>
+  </section>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  // P = seu pedido · E = já existe no CRM · S = sugestão (precisa de decisão)
+  // quando: lead | r1 | proposta | venda | auto | opcional
+  const TABS = [
+    { id: 'cadastro', m: 'req,opt,opt,req', name: '1. Cadastro', side: 'Externo', intro: 'Dados de identificação fornecidos pelo lead/cliente. No lead basta o nome e um contato; o restante é exigido na venda.', fields: [
+      ['P', 'ID', 'Código automático (C-000001) e identificador interno.', 'Automático', 'auto'],
+      ['P', 'Tipo', 'Pessoa física ou jurídica.', 'Lista', 'lead'],
+      ['P', 'Nome completo / Razão social', '', 'Texto', 'lead'],
+      ['E', 'Nome fantasia (PJ)', 'Já existe no cadastro PJ.', 'Texto', 'opcional'],
+      ['P', 'CPF ou CNPJ', 'Com validação dos dígitos e alerta de duplicidade (já existe).', 'Texto', 'venda'],
+      ['P', 'RG', 'Número do documento.', 'Texto', 'venda'],
+      ['S', 'RG: órgão emissor, UF e data de emissão', 'Pedido nas fichas cadastrais das administradoras.', 'Texto e data', 'venda', 's-rg-emissor'],
+      ['P', 'Telefone 1', '', 'Telefone', 'lead'],
+      ['P', 'Telefone 2', '', 'Telefone', 'opcional'],
+      ['E', 'WhatsApp', 'Já existe; útil quando é diferente do telefone 1.', 'Telefone', 'opcional'],
+      ['P', 'E-mail', '', 'E-mail', 'lead'],
+      ['P', 'Naturalidade', 'Cidade e UF de nascimento.', 'Texto', 'venda'],
+      ['S', 'Nacionalidade', 'Presente nas fichas de adesão.', 'Texto', 'venda', 's-nacionalidade'],
+      ['P', 'Sexo', 'Sugestão: incluir a opção "Prefiro não informar" (ver perguntas).', 'Lista', 'venda'],
+      ['P', 'Estado civil', 'Solteiro, casado, união estável, divorciado, separado, viúvo.', 'Lista', 'venda'],
+      ['S', 'Regime de bens', 'Aparece quando casado ou em união estável. Relevante para imóvel.', 'Lista', 'venda', 's-regime-bens'],
+      ['P', 'Data de nascimento', '', 'Data', 'venda'],
+      ['S', 'Nome da mãe (filiação)', 'Campo padrão das fichas cadastrais das administradoras.', 'Texto', 'venda', 's-nome-mae'],
+      ['P', 'Profissão', '', 'Texto', 'r1'],
+      ['S', 'Renda mensal', 'Valor ou faixa. A Circular BCB 3.978 pede avaliação da capacidade financeira.', 'Moeda', 'venda', 's-renda'],
+      ['S', 'Patrimônio estimado', 'Faixa de patrimônio declarado.', 'Lista', 'opcional', 's-patrimonio'],
+      ['S', 'Pessoa exposta politicamente (PEP)', 'Sim/Não. Exigido pela Circular BCB 3.978.', 'Sim/Não', 'venda', 's-pep'],
+      ['P', 'Documento de identificação (anexo)', 'Exigido na venda.', 'Arquivo', 'venda'],
+      ['P', 'Comprovante de endereço (anexo)', 'Exigido na venda.', 'Arquivo', 'venda'],
+      ['S', 'Comprovante de renda e de estado civil (anexos)', 'Pedidos pelas administradoras na adesão.', 'Arquivo', 'venda', 's-comprovantes'],
+      ['P', 'Arquivos', 'Anexar quantos arquivos quiser, com nome e data.', 'Arquivos', 'opcional'],
+      ['S', 'Dados PJ adicionais', 'Data de abertura, CNAE/atividade, faturamento anual, contrato social, cartão CNPJ.', 'Vários', 'venda', 's-pj-extra'],
+    ] },
+    { id: 'origem', m: 'req,opt,opt,opt', name: '2. Origem', side: 'Interno', intro: 'De onde o lead veio e quem cuida dele. Preenchido pela equipe ou pelas integrações (landing page, campanhas, eventos).', fields: [
+      ['P', 'Origem do lead', 'Lista configurável: landing page, Meta Ads, Instagram, WhatsApp, evento, indicação, parceiro…', 'Lista', 'lead'],
+      ['P', 'Campanha ou ação de origem', '', 'Texto', 'opcional'],
+      ['P', 'Data de cadastro', 'Automática.', 'Data', 'auto'],
+      ['P', 'Data do primeiro contato', 'Preenchida na primeira tentativa de contato.', 'Data', 'auto'],
+      ['P', 'Responsável atual', '', 'Usuário', 'lead'],
+      ['P', 'Observações', '', 'Texto longo', 'opcional'],
+      ['E', 'IDs da plataforma e UTMs', 'ID do lead, da campanha, do conjunto e do anúncio; utm_source, medium, campaign…', 'Texto', 'auto'],
+      ['E', 'Histórico de entradas', 'O mesmo lead chegando por outra campanha vira nova linha, sem duplicar o cadastro.', 'Lista', 'auto'],
+      ['S', 'Indicado por', 'Cliente ou parceiro que indicou (para controle de indicações).', 'Busca de cadastro', 'opcional', 's-indicado-por'],
+      ['S', 'Evento de origem', 'Nome e data do evento quando a origem for "Evento".', 'Texto e data', 'opcional', 's-evento'],
+      ['S', 'Página de conversão', 'Endereço da landing page ou formulário onde o lead se cadastrou.', 'URL', 'auto', 's-landing-url'],
+      ['S', 'Responsáveis por fase', 'Pré-venda (SDR), venda (closer) e pós-venda, além do responsável atual. Base para controlar os futuros vendedores.', 'Usuários', 'opcional', 's-resp-fase'],
+      ['S', 'Temperatura do lead', 'Frio, morno ou quente, para priorizar o atendimento.', 'Lista', 'opcional', 's-temperatura'],
+    ] },
+    { id: 'endereco', m: 'opt,opt,req,req', name: '3. Endereço', side: 'Externo', intro: 'Hoje o CRM guarda só cidade e UF. Os campos abaixo substituem isso pelo endereço completo.', fields: [
+      ['P', 'CEP', 'Busca automática do endereço pelo CEP (ViaCEP).', 'CEP', 'proposta'],
+      ['P', 'Logradouro', 'Preenchido pela busca de CEP, editável.', 'Texto', 'proposta'],
+      ['P', 'Número', '', 'Texto', 'proposta'],
+      ['P', 'Complemento', '', 'Texto', 'opcional'],
+      ['P', 'Bairro', '', 'Texto', 'proposta'],
+      ['P', 'Cidade', '', 'Texto', 'lead'],
+      ['P', 'Estado', '', 'UF', 'lead'],
+      ['S', 'Tipo e mais de um endereço', 'Residencial, comercial e correspondência, com um marcado como principal.', 'Lista', 'opcional', 's-multi-endereco'],
+    ] },
+    { id: 'negocio', m: 'opt,req,opt,opt', name: '4. Negócio', side: 'Interno', intro: 'Qualificação do lead, completada com a transcrição da R1 (ligação ou WhatsApp). Um lead pode ter mais de um negócio (oportunidade) no funil.', fields: [
+      ['P', '(R1) Objetivo', 'Aquisição ou investimento.', 'Lista', 'r1'],
+      ['P', '(R1) Produto', 'Primário ou contemplada.', 'Lista', 'r1'],
+      ['P', 'Categoria', 'Imóvel, veículo ou serviço (já existe).', 'Lista', 'r1'],
+      ['P', '(R1) Crédito desejado', 'Valor (já existe) e para qual objetivo (novo campo de texto).', 'Moeda e texto', 'r1'],
+      ['P', '(R1) Prazo objetivo', 'Curto, médio ou longo (substitui o campo "urgência").', 'Lista', 'r1'],
+      ['P', '(R1) Momento financeiro', 'Sugestão de opções: organizado com reserva, organizado sem reserva, apertado, endividado; mais observação.', 'Lista e texto', 'r1'],
+      ['P', '(R1) Capacidade de parcela', 'Valor máximo confortável por mês (já existe como faixa de parcela).', 'Moeda', 'r1'],
+      ['P', 'Tipo de contratação', 'Você pediu PJ ou CLT. Sugestão: incluir autônomo, servidor público, empresário e aposentado (ver perguntas).', 'Lista', 'r1'],
+      ['P', '(R1) Capital/reserva para lance', 'Valor disponível para lance (já existe).', 'Moeda', 'r1'],
+      ['P', '(R1) FGTS', 'Só para PF: tem FGTS e valor aproximado (já existe o valor).', 'Sim/Não e moeda', 'r1'],
+      ['S', 'Checklist de uso do FGTS', 'Três anos de FGTS, sem imóvel residencial na cidade, sem financiamento no SFH e imóvel para moradia. Evita promessa de uso que depois não se confirma.', 'Checklist', 'r1', 's-fgts-check'],
+      ['S', 'Resumo e transcrição da R1', 'Data da R1, quem conduziu, canal, texto da transcrição ou resumo e anexo de áudio.', 'Texto e arquivo', 'r1', 's-r1-transcricao'],
+      ['S', 'Já possui consórcio ou financiamento', 'Sim/Não e qual.', 'Sim/Não e texto', 'r1', 's-ja-possui'],
+      ['S', 'Quem decide a compra', 'O lead decide sozinho ou com cônjuge/sócio.', 'Texto', 'r1', 's-decisor'],
+      ['E', 'Etapa do funil e próxima ação', 'Já existe: cada negócio segue o funil com próxima ação e prazo.', 'Funil', 'auto'],
+    ] },
+    { id: 'financeiro', m: 'opt,opt,opt,opt', name: '5. Financeiro', side: 'Interno', intro: 'Histórico e pendências financeiras do cliente. É um bloco novo; a estrutura abaixo é uma sugestão para você validar.', tabSuggestion: 's-financeiro-estrutura', fields: [
+      ['S', 'Lançamentos', 'Tipo (parcela, taxa de adesão, lance, outro), contrato vinculado, vencimento, valor, status (a vencer, pago, em atraso, negociado, cancelado), data e forma de pagamento, comprovante.', 'Tabela', 'opcional', 's-fin-lancamentos'],
+      ['S', 'Resumo financeiro', 'Total pago, em aberto e em atraso, com dias de atraso, no topo da aba.', 'Automático', 'auto', 's-fin-resumo'],
+      ['S', 'Pendências e acordos', 'Registro de pendências e negociações com data, valor e combinado.', 'Tabela', 'opcional', 's-fin-pendencias'],
+      ['S', 'Alerta de atraso', 'Aviso no cabeçalho da ficha e tarefa para o responsável quando houver parcela em atraso.', 'Regra', 'auto', 's-fin-alerta'],
+    ] },
+    { id: 'propostas', m: 'opt,opt,req,req', name: '6. Propostas', side: 'Interno', intro: 'Todas as propostas geradas para o lead, com versões. Já existe no CRM.', fields: [
+      ['E', 'Propostas e versões', 'Código, versão, produto, crédito, prazo, parcela, taxas, reajuste, estratégia, status e validade.', 'Tabela', 'proposta'],
+      ['E', 'Simulações vinculadas', 'Registro manual ou vindo do simulador.', 'Tabela', 'proposta'],
+      ['S', 'Arquivo da proposta', 'Anexar o PDF enviado ao cliente.', 'Arquivo', 'opcional', 's-prop-pdf'],
+      ['S', 'Aceite do cliente', 'Data, canal e quem registrou o aceite.', 'Data e texto', 'venda', 's-prop-aceite'],
+      ['S', 'Motivo da recusa', 'Obrigatório quando a proposta for recusada.', 'Lista', 'opcional', 's-prop-recusa'],
+    ] },
+    { id: 'agenda', m: 'opt,opt,opt,opt', name: '7. Agenda e tarefas', side: 'Interno', intro: 'Atividades pendentes e futuras do lead. Já existe; a aba passa a separar o que está atrasado, pendente e futuro.', fields: [
+      ['E', 'Tarefas e reuniões', 'Com responsável, data e resultado da reunião.', 'Tabela', 'opcional'],
+      ['E', 'Próxima ação em destaque', 'Mostrada no topo da ficha.', 'Automático', 'auto'],
+      ['S', 'Visões atrasadas / hoje / futuras', 'Separação visual dentro da aba.', 'Filtro', 'auto', 's-agenda-visoes'],
+      ['S', 'Sincronizar com Google Agenda ou Outlook', 'Integração futura, marcada como pendente até ser feita.', 'Integração', 'opcional', 's-agenda-sync'],
+    ] },
+    { id: 'produtos', m: 'opt,opt,opt,req', name: '8. Produtos contratados', side: 'Externo', intro: 'Tudo o que o cliente contratou. Alimenta a listagem de vendas realizadas.', fields: [
+      ['E', 'Produto, categoria e administradora', '', 'Lista', 'venda'],
+      ['E', 'Grupo e cota', '', 'Texto', 'venda'],
+      ['E', 'Crédito, prazo, cotas e data da contratação', '', 'Vários', 'venda'],
+      ['E', 'Status, modalidade e estratégia', '', 'Lista', 'venda'],
+      ['E', 'Proposta vinculada', '', 'Vínculo', 'venda'],
+      ['S', 'Número do contrato na administradora', '', 'Texto', 'venda', 's-prod-contrato'],
+      ['S', 'Valor da parcela e dia de vencimento', '', 'Moeda e número', 'venda', 's-prod-parcela'],
+      ['S', 'Contemplação', 'Data, tipo (sorteio ou lance), valor do lance e bem adquirido.', 'Vários', 'opcional', 's-prod-contemplacao'],
+      ['S', 'Vendedor da venda', 'Quem fechou a venda, para a listagem de vendas e o controle por vendedor.', 'Usuário', 'venda', 's-prod-vendedor'],
+    ] },
+    { id: 'historico', m: 'auto,auto,auto,auto', name: '9. Histórico', side: 'Interno', intro: 'Linha do tempo completa do lead até a venda e depois dela. Já existe, com auditoria de alterações.', fields: [
+      ['E', 'Linha do tempo', 'Ligações, mensagens, reuniões, mudanças de etapa, simulações e propostas.', 'Automático', 'auto'],
+      ['E', 'Auditoria', 'Quem alterou o quê e quando.', 'Automático', 'auto'],
+      ['S', 'Filtro por fase', 'Pré-venda, venda e pós-venda.', 'Filtro', 'auto', 's-hist-fase'],
+    ] },
+    { id: 'relacionamentos', m: 'opt,opt,opt,req', name: 'Relacionamentos', side: 'Externo', suggested: 's-aba-relacionamentos', intro: 'Aba nova sugerida para pessoas ligadas ao cadastro, cada uma com seus dados.', fields: [
+      ['S', 'Cônjuge', 'Nome, CPF, profissão e renda. As administradoras pedem para casados e em união estável.', 'Vários', 'venda', 's-rel-conjuge'],
+      ['S', 'Sócios e representante legal (PJ)', 'Nome, CPF e cargo. Exigidos na adesão PJ.', 'Tabela', 'venda', 's-rel-socios'],
+      ['E', 'Contatos da empresa (PJ)', 'Já existe, com preferências e histórico próprios.', 'Tabela', 'opcional'],
+    ] },
+    { id: 'documentos', m: 'opt,opt,opt,req', name: 'Documentos', side: 'Externo', suggested: 's-aba-documentos', intro: 'Aba nova sugerida: central de anexos com checklist do que falta para a venda.', fields: [
+      ['S', 'Checklist por tipo de venda', 'PF, PJ, imóvel com FGTS etc., mostrando recebido/pendente.', 'Checklist', 'venda', 's-doc-checklist'],
+      ['S', 'Situação do documento', 'Pendente, recebido, aprovado, recusado, com data e validade.', 'Lista', 'venda', 's-doc-status'],
+    ] },
+    { id: 'posvenda', m: 'opt,opt,opt,opt', name: 'Pós-venda', side: 'Interno', suggested: 's-aba-posvenda', intro: 'Aba nova sugerida para acompanhar o cliente depois da venda.', fields: [
+      ['S', 'Checklist de pós-venda', 'Boas-vindas, confirmação da 1ª parcela, acompanhamento de assembleias, contemplação.', 'Checklist', 'opcional', 's-pos-checklist'],
+      ['S', 'Satisfação (NPS) e indicações', 'Nota de 0 a 10 e pedido de indicação, ligado ao campo "Indicado por".', 'Número e vínculo', 'opcional', 's-pos-nps'],
+    ] },
+    { id: 'lgpd', m: 'opt,opt,opt,opt', name: 'Preferências e LGPD', side: 'Interno', intro: 'Já existe: canal e horário preferidos, consentimentos, oposições e solicitações do titular.', fields: [
+      ['E', 'Preferências de contato', 'Canal, horário, frequência e restrições.', 'Vários', 'opcional'],
+      ['E', 'Consentimentos e oposições', 'Com data e origem; bloqueiam contatos incompatíveis.', 'Histórico', 'auto'],
+      ['E', 'Solicitações do titular', 'Acesso, correção, eliminação e outras.', 'Histórico', 'opcional'],
+    ] },
+  ];
+
+  const RULES = [
+    ['s-regra-venda', 'Checklist obrigatório para concluir a venda', 'Ao mover para "Venda concluída", o CRM verifica os campos e anexos marcados como obrigatórios na venda e lista o que falta, em vez de deixar concluir com o cadastro incompleto.'],
+    ['s-regra-cep', 'Busca automática por CEP', 'Ao digitar o CEP, preencher logradouro, bairro, cidade e UF. Funciona no CRM instalado; na versão de teste no navegador a consulta externa pode ser bloqueada, então os campos continuam editáveis à mão.'],
+    ['s-regra-link-cliente', 'Link para o cliente preencher os dados externos', 'Um link seguro e temporário (como o do simulador) para o próprio cliente preencher cadastro, endereço e anexos, que chegam para conferência da equipe.'],
+    ['s-regra-vendedor', 'Visão restrita por vendedor', 'Cada vendedor vê só os próprios leads e clientes; gestores veem a equipe. Já é assim hoje e se estende aos novos blocos, inclusive o Financeiro.'],
+  ];
+
+  const QUESTIONS = [
+    ['q-externo', 'O que "Externo" e "Interno" significam para você?', 'Entendi como "dados fornecidos pelo cliente" e "controle interno da equipe". Isso muda algo, como o cliente poder ver ou preencher os blocos externos?'],
+    ['q-financeiro', 'Quem cobra as parcelas e o que o Financeiro deve controlar?', 'Normalmente a administradora emite as parcelas. O Financeiro vai registrar pagamentos manualmente, importar relatórios da administradora, ou só pendências? As comissões dos vendedores ficam aqui ou num módulo de vendas separado?'],
+    ['q-contemplada', 'Cartas contempladas seguem o mesmo funil?', 'O produto "Contemplada" usa as mesmas etapas dos consórcios primários ou precisa de um funil próprio?'],
+    ['q-r1', 'Como a transcrição da R1 chega?', 'Você vai colar o texto, anexar o áudio, ou quer no futuro gerar o resumo automaticamente a partir do áudio?'],
+    ['q-listas', 'Opções das listas', 'Confirme as opções de Sexo (incluir "Prefiro não informar"?), Tipo de contratação (só PJ e CLT, ou também autônomo, servidor, empresário, aposentado?) e Momento financeiro.'],
+    ['q-outros', 'Algo mais que não apareceu aqui?', 'Campos, abas ou regras que você quer incluir ou retirar.'],
+  ];
+
+  const WHEN = { lead: 'Lead', r1: 'Qualificação (R1)', proposta: 'Proposta', venda: 'Obrigatório na venda', auto: 'Automático', opcional: 'Opcional' };
+  const ORIGIN = { P: ['pedido', 'Seu pedido'], E: ['existe', 'Já existe'], S: ['sugestao', 'Sugestão'] };
+
+  // Decisões e respostas
+  const state = { decisions: {}, answers: {}, final: null };
+  let db = null;
+  const saveEl = document.getElementById('save-state');
+  const setSave = (t, err) => { saveEl.textContent = t; saveEl.classList.toggle('err', !!err); };
+
+  const allSuggestionIds = () => {
+    const ids = [];
+    for (const t of TABS) {
+      if (t.suggested) ids.push(t.suggested);
+      if (t.tabSuggestion) ids.push(t.tabSuggestion);
+      for (const f of t.fields) if (f[0] === 'S') ids.push(f[5]);
+    }
+    for (const r of RULES) ids.push(r[0]);
+    return ids;
+  };
+  const labelFor = (id) => {
+    for (const t of TABS) {
+      if (t.suggested === id) return `Aba ${t.name}`;
+      if (t.tabSuggestion === id) return `Estrutura da aba ${t.name}`;
+      const f = t.fields.find((x) => x[5] === id);
+      if (f) return `${t.name} › ${f[1]}`;
+    }
+    const r = RULES.find((x) => x[0] === id);
+    return r ? `Regra: ${r[1]}` : id;
+  };
+
+  function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }
+
+  function decideHtml(id) {
+    const d = state.decisions[id] || {};
+    const b = (v, cls, txt) => `<button type="button" class="${cls}" data-dec="${id}" data-v="${v}" aria-pressed="${d.status === v}">${txt}</button>`;
+    return `<div class="decide" data-id="${id}">
+      <div class="btns" role="group" aria-label="Decisão">${b('aprovado', 'ok', 'Aprovar')}${b('recusado', 'no', 'Recusar')}${b('ajustar', 'adj', 'Ajustar')}</div>
+      <textarea id="c-${id}" data-com="${id}" rows="1" placeholder="Comentário (opcional)" aria-label="Comentário sobre ${esc(labelFor(id))}">${esc(d.comentario || '')}</textarea>
+    </div>`;
+  }
+
+  function renderStats() {
+    const ids = allSuggestionIds();
+    const c = { aprovado: 0, recusado: 0, ajustar: 0 };
+    for (const id of ids) { const s = state.decisions[id]?.status; if (c[s] != null) c[s]++; }
+    const pend = ids.length - c.aprovado - c.recusado - c.ajustar;
+    document.getElementById('stats').innerHTML = `
+      <div class="stat pend"><div class="n">${pend}</div><div class="l">Sugestões sem decisão (de ${ids.length})</div></div>
+      <div class="stat ok"><div class="n">${c.aprovado}</div><div class="l">Aprovadas</div></div>
+      <div class="stat adj"><div class="n">${c.ajustar}</div><div class="l">Com ajuste</div></div>
+      <div class="stat no"><div class="n">${c.recusado}</div><div class="l">Recusadas</div></div>`;
+    const pct = (n) => (ids.length ? (n / ids.length) * 100 : 0);
+    document.getElementById('progress').innerHTML = `<i style="width:${pct(c.aprovado)}%;background:var(--ok)"></i><i style="width:${pct(c.ajustar)}%;background:var(--warn)"></i><i style="width:${pct(c.recusado)}%;background:var(--danger)"></i>`;
+    const btn = document.getElementById('release');
+    if (state.final?.liberado) {
+      btn.textContent = 'Liberado para implementação';
+      btn.classList.add('done');
+    } else {
+      btn.textContent = pend ? `Liberar mesmo com ${pend} sem decisão` : 'Liberar para implementação';
+      btn.classList.remove('done');
+    }
+    btn.disabled = !db;
+  }
+
+  function renderMatrix() {
+    const phases = ['lead', 'r1', 'proposta', 'venda'];
+    const names = ['Lead', 'Qualificação (R1)', 'Proposta', 'Venda e pós-venda'];
+    const DOT = { req: '<span class="dot req" title="obrigatório"></span>', opt: '<span class="dot opt" title="opcional"></span>', auto: '<span class="dot auto" title="automático"></span>' };
+    const cell = (t, p) => DOT[t.m.split(',')[phases.indexOf(p)]];
+    document.getElementById('matrix').innerHTML = `<thead><tr><th>Aba</th><th>Lado</th>${names.map((n) => `<th class="c">${n}</th>`).join('')}</tr></thead>
+      <tbody>${TABS.map((t) => `<tr><td>${esc(t.name)}${t.suggested ? ' <span class="chip sugestao">Sugestão</span>' : ''}</td><td class="muted">${t.side}</td>${phases.map((p) => `<td class="c">${cell(t, p)}</td>`).join('')}</tr>`).join('')}</tbody>`;
+  }
+
+  let current = 'cadastro';
+  function renderTabs() {
+    document.getElementById('tabs').innerHTML = TABS.map((t) => `<button type="button" role="tab" id="tab-${t.id}" data-tab="${t.id}" aria-selected="${t.id === current}" class="${t.suggested ? 'sugg' : ''}">${esc(t.name)}${t.suggested ? ' <span class="chip sugestao">nova</span>' : ''}</button>`).join('');
+  }
+  function renderPanel() {
+    const t = TABS.find((x) => x.id === current);
+    const rows = t.fields.map((f) => {
+      const [o, name, desc, type, when, id] = f;
+      const [cls, lbl] = ORIGIN[o];
+      return `<tr class="${o === 'S' ? 'is-sugg' : ''}">
+        <td data-l="Campo"><div class="fname">${esc(name)}</div>${desc ? `<div class="fdesc">${esc(desc)}</div>` : ''}</td>
+        <td data-l="Tipo">${esc(type)}</td>
+        <td data-l="Quando">${when === 'venda' ? '<span class="chip venda">Obrigatório na venda</span>' : esc(WHEN[when])}</td>
+        <td data-l="Situação"><span class="chip ${cls}">${lbl}</span></td>
+        <td data-l="Sua decisão">${o === 'S' ? decideHtml(id) : '<span class="fixed-state">Entra como descrito</span>'}</td>
+      </tr>`;
+    }).join('');
+    const tabDec = t.suggested || t.tabSuggestion;
+    document.getElementById('panel').innerHTML = `
+      <div style="display:flex;flex-direction:column;gap:12px;padding-top:14px">
+        <div class="tab-intro"><p>${esc(t.intro)}</p><span class="chip neutral">${t.side}</span></div>
+        ${tabDec ? `<div class="tab-decision"><div><h3>${t.suggested ? 'Criar esta aba?' : 'Aprovar esta estrutura para a aba?'}</h3><p class="small muted">${t.suggested ? 'Se recusar a aba, os campos dela também ficam de fora.' : 'Os itens abaixo detalham a estrutura proposta.'}</p></div>${decideHtml(tabDec)}</div>` : ''}
+        <div class="table-wrap"><table class="fields"><thead><tr><th>Campo</th><th>Tipo</th><th>Quando</th><th>Situação</th><th>Sua decisão</th></tr></thead><tbody>${rows}</tbody></table></div>
+      </div>`;
+  }
+  function renderRules() {
+    document.getElementById('rules').innerHTML = RULES.map(([id, title, text]) => `<div class="rule"><div><h3>${esc(title)} <span class="chip sugestao">Sugestão</span></h3><p class="small muted">${esc(text)}</p></div>${decideHtml(id)}</div>`).join('');
+  }
+  function renderQuestions() {
+    document.getElementById('questions').innerHTML = QUESTIONS.map(([id, title, text]) => `<div class="question"><div><h3>${esc(title)}</h3><p class="small muted">${esc(text)}</p></div>
+      <div class="answer"><label class="small muted" for="a-${id}">Sua resposta</label><textarea id="a-${id}" data-ans="${id}">${esc(state.answers[id]?.texto || '')}</textarea></div></div>`).join('');
+  }
+
+  function renderAll() {
+    renderStats();
+    renderMatrix();
+    renderTabs();
+    renderPanel();
+    renderRules();
+    renderQuestions();
+  }
+  // Atualiza só os controles de decisão, sem apagar o que está sendo digitado
+  function refreshDecisions() {
+    renderStats();
+    document.querySelectorAll('[data-dec]').forEach((b) => {
+      b.setAttribute('aria-pressed', String(state.decisions[b.dataset.dec]?.status === b.dataset.v));
+    });
+    document.querySelectorAll('[data-com]').forEach((ta) => {
+      if (document.activeElement !== ta) ta.value = state.decisions[ta.dataset.com]?.comentario || '';
+    });
+    document.querySelectorAll('[data-ans]').forEach((ta) => {
+      if (document.activeElement !== ta) ta.value = state.answers[ta.dataset.ans]?.texto || '';
+    });
+  }
+
+  async function write(path, data) {
+    if (!db) { setSave('Não foi possível salvar aqui. Envie suas decisões pelo chat.', true); return false; }
+    setSave('Salvando…');
+    try {
+      await db.doc(path).set(data);
+      setSave('Tudo salvo');
+      return true;
+    } catch (e) {
+      setSave(e?.code === 'invalid_argument' ? 'Você não tem permissão para salvar nesta página.' : 'Falha ao salvar. Tente de novo.', true);
+      return false;
+    }
+  }
+
+  document.addEventListener('click', async (e) => {
+    const tab = e.target.closest('[data-tab]');
+    if (tab) {
+      current = tab.dataset.tab;
+      renderTabs();
+      renderPanel();
+      try { history.replaceState(null, '', '#' + current); } catch {}
+      return;
+    }
+    const dec = e.target.closest('[data-dec]');
+    if (dec) {
+      const id = dec.dataset.dec;
+      const prev = state.decisions[id] || {};
+      const status = prev.status === dec.dataset.v ? null : dec.dataset.v;
+      const ta = document.getElementById('c-' + id);
+      const next = { status, comentario: ta ? ta.value.trim() : prev.comentario || '', item: labelFor(id), em: new Date().toISOString() };
+      state.decisions[id] = next;
+      refreshDecisions();
+      await write('decisoes/' + id, next);
+      return;
+    }
+    if (e.target.id === 'release' && db) {
+      const liberado = !state.final?.liberado;
+      state.final = { liberado, em: new Date().toISOString() };
+      renderStats();
+      await write('controle/final', state.final);
+    }
+  });
+  document.addEventListener('focusout', async (e) => {
+    const ta = e.target;
+    if (ta.dataset?.com) {
+      const id = ta.dataset.com;
+      const prev = state.decisions[id] || {};
+      const v = ta.value.trim();
+      if ((prev.comentario || '') === v) return;
+      const next = { status: prev.status || null, comentario: v, item: labelFor(id), em: new Date().toISOString() };
+      state.decisions[id] = next;
+      await write('decisoes/' + id, next);
+    } else if (ta.dataset?.ans) {
+      const id = ta.dataset.ans;
+      const v = ta.value.trim();
+      if ((state.answers[id]?.texto || '') === v) return;
+      state.answers[id] = { texto: v, pergunta: QUESTIONS.find((q) => q[0] === id)[1], em: new Date().toISOString() };
+      await write('respostas/' + id, state.answers[id]);
+    }
+  });
+
+  const h = (location.hash || '').slice(1);
+  if (TABS.some((t) => t.id === h)) current = h;
+  renderAll();
+
+  (async () => {
+    try { db = (await window.claude?.use?.('db')) || null; } catch { db = null; }
+    if (!db) { setSave('Salvamento indisponível nesta visualização. Envie suas decisões pelo chat.', true); renderStats(); return; }
+    setSave('Pronto: suas decisões são salvas automaticamente');
+    renderStats();
+    const onErr = () => setSave('Conexão com o salvamento perdida. Recarregue a página.', true);
+    db.collection('decisoes').onSnapshot((snap) => {
+      for (const d of snap.docs) state.decisions[d.id] = d.data();
+      refreshDecisions();
+    }, onErr);
+    db.collection('respostas').onSnapshot((snap) => {
+      for (const d of snap.docs) state.answers[d.id] = d.data();
+      refreshDecisions();
+    }, onErr);
+    db.doc('controle/final').onSnapshot((d) => {
+      state.final = d.exists ? d.data() : null;
+      renderStats();
+    }, onErr);
+  })();
+})();
+</script>
