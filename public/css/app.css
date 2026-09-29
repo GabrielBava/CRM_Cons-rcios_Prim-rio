@@ -464,3 +464,5 @@ fieldset.field legend { font-weight: 500; font-size: 0.93em; margin-bottom: 3px;
   .scale { gap: 3px; }
   .scale-opt span { min-width: 27px; height: 34px; font-size: 0.9rem; }
 }
+#pv-back { position: fixed; left: 16px; bottom: 16px; z-index: 250; background: var(--text); color: var(--bg); padding: 9px 14px; border-radius: 99px; font-size: 0.9rem; box-shadow: var(--shadow); }
+#pv-back:hover { text-decoration: none; opacity: 0.9; }

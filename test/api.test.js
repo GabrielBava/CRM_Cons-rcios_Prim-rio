@@ -407,7 +407,7 @@ test('link de cadastro: um ativo por vez, registra acessos e é revogado ao inat
   await call(null, 'GET', `/api/publico/ficha?token=${encodeURIComponent(l.data.token)}`);
   let d = (await call('c1', 'GET', `/api/cadastros/${id}`)).data;
   assert.equal(d.client_link.token, l.data.token, 'a equipe pode copiar o link ativo novamente');
-  assert.equal(d.client_link.access_count, 2);
+  assert.equal(d.client_link.access_count, 1, 'recarregar em seguida não conta novo acesso');
   assert.ok(d.client_link.first_used_at);
   // revogado com o cadastro ativo: pode gerar outro
   await call('c1', 'POST', `/api/cadastros/${id}/link-cliente/revogar`, { reason: 'Enviado ao número errado' });

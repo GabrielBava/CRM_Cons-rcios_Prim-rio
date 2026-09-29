@@ -34,7 +34,20 @@ const EXTRA = { oportunidades: pipeline, importar: importer };
 
 const app = document.getElementById('app');
 
+/** Versão de teste: ao abrir a página do cliente na mesma aba, mostra um atalho de volta ao CRM. */
+function previewBackLink(show) {
+  document.getElementById('pv-back')?.remove();
+  if (!show || !window.CRM_PREVIEW) return;
+  document.querySelectorAll('.modal-backdrop').forEach((m) => m.remove());
+  const a = document.createElement('a');
+  a.id = 'pv-back';
+  a.href = '#/painel';
+  a.textContent = '← Voltar ao CRM (versão de teste)';
+  document.body.appendChild(a);
+}
+
 async function boot() {
+  previewBackLink(/^#\/(ficha|nps)\//.test(location.hash));
   // Link enviado ao cliente: página pública, sem login
   const pub = location.hash.match(/^#\/ficha\/([A-Za-z0-9_-]+)/);
   if (pub) return publicForm.show(app, pub[1]);
@@ -173,7 +186,9 @@ function setupSearch() {
 let currentCleanup = null;
 async function route() {
   if (/^#\/(ficha|nps)\//.test(location.hash)) return boot();
-  if (!state.meta) return;
+  previewBackLink(false);
+  if (!state.meta) return boot();
+  if (!$('#view')) shell();
   const hash = location.hash.replace(/^#\/?/, '') || 'painel';
   const [path, qs] = hash.split('?');
   const parts = path.split('/');

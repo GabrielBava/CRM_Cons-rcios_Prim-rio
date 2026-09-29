@@ -392,7 +392,9 @@ function resolveClientLink(db, token) {
 function publicForm(db, token) {
   const { link, contact } = resolveClientLink(db, token);
   const now = nowIso();
-  db.prepare('UPDATE client_links SET last_used_at = ?, first_used_at = COALESCE(first_used_at, ?), access_count = access_count + 1 WHERE id = ?').run(now, now, link.id);
+  // Conta como novo acesso só depois de 30 minutos sem atividade (recarregar a página não infla a contagem)
+  const newVisit = !link.last_used_at || Date.parse(now) - Date.parse(link.last_used_at) > 30 * 60000;
+  db.prepare('UPDATE client_links SET last_used_at = ?, first_used_at = COALESCE(first_used_at, ?), access_count = access_count + ? WHERE id = ?').run(now, now, newVisit ? 1 : 0, link.id);
   if (!link.first_used_at) insertActivity(db, { contact_id: contact.id, type: 'cadastro', notes: 'O cliente abriu o link de cadastro pela primeira vez.', source: 'cliente' });
   const values = {};
   for (const f of EXTERNAL_FIELDS[contact.kind]) values[f] = contact[f] ?? null;

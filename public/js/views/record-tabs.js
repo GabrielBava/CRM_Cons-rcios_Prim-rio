@@ -659,7 +659,9 @@ const pageUrl = (path) => `${location.href.split('#')[0]}#/${path}`;
 
 /** Mostra um link com botão de copiar (a área de transferência pode estar bloqueada: nesse caso o texto é selecionado). */
 function copyBox(url) {
-  return html`<div class="copy-box"><code class="selectable" data-copy-src>${url}</code><button type="button" class="btn small" data-copy>Copiar</button><span class="small muted copy-msg"></span></div>`;
+  // Na versão de teste no navegador, o link é aberto na mesma aba (os dados ficam só neste navegador)
+  const test = window.CRM_PREVIEW ? html`<a class="btn small primary" href="${url.slice(url.indexOf('#'))}">Testar como cliente</a>` : '';
+  return html`<div class="copy-box"><code class="selectable" data-copy-src>${url}</code><button type="button" class="btn small" data-copy>Copiar</button>${test}<span class="small muted copy-msg"></span></div>`;
 }
 export function bindCopy(root) {
   on(root, 'click', '[data-copy]', async (e, b) => {
