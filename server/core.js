@@ -7,9 +7,9 @@ const { forbidden, notFound, nowIso } = require('./util');
 
 const ROLES = {
   admin: 'Administrador',
-  gestor: 'Gestor',
-  consultor: 'Consultor',
-  leitura: 'Leitura',
+  gestor: 'Líder de equipe',
+  consultor: 'Especialista',
+  leitura: 'Somente leitura',
 };
 
 /**
@@ -25,7 +25,7 @@ function visibleOwnerIds(db, user) {
   return ids;
 }
 
-/** Gestores e perfis de leitura veem também registros ainda sem responsável. */
+/** Líderes de equipe e perfis de leitura veem também registros ainda sem responsável. */
 const seesUnassigned = (user) => user.role !== 'consultor';
 
 /**
@@ -65,7 +65,7 @@ function requireAdmin(user) {
   if (!isAdmin(user)) throw forbidden('Apenas administradores podem realizar esta ação.');
 }
 function requireManager(user) {
-  if (!isManager(user)) throw forbidden('Apenas gestores e administradores podem realizar esta ação.');
+  if (!isManager(user)) throw forbidden('Apenas líderes de equipe e administradores podem realizar esta ação.');
 }
 
 /** Carrega um contato verificando o escopo. Contatos mesclados redirecionam para o destino. */
@@ -82,14 +82,14 @@ function loadContact(db, user, id, { write = false } = {}) {
 /** Valida se o usuário pode atribuir o registro ao responsável indicado. */
 function assertAssignable(db, user, ownerId) {
   if (ownerId == null) {
-    if (user.role === 'consultor') throw forbidden('Consultores devem ser responsáveis pelos próprios registros.');
+    if (user.role === 'consultor') throw forbidden('Especialistas devem ser responsáveis pelos próprios registros.');
     return;
   }
   const owner = db.prepare('SELECT id, active FROM users WHERE id = ?').get(Number(ownerId));
   if (!owner || !owner.active) throw forbidden('Responsável inválido ou inativo.');
   const ids = visibleOwnerIds(db, user);
   if (user.role === 'consultor' && Number(ownerId) !== user.id) {
-    throw forbidden('Consultores não podem transferir registros para outros usuários.');
+    throw forbidden('Especialistas não podem transferir registros para outros usuários.');
   }
   if (ids !== null && !ids.includes(Number(ownerId))) throw forbidden('Responsável fora da sua equipe.');
 }

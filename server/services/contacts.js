@@ -305,6 +305,7 @@ function createContact(db, user, data, opts = {}) {
       code,
       uid: uuid(),
       first_contact_at: input.first_contact_at ?? null,
+      assigned_at: input.owner_id ? now : null,
       created_by: user.id,
       updated_by: user.id,
       created_at: now,
@@ -370,7 +371,7 @@ function updateContact(db, user, id, data) {
     throw badRequest('Ao alterar o tipo de cadastro, revise o CPF/CNPJ.');
   }
   if (input.owner_id !== undefined && input.owner_id !== before.owner_id) {
-    if (!isManager(user)) throw forbidden('Apenas gestores e administradores podem transferir responsáveis.');
+    if (!isManager(user)) throw forbidden('Apenas líderes de equipe e administradores podem transferir responsáveis.');
     assertAssignable(db, user, input.owner_id);
   }
   const touchesKeys = ['phone1', 'phone2', 'whatsapp', 'email', 'doc'].some((f) => input[f] !== undefined && input[f] !== before[f]);

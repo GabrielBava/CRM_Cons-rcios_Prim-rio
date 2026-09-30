@@ -1,7 +1,7 @@
 import { get, post, download } from '../api.js';
 import {
   html, render, $, $$, on, state, selectOptions, opts, toItems, userItems, productItems, stageItems, fmtMoney, fmtDateTime, fmtDate, relTime,
-  badge, optoutBadge, optLabel, K, can, toast, toastError, table, empty, fresh,
+  badge, optoutBadge, optLabel, K, can, toast, toastError, table, empty, fresh, crmTabs,
 } from '../ui.js';
 import { moveStage, opportunityForm, activityForm, taskForm, simulationForm, proposalForm, proposalDetail, quickSimulation, openProposalSimulator } from '../forms.js';
 import { timeline, tasksTable, bindTasks } from './contact.js';
@@ -12,7 +12,8 @@ export async function show(view, { key, id, params }) {
   if (key === 'oportunidades' && id) return showOpp(view, id);
   const s = { ...saved, ...params };
   render(view, html`<div class="page wide">
-    <div class="page-head"><h1>Funil comercial</h1>
+    ${crmTabs('funil')}
+    <div class="page-head"><h1>Funil de vendas</h1>
       <div class="actions">
         <div class="seg small"><button class="btn small ${s.mode !== 'lista' ? 'active' : ''}" data-mode="kanban">Kanban</button><button class="btn small ${s.mode === 'lista' ? 'active' : ''}" data-mode="lista">Lista</button></div>
         ${state.user.role !== 'leitura' ? html`<button class="btn" data-act="export">Exportar CSV</button>` : ''}
@@ -146,6 +147,25 @@ async function showOpp(view, id) {
     o = await get(`/api/oportunidades/${id}`);
     contact = await get(`/api/cadastros/${o.contact_id}`);
     draw();
+    loadCriteria();
+  };
+  // Critérios da próxima etapa (regras de passagem) e roteiro da etapa atual
+  const loadCriteria = async () => {
+    const box = $('#criteria', view);
+    if (!box) return;
+    const stage = state.meta.stages.find((s) => s.id === o.stage_id);
+    try {
+      const r = await get(`/api/oportunidades/${o.id}/criterios`);
+      const next = r.next_stage;
+      const ok = r.criteria.every((c) => c.ok);
+      render(box, html`<div class="section-head"><h3>${next ? html`Para avançar para <strong>${next.name}</strong>` : 'Etapa final'}</h3>
+          ${next && next.kind !== 'ganho' && can.write() ? html`<button class="btn ${ok ? 'primary' : ''}" data-act="advance" data-stage="${next.id}" ${ok ? '' : 'disabled'}>Avançar para ${next.name}</button>` : ''}</div>
+        ${next?.kind === 'ganho' ? html`<p class="hint">A etapa Venda é preenchida automaticamente quando o pagamento é confirmado em <a href="#/vendas">Vendas</a> (aceite da proposta → pré-venda → boleto → pagamento).</p>` : ''}
+        ${r.criteria.length ? html`<ul class="checklist">${r.criteria.map((c) => html`<li class="${c.ok ? 'ok' : ''}"><span class="mark">${c.ok ? '✓' : '○'}</span> <span class="grow"><strong>${c.label}</strong>${c.ok ? '' : html`<br><small class="muted">${c.hint}</small>`}</span></li>`)}</ul>` : next && next.kind !== 'ganho' ? html`<p class="muted small">Sem critérios obrigatórios para esta passagem.</p>` : ''}
+        ${stage?.playbook ? html`<details ${ok ? '' : 'open'}><summary>Roteiro da etapa ${stage.name}</summary><p class="small">${stage.playbook}</p></details>` : ''}`);
+    } catch (e) {
+      render(box, html`<p class="warn-text small">${e.message}</p>`);
+    }
   };
   const draw = () => {
     const kv = (label, v) => html`<div><span>${label}</span>${v ?? '—'}</div>`;
@@ -165,6 +185,7 @@ async function showOpp(view, id) {
       <div class="next-action ${!o.next_action ? 'missing' : o.next_action_at && new Date(o.next_action_at) < new Date() ? 'late' : ''}"><span>Próxima ação:</span> ${o.next_action ? html`<strong>${o.next_action}</strong> ${o.next_action_at ? html`<small>${fmtDateTime(o.next_action_at)} · ${relTime(o.next_action_at)}</small>` : ''}` : html`<span class="warn-text">Nenhuma próxima ação definida</span>`}</div>
       ${o.status === 'perdida' ? html`<div class="alert danger">Perdida: ${optLabel('motivo_perda', o.lost_reason)}${o.lost_notes ? ` — ${o.lost_notes}` : ''}</div>` : ''}
       ${o.status === 'pausada' && o.pause_reason ? html`<div class="alert warn">Em nutrição: ${o.pause_reason}</div>` : ''}
+      ${o.status === 'aberta' ? html`<section class="card criteria-card" id="criteria"><p class="muted small">Carregando critérios da próxima etapa…</p></section>` : ''}
       <div class="cols">
         <section class="card"><h3>Dados comerciais</h3><div class="kv">
           ${kv('Produto', o.product_name)}${kv('Categoria do crédito', optLabel('categoria_credito', o.credit_category))}
@@ -218,6 +239,7 @@ async function showOpp(view, id) {
     </div>`);
   };
   bindTasks(view, () => o.tasks, reload);
+  on(view, 'click', '[data-act=advance]', async (e, b) => (await moveStage(o, b.dataset.stage)) && reload());
   on(view, 'change', '[data-move-detail]', async (e, sel) => {
     if (!sel.value) return;
     const r = await moveStage(o, sel.value);

@@ -718,6 +718,32 @@ const DEFAULT_OPTIONS = {
     ['outro', 'Outro'],
   ],
   etapa_pos_venda: POS_VENDA_ITEMS,
+  motivo_cancelamento: [
+    ['arrependimento_7_dias', 'Arrependimento no prazo de 7 dias'],
+    ['dificuldade_financeira', 'Dificuldade financeira'],
+    ['expectativa_contemplacao', 'Expectativa de contemplação não atendida'],
+    ['venda_mal_explicada', 'Produto mal explicado na venda'],
+    ['insatisfacao_atendimento', 'Insatisfação com o atendimento'],
+    ['optou_outro_produto', 'Optou por outro produto'],
+    ['inadimplencia', 'Exclusão por inadimplência'],
+    ['outro', 'Outro motivo'],
+  ],
+  categoria_treinamento: [
+    ['fundamentos', 'Fundamentos do consórcio'],
+    ['lances', 'Lances e contemplação'],
+    ['fgts', 'Uso do FGTS'],
+    ['calculos', 'Cálculos financeiros'],
+    ['processo_comercial', 'Processo comercial (funil)'],
+    ['administradoras', 'Administradoras e planos'],
+    ['compliance', 'Compliance e LGPD'],
+    ['ferramentas', 'Ferramentas (CRM e simulador)'],
+  ],
+  resposta_proposta: [
+    ['positiva', 'Positiva: quer avançar', { score: 20 }],
+    ['duvidas', 'Tem dúvidas / pediu ajuste', { score: 5 }],
+    ['sem_resposta', 'Sem resposta', { score: -5 }],
+    ['negativa', 'Negativa: não vai seguir agora', { score: -25 }],
+  ],
   motivo_perda: [
     ['sem_interesse', 'Sem interesse'],
     ['sem_contato', 'Não foi possível contato'],
@@ -786,21 +812,59 @@ const DEFAULT_OPTIONS = {
   ],
 };
 
+/*
+ * Funil de vendas (esteira do especialista). A chave identifica a etapa nas regras de passagem;
+ * o nome pode ser ajustado em Configurações › Funil. [nome, tipo, chave, dias até ficar "parado", objetivo da etapa]
+ */
 const DEFAULT_STAGES = [
-  ['Novo prospect', 'aberta'],
-  ['Tentativa de contato', 'aberta'],
-  ['Contato realizado', 'aberta'],
-  ['Lead qualificado', 'aberta'],
-  ['Diagnóstico ou reunião agendada', 'aberta'],
-  ['Diagnóstico realizado', 'aberta'],
-  ['Simulação em elaboração', 'aberta'],
-  ['Proposta apresentada', 'aberta'],
-  ['Follow-up', 'aberta'],
-  ['Em negociação', 'aberta'],
-  ['Venda concluída', 'ganho'],
-  ['Perdido', 'perdido'],
-  ['Nutrição futura', 'nutricao'],
+  ['Prospect', 'aberta', 'prospect', 3, 'Contato ainda não demonstrou interesse. Objetivo: validar os dados de contato e a origem.'],
+  ['Lead', 'aberta', 'lead', 1, 'Demonstrou interesse. Objetivo: fazer o primeiro contato o quanto antes (idealmente em até 1 hora).'],
+  ['Tentativa de contato', 'aberta', 'tentativa', 3, 'Cadência de tentativas por ligação e WhatsApp até conseguir falar com o lead.'],
+  ['Lead qualificado', 'aberta', 'qualificado', 5, 'Conversa realizada. Objetivo: entender objetivo, crédito, parcela possível e prazo, e agendar a R1.'],
+  ['R1', 'aberta', 'r1', 7, 'Reunião de diagnóstico (R1). Objetivo: apresentar o consórcio, validar a estratégia e o decisor.'],
+  ['Negociação', 'aberta', 'negociacao', 5, 'Montar e apresentar a proposta no simulador com base na R1.'],
+  ['Follow-up', 'aberta', 'follow_up', 10, 'Proposta enviada. Seguir a esteira de follow-up (D0 a D10) até o aceite ou a decisão.'],
+  ['Venda', 'ganho', 'venda', null, 'Venda confirmada com o pagamento da primeira parcela. Entra automaticamente pela tela de Vendas.'],
+  ['Nutrição futura', 'nutricao', 'nutricao', null, 'Sem momento agora. Registrar o motivo e a data para retomar o contato.'],
+  ['Perdido', 'perdido', 'perdido', null, 'Negócio encerrado. O motivo da perda alimenta os relatórios.'],
 ];
+// Etapas da versão anterior do funil → nova chave (usado na migração de bancos existentes)
+const OLD_STAGE_MAP = {
+  'Novo prospect': 'prospect', 'Tentativa de contato': 'tentativa', 'Contato realizado': 'tentativa', 'Lead qualificado': 'qualificado',
+  'Diagnóstico ou reunião agendada': 'r1', 'Diagnóstico realizado': 'r1', 'Simulação em elaboração': 'negociacao',
+  'Proposta apresentada': 'follow_up', 'Follow-up': 'follow_up', 'Em negociação': 'negociacao', 'Venda concluída': 'venda',
+  Perdido: 'perdido', 'Nutrição futura': 'nutricao',
+};
+
+/** Converte o funil antigo (13 etapas) no novo (10 etapas), movendo as oportunidades. Idempotente. */
+function migrateStages(db, now) {
+  const withKey = db.prepare('SELECT COUNT(*) AS n FROM pipeline_stages WHERE key IS NOT NULL').get().n;
+  if (withKey) return;
+  const rows = db.prepare('SELECT * FROM pipeline_stages ORDER BY position, id').all();
+  const byKey = {};
+  for (const r of rows) {
+    const k = OLD_STAGE_MAP[r.name];
+    if (!k) continue;
+    if (!byKey[k]) byKey[k] = r.id;
+    else {
+      // Etapa antiga que foi incorporada a outra: move as oportunidades e desativa
+      db.prepare('UPDATE opportunities SET stage_id = ? WHERE stage_id = ?').run(byKey[k], r.id);
+      db.prepare('UPDATE pipeline_stages SET active = 0, position = ? WHERE id = ?').run(900 + r.id, r.id);
+    }
+  }
+  DEFAULT_STAGES.forEach(([name, kind, key, rot, playbook], i) => {
+    if (byKey[key]) {
+      db.prepare('UPDATE pipeline_stages SET name = ?, kind = ?, key = ?, rot_days = ?, playbook = ?, position = ?, active = 1 WHERE id = ?').run(name, kind, key, rot, playbook, i, byKey[key]);
+    } else {
+      db.prepare('INSERT INTO pipeline_stages (name, position, kind, key, rot_days, playbook, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(name, i, kind, key, rot, playbook, now);
+    }
+  });
+  // Etapas personalizadas (fora do mapa) ficam ativas, antes de "Venda"
+  const custom = db.prepare('SELECT id FROM pipeline_stages WHERE key IS NULL AND active = 1 ORDER BY position').all();
+  custom.forEach((c, i) => db.prepare('UPDATE pipeline_stages SET position = ? WHERE id = ?').run(6.5 + i / 100, c.id));
+  const all = db.prepare('SELECT id FROM pipeline_stages WHERE active = 1 ORDER BY position').all();
+  all.forEach((r, i) => db.prepare('UPDATE pipeline_stages SET position = ? WHERE id = ?').run(i, r.id));
+}
 
 const DEFAULT_INTEGRATIONS = [
   ['discadora', 'Discadora'],
@@ -820,6 +884,12 @@ const DEFAULT_SETTINGS = {
   finance_user_id: null,
   company_name: '',
   nps_link_days: 15,
+  // Regras do funil: passagem sequencial e critérios de entrada por etapa (ver server/services/pipeline.js)
+  funnel_sequential: true,
+  stage_rules: null,
+  presale_alert_hours: 24,
+  roleta: { mode: 'sequencial', auto: false, participants: [], last_user_id: null, first_contact_hours: 1 },
+  presale_email_subject: 'Seu cadastro para a adesão ao consórcio',
   // Simulador usado para gerar propostas (o CRM envia nome e contato do cliente no endereço)
   proposal_simulator_url: 'https://claude.ai/artifact/Fk7ApKUi2U4BqAfvzfGgpd',
   doc_checklist: {
@@ -837,9 +907,9 @@ function seedDefaults(db) {
     items.forEach(([value, label, flags], i) => ins.run(list, value, label, i, JSON.stringify(flags || {})));
   }
   if (db.prepare('SELECT COUNT(*) AS n FROM pipeline_stages').get().n === 0) {
-    const ins = db.prepare('INSERT INTO pipeline_stages (name, position, kind, created_at) VALUES (?, ?, ?, ?)');
-    DEFAULT_STAGES.forEach(([name, kind], i) => ins.run(name, i, kind, now));
-  }
+    const ins = db.prepare('INSERT INTO pipeline_stages (name, position, kind, key, rot_days, playbook, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    DEFAULT_STAGES.forEach(([name, kind, key, rot, playbook], i) => ins.run(name, i, kind, key, rot, playbook, now));
+  } else migrateStages(db, now);
   const insInt = db.prepare('INSERT OR IGNORE INTO integrations (key, name, updated_at) VALUES (?, ?, ?)');
   for (const [key, name] of DEFAULT_INTEGRATIONS) insInt.run(key, name, now);
   const insSet = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
@@ -875,8 +945,21 @@ const ADDED_COLUMNS = {
     ['temperature', 'TEXT'], ['referred_by_id', 'INTEGER REFERENCES contacts(id)'],
     ['nps_score', 'INTEGER'], ['nps_comment', 'TEXT'], ['nps_at', 'TEXT'],
     ['active', 'INTEGER NOT NULL DEFAULT 1'], ['inactive_reason', 'TEXT'], ['inactivated_at', 'TEXT'],
+    ['assigned_at', 'TEXT'], ['assigned_by', 'INTEGER REFERENCES users(id)'],
   ],
   addresses: [['notes', 'TEXT']],
+  users: [['modules', "TEXT NOT NULL DEFAULT '{}'"], ['phone', 'TEXT']],
+  teams: [['leader_id', 'INTEGER REFERENCES users(id)']],
+  pipeline_stages: [['key', 'TEXT'], ['playbook', 'TEXT'], ['rot_days', 'INTEGER'], ['training_id', 'INTEGER']],
+  tasks: [['priority', "TEXT NOT NULL DEFAULT 'normal'"], ['proposal_id', 'INTEGER REFERENCES proposals(id)'], ['cadence_step', 'TEXT'], ['pre_sale_id', 'INTEGER'], ['sale_id', 'INTEGER']],
+  products: [
+    ['administrator_id', 'INTEGER REFERENCES administrators(id)'], ['plan_code', 'TEXT'], ['admin_fee_pct', 'REAL'], ['reserve_fund_pct', 'REAL'],
+    ['term_months', 'INTEGER'], ['term_options', 'TEXT'], ['embedded_bid', 'INTEGER NOT NULL DEFAULT 0'], ['embedded_bid_pct', 'REAL'],
+    ['fixed_bid', 'INTEGER NOT NULL DEFAULT 0'], ['fixed_bid_pct', 'REAL'], ['adhesion', 'INTEGER NOT NULL DEFAULT 0'], ['adhesion_pct', 'REAL'],
+    ['adhesion_months', 'INTEGER'], ['insurance_pct', 'REAL'], ['readjustment_index', 'TEXT'], ['readjustment_other', 'TEXT'],
+    ['credit_min', 'REAL'], ['credit_max', 'REAL'], ['credit_step', 'REAL'], ['commission_schedule', 'TEXT'], ['notes', 'TEXT'],
+  ],
+
   client_links: [['token', 'TEXT'], ['first_used_at', 'TEXT'], ['access_count', 'INTEGER NOT NULL DEFAULT 0'], ['revoked_by', 'INTEGER'], ['revoke_reason', 'TEXT']],
   opportunities: [
     ['objective_type', 'TEXT'], ['product_type', 'TEXT'], ['credit_purpose', 'TEXT'], ['financial_moment', 'TEXT'],
@@ -886,6 +969,7 @@ const ADDED_COLUMNS = {
   ],
   proposals: [
     ['accepted_at', 'TEXT'], ['accepted_channel', 'TEXT'], ['accepted_by', 'INTEGER REFERENCES users(id)'], ['refusal_reason', 'TEXT'],
+    ['category', 'TEXT'], ['sent_channel', 'TEXT'], ['last_response_at', 'TEXT'], ['last_response', 'TEXT'],
   ],
   contracts: [
     ['contract_number', 'TEXT'], ['installment_value', 'REAL'], ['due_day', 'INTEGER'], ['first_due_date', 'TEXT'],
@@ -1039,6 +1123,177 @@ CREATE TABLE IF NOT EXISTS nps_surveys (
   cancel_reason TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_nps_contact ON nps_surveys(contact_id);
+
+-- Administradoras parceiras (visão do administrador): contatos, acesso ao portal e políticas de repasse e comissão
+CREATE TABLE IF NOT EXISTS administrators (
+  id INTEGER PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  cnpj TEXT,
+  website TEXT,
+  portal_url TEXT,
+  portal_login TEXT,
+  direct_name TEXT, direct_phone TEXT, direct_email TEXT,
+  commercial_name TEXT, commercial_phone TEXT, commercial_email TEXT,
+  manager_name TEXT, manager_phone TEXT, manager_email TEXT,
+  payout_day INTEGER,
+  payout_method TEXT,
+  payout_policy TEXT,
+  payout_schedule TEXT NOT NULL DEFAULT '[]',
+  commission_schedule TEXT NOT NULL DEFAULT '[]',
+  chargeback_policy TEXT NOT NULL DEFAULT '{}',
+  notes TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+-- Pré-vendas: do aceite da proposta até o boleto (vira venda aguardando pagamento)
+CREATE TABLE IF NOT EXISTS pre_sales (
+  id INTEGER PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id),
+  opportunity_id INTEGER REFERENCES opportunities(id),
+  proposal_id INTEGER REFERENCES proposals(id),
+  plan_id INTEGER REFERENCES products(id),
+  first_sale INTEGER NOT NULL DEFAULT 1,
+  client_link_id INTEGER REFERENCES client_links(id),
+  status TEXT NOT NULL DEFAULT 'link_gerado',
+  sent_via TEXT, sent_at TEXT, accessed_at TEXT, completed_at TEXT, reviewed_at TEXT,
+  credit_value REAL, term_months INTEGER, installment_value REAL,
+  adhesion_number TEXT, adhesion_at TEXT, contract_sent_at TEXT, contract_signed_at TEXT,
+  boleto_value REAL, boleto_due TEXT, boleto_issued_at TEXT,
+  sale_id INTEGER, alert_status TEXT,
+  cancelled_at TEXT, cancel_reason TEXT,
+  notes TEXT,
+  owner_id INTEGER REFERENCES users(id),
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_presale_contact ON pre_sales(contact_id);
+
+-- Vendas: aguardando pagamento → confirmada (comprovante) ou cancelada
+CREATE TABLE IF NOT EXISTS sales (
+  id INTEGER PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id),
+  opportunity_id INTEGER REFERENCES opportunities(id),
+  proposal_id INTEGER REFERENCES proposals(id),
+  pre_sale_id INTEGER REFERENCES pre_sales(id),
+  plan_id INTEGER REFERENCES products(id),
+  administrator_id INTEGER REFERENCES administrators(id),
+  seller_id INTEGER REFERENCES users(id),
+  category TEXT,
+  credit_value REAL NOT NULL,
+  term_months INTEGER,
+  installment_value REAL,
+  group_code TEXT, quota_code TEXT, adhesion_number TEXT, adhesion_date TEXT,
+  boleto_value REAL, boleto_due TEXT,
+  status TEXT NOT NULL DEFAULT 'aguardando_pagamento' CHECK (status IN ('aguardando_pagamento','confirmada','cancelada')),
+  payment_date TEXT, payment_attachment_id INTEGER REFERENCES attachments(id),
+  confirmed_at TEXT, confirmed_by INTEGER REFERENCES users(id),
+  contract_id INTEGER REFERENCES contracts(id),
+  cancelled_at TEXT, cancel_reason TEXT,
+  notes TEXT,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sales_seller ON sales(seller_id, status);
+
+-- Cancelamentos de cotas vendidas (base do indicador de cancelamento e dos estornos de comissão)
+CREATE TABLE IF NOT EXISTS cancellations (
+  id INTEGER PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  sale_id INTEGER NOT NULL UNIQUE REFERENCES sales(id),
+  contact_id INTEGER NOT NULL REFERENCES contacts(id),
+  seller_id INTEGER REFERENCES users(id),
+  responsible_id INTEGER REFERENCES users(id),
+  cancelled_on TEXT NOT NULL,
+  days_after_sale INTEGER,
+  within_7_days INTEGER NOT NULL DEFAULT 0,
+  reason TEXT NOT NULL,
+  description TEXT NOT NULL,
+  chargeback_total REAL NOT NULL DEFAULT 0,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL
+);
+
+-- Comissões do especialista (parcelas previstas, liberadas, pagas) e estornos
+CREATE TABLE IF NOT EXISTS commission_entries (
+  id INTEGER PRIMARY KEY,
+  sale_id INTEGER NOT NULL REFERENCES sales(id),
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  kind TEXT NOT NULL DEFAULT 'comissao' CHECK (kind IN ('comissao','estorno')),
+  installment_no INTEGER,
+  competence TEXT NOT NULL,
+  base_value REAL,
+  pct REAL,
+  amount REAL NOT NULL,
+  status TEXT NOT NULL DEFAULT 'prevista' CHECK (status IN ('prevista','liberada','paga','cancelada')),
+  release_on TEXT,
+  paid_at TEXT, paid_by INTEGER REFERENCES users(id),
+  cancellation_id INTEGER REFERENCES cancellations(id),
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_comm_user ON commission_entries(user_id, competence);
+
+-- Metas mensais por especialista ou equipe (cadastradas pelo administrador)
+CREATE TABLE IF NOT EXISTS goals (
+  id INTEGER PRIMARY KEY,
+  month TEXT NOT NULL,
+  scope TEXT NOT NULL CHECK (scope IN ('user','team')),
+  user_id INTEGER REFERENCES users(id),
+  team_id INTEGER REFERENCES teams(id),
+  target_credit REAL,
+  target_sales INTEGER,
+  created_by INTEGER REFERENCES users(id),
+  updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_goal ON goals(month, scope, COALESCE(user_id, 0), COALESCE(team_id, 0));
+
+-- Distribuição de prospects e leads (manual, roleta e automática)
+CREATE TABLE IF NOT EXISTS distribution_log (
+  id INTEGER PRIMARY KEY,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id),
+  from_user INTEGER REFERENCES users(id),
+  to_user INTEGER NOT NULL REFERENCES users(id),
+  method TEXT NOT NULL,
+  by_user INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL
+);
+
+-- Treinamentos (PDF, vídeo ou texto) e acompanhamento por usuário
+CREATE TABLE IF NOT EXISTS trainings (
+  id INTEGER PRIMARY KEY,
+  title TEXT NOT NULL,
+  category TEXT,
+  description TEXT,
+  kind TEXT NOT NULL DEFAULT 'texto' CHECK (kind IN ('pdf','video','texto','link')),
+  content TEXT,
+  video_url TEXT,
+  file BLOB, file_name TEXT, file_mime TEXT, file_size INTEGER,
+  required_roles TEXT NOT NULL DEFAULT '[]',
+  due_days INTEGER,
+  quiz TEXT NOT NULL DEFAULT '[]',
+  pass_score INTEGER NOT NULL DEFAULT 70,
+  duration_min INTEGER,
+  position INTEGER NOT NULL DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS training_progress (
+  training_id INTEGER NOT NULL REFERENCES trainings(id),
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  first_opened_at TEXT, last_opened_at TEXT, open_count INTEGER NOT NULL DEFAULT 0,
+  completed_at TEXT, quiz_score INTEGER, attempts INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (training_id, user_id)
+);
 
 -- Estratégia de lance por produto contratado
 CREATE TABLE IF NOT EXISTS bid_strategies (

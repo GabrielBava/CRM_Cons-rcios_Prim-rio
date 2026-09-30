@@ -67,6 +67,40 @@ async function completeForSale(id, who = 'c1') {
   }
 }
 
+
+const todayStr = () => new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
+let testPlan = null;
+/** Administradora com comissão 0,3% (carência de 7 dias) + 0,1% + 0,1% + 0,1% e plano HS de 100 a 300 mil, de 10 em 10 mil. */
+async function ensurePlan() {
+  if (testPlan) return testPlan;
+  const a = await call('admin', 'POST', '/api/administradoras', {
+    name: 'Adm Teste',
+    commercial_name: 'Comercial',
+    commission_schedule: [{ month_offset: 0, pct: 0.3, release_after_days: 7 }, { month_offset: 1, pct: 0.1 }, { month_offset: 2, pct: 0.1 }, { month_offset: 3, pct: 0.1 }],
+    chargeback_policy: { estornar_pagas: true, ate_dias: 365 },
+  });
+  assert.equal(a.status, 200, JSON.stringify(a.data));
+  const p = await call('admin', 'POST', '/api/planos', { administrator_id: a.data.id, name: 'HS Imóvel', category: 'imovel', admin_fee_pct: 18, reserve_fund_pct: 2, term_months: 200, credit_min: 100000, credit_max: 300000, credit_step: 10000, adhesion: true, adhesion_pct: 1, adhesion_months: 3, readjustment_index: 'incc' });
+  assert.equal(p.status, 200, JSON.stringify(p.data));
+  testPlan = { administrator_id: a.data.id, id: p.data.id };
+  return testPlan;
+}
+/** Fluxo completo de venda: pré-venda → conferência → termo de adesão → contrato → boleto → pagamento confirmado. */
+async function sellViaFlow(who, oppId, credit = 200000, extra = {}) {
+  const plan = await ensurePlan();
+  const ps = await call(who, 'POST', '/api/pre-vendas', { opportunity_id: oppId });
+  assert.equal(ps.status, 200, JSON.stringify(ps.data));
+  let sale = null;
+  for (const [step, body] of [['conferido', {}], ['termo_adesao', { plan_id: plan.id, credit_value: credit }], ['contrato_enviado', {}], ['contrato_assinado', {}], ['boleto_emitido', { boleto_value: 1500, boleto_due: todayStr() }]]) {
+    const r = await call(who, 'POST', `/api/pre-vendas/${ps.data.id}/avancar`, { step, ...body });
+    assert.equal(r.status, 200, `${step}: ${JSON.stringify(r.data)}`);
+    if (r.data.sale) sale = r.data.sale;
+  }
+  const c = await call(who, 'POST', `/api/vendas/${sale.id}/confirmar`, { payment_date: extra.payment_date || todayStr(), filename: 'comprovante.pdf', mime: 'application/pdf', content_base64: PDF, group_code: extra.group_code, quota_code: extra.quota_code, pref_channel: 'whatsapp' });
+  assert.equal(c.status, 200, JSON.stringify(c.data));
+  return { pre_sale: ps.data, sale, confirm: c.data };
+}
+
 test('setup só pode ser feito uma vez e rotas exigem sessão', async () => {
   const r = await call(null, 'POST', '/api/setup', { name: 'X', email: 'x@t.com', password: 'senha1234' });
   assert.equal(r.status, 403);
@@ -118,7 +152,7 @@ test('permissões: consultor vê só os próprios, gestor vê a equipe, leitura 
   assert.equal((await call('c1', 'PATCH', `/api/cadastros/${jid}`, { owner_id: 1 })).status, 403);
 });
 
-test('funil: perda exige motivo, venda converte em cliente e mantém histórico', async () => {
+test('funil: perda exige motivo; venda só pelo pagamento confirmado, converte em cliente e mantém histórico', async () => {
   const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Funil', phone1: '31 98888-7777' });
   const detail = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data;
   const opp = detail.opportunities[0];
@@ -127,20 +161,24 @@ test('funil: perda exige motivo, venda converte em cliente e mantém histórico'
   const won = meta.stages.find((s) => s.kind === 'ganho');
   const r1 = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: lost.id });
   assert.equal(r1.status, 400);
-  // Venda bloqueada enquanto a ficha de pré-venda estiver incompleta
+  // Não se move para "Venda" pelo funil
   const blocked = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: won.id });
   assert.equal(blocked.status, 400);
-  assert.ok(blocked.data.details.missing.some((m) => m.key === 'doc:identificacao'));
+  assert.match(blocked.data.error, /pagamento/);
+  // Conferência da pré-venda bloqueada enquanto a ficha estiver incompleta
+  const ps = await call('c1', 'POST', '/api/pre-vendas', { opportunity_id: opp.id });
+  const conf = await call('c1', 'POST', `/api/pre-vendas/${ps.data.id}/avancar`, { step: 'conferido' });
+  assert.equal(conf.status, 400);
+  assert.ok(conf.data.details.missing.some((m) => m.key === 'doc:identificacao'));
   await completeForSale(c.data.id);
-  const r2 = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: won.id, contract: { administrator: 'Adm X', credit_value: 100000 } });
-  assert.equal(r2.status, 200, JSON.stringify(r2.data));
+  await sellViaFlow('c1', opp.id, 100000);
   const after = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data;
   assert.equal(after.relationship, 'cliente');
   assert.equal(after.lead_status, 'convertido');
   assert.equal(after.contracts.length, 1);
   const o = (await call('c1', 'GET', `/api/oportunidades/${opp.id}`)).data;
   assert.equal(o.status, 'ganha');
-  assert.equal(o.stage_history.length, 2);
+  assert.equal(o.stage_history.at(-1).to_stage_name, won.name);
   const hist = (await call('c1', 'GET', `/api/cadastros/${c.data.id}/historico`)).data.rows;
   assert.ok(hist.some((a) => a.type === 'mudanca_etapa'));
   // segundo contrato não sobrescreve o primeiro
@@ -473,9 +511,7 @@ test('pós-venda: pesquisa NPS por link com histórico, cancelamento justificado
   const id = c.data.id;
   await completeForSale(id);
   let d = (await call('c1', 'GET', `/api/cadastros/${id}`)).data;
-  const won = (await call('c1', 'GET', '/api/meta')).data.stages.find((s) => s.kind === 'ganho');
-  const mv = await call('c1', 'POST', `/api/oportunidades/${d.opportunities[0].id}/etapa`, { stage_id: won.id, contract: { administrator: 'Adm X', group_code: 'G1', quota_code: '10', credit_value: 200000 } });
-  assert.equal(mv.status, 200, JSON.stringify(mv.data));
+  await sellViaFlow('c1', d.opportunities[0].id, 200000, { group_code: 'G1', quota_code: '10' });
   d = (await call('c1', 'GET', `/api/cadastros/${id}`)).data;
   assert.deepEqual(d.post_sale.map((p) => p.item), ['primeira_parcela', 'onboarding', 'estrategia_lance', 'recebimento_boletos', 'indicacao']);
   const k = d.contracts[0];
@@ -524,4 +560,214 @@ test('simulação registra data, hora e autor; proposta abre o simulador com nom
   assert.equal(u.searchParams.get('nome'), 'Maria Simulada');
   assert.equal(u.searchParams.get('contato').replace(/\D/g, ''), '11955550106', 'usa o WhatsApp do cliente');
   assert.equal((await call('leitor', 'POST', `/api/cadastros/${c.data.id}/simulador-proposta`, {})).status, 403);
+});
+
+const userId = async (email) => (await call('admin', 'GET', '/api/usuarios')).data.find((u) => u.email === email).id;
+
+test('funil: passagem sequencial com critérios de entrada; voltar exige motivo; administrador força com justificativa', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Regras Funil', phone1: '11 94444-1001', origin: 'site', relationship: 'lead' });
+  const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
+  const stages = (await call('c1', 'GET', '/api/meta')).data.stages;
+  const st = (k) => stages.find((s) => s.key === k);
+  assert.equal(opp.stage_id, st('lead').id, 'lead com contato entra em "Lead"');
+  // Pular etapas não é permitido
+  const skip = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('negociacao').id });
+  assert.equal(skip.status, 400);
+  assert.match(skip.data.error, /pular etapas/);
+  // Tentativa de contato exige registro de tentativa
+  const t1 = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('tentativa').id });
+  assert.equal(t1.status, 400);
+  assert.ok(t1.data.details.missing.some((m) => m.key === 'tentativa_registrada'));
+  const crit = await call('c1', 'GET', `/api/oportunidades/${opp.id}/criterios`);
+  assert.equal(crit.data.next_stage.key, 'tentativa');
+  assert.equal(crit.data.criteria[0].ok, false);
+  const act = await call('c1', 'POST', '/api/atividades', { contact_id: c.data.id, opportunity_id: opp.id, type: 'ligacao_realizada', result: 'nao_atendida' });
+  assert.equal(act.status, 200, JSON.stringify(act.data));
+  assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('tentativa').id })).status, 200);
+  // Qualificado exige conversa efetiva e qualificação
+  const q = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('qualificado').id });
+  assert.equal(q.status, 400);
+  assert.deepEqual(q.data.details.missing.map((m) => m.key).sort(), ['contato_efetivo', 'qualificacao']);
+  // Voltar exige motivo
+  assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('lead').id })).status, 400);
+  assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('lead').id, reason: 'Registrado por engano' })).status, 200);
+  // Especialista não força; administrador força com justificativa (auditado)
+  assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('r1').id, force: true, reason: 'x' })).status, 400);
+  assert.equal((await call('admin', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('r1').id, force: true })).status, 400, 'forçar exige justificativa');
+  const f = await call('admin', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('r1').id, force: true, reason: 'Migração de lead antigo com R1 marcada fora do CRM' });
+  assert.equal(f.status, 200, JSON.stringify(f.data));
+  // Nutrição exige motivo e data de retorno
+  assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('nutricao').id })).status, 400);
+});
+
+test('planos e administradoras: faixa de crédito com incremento, comissão em parcelas e visão restrita ao administrador', async () => {
+  const plan = await ensurePlan();
+  const chk = async (v) => (await call('c1', 'GET', `/api/planos/${plan.id}/verificar-credito?valor=${v}`)).data.error;
+  assert.equal(await chk(150000), null);
+  assert.match(await chk(155000), /de R\$/);
+  assert.match(await chk(350000), /até/);
+  assert.equal((await call('admin', 'POST', '/api/planos', { name: 'X', credit_min: 100000, credit_max: 185000, credit_step: 10000 })).status, 400, 'faixa precisa ser múltipla do incremento');
+  assert.equal((await call('c1', 'POST', '/api/planos', { name: 'Y' })).status, 403);
+  const admView = (await call('admin', 'GET', '/api/administradoras')).data.find((a) => a.id === plan.administrator_id);
+  assert.equal(admView.commission_total, 0.6);
+  const consView = (await call('c1', 'GET', '/api/administradoras')).data.find((a) => a.id === plan.administrator_id);
+  assert.equal(consView.commercial_name, undefined, 'especialista não vê contatos e políticas');
+  assert.equal(consView.name, 'Adm Teste');
+});
+
+test('venda: comissão em parcelas com carência, cancelamento com motivo concreto, estorno e índice por especialista', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Comissão', phone1: '11 94444-2002' });
+  await completeForSale(c.data.id);
+  const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
+  // Crédito fora do incremento do plano é recusado no termo de adesão
+  const plan = await ensurePlan();
+  const ps = await call('c1', 'POST', '/api/pre-vendas', { opportunity_id: opp.id });
+  assert.equal((await call('c1', 'POST', `/api/pre-vendas/${ps.data.id}/avancar`, { step: 'conferido' })).status, 200);
+  assert.equal((await call('c1', 'POST', `/api/pre-vendas/${ps.data.id}/avancar`, { step: 'contrato_enviado' })).status, 400, 'segue a sequência');
+  assert.equal((await call('c1', 'POST', `/api/pre-vendas/${ps.data.id}/avancar`, { step: 'termo_adesao', plan_id: plan.id, credit_value: 205000 })).status, 400);
+  assert.equal((await call('c1', 'POST', `/api/pre-vendas/${ps.data.id}/avancar`, { step: 'cancelar' })).status, 400);
+  await call('c1', 'POST', `/api/pre-vendas/${ps.data.id}/cancelar`, { reason: 'refazer no teste' });
+  const { sale } = await sellViaFlow('c1', opp.id, 200000);
+  const s = (await call('c1', 'GET', `/api/vendas/${sale.id}`)).data;
+  assert.equal(s.status, 'confirmada');
+  assert.match(s.code, /^VD-/);
+  // Comissões: 0,3% em carência de 7 dias + 3 parcelas de 0,1%
+  const comm = (await call('c1', 'GET', '/api/comissoes')).data.rows.filter((r) => r.sale_id === sale.id);
+  assert.deepEqual(comm.map((r) => r.amount).sort((a, b) => a - b), [200, 200, 200, 600]);
+  const first = comm.find((r) => r.installment_no === 1);
+  assert.equal(first.status, 'prevista');
+  assert.equal((await call('admin', 'POST', '/api/comissoes/pagar', { ids: [first.id] })).status, 400, 'prevista não é paga');
+  assert.equal((await call('c2', 'GET', '/api/comissoes')).data.rows.filter((r) => r.sale_id === sale.id).length, 0, 'outro especialista não vê');
+  // Libera a primeira parcela (simula fim da carência) e paga
+  appDb.prepare("UPDATE commission_entries SET release_on = '2000-01-01' WHERE id = ?").run(first.id);
+  appDb.prepare("UPDATE commission_entries SET status = 'liberada' WHERE id = ?").run(first.id);
+  assert.equal((await call('admin', 'POST', '/api/comissoes/pagar', { ids: [first.id] })).status, 200);
+  // Cancelamento: especialista não registra; motivo concreto obrigatório
+  assert.equal((await call('c1', 'POST', `/api/vendas/${sale.id}/cancelamento`, { reason: 'dificuldade_financeira', description: 'Perdeu o emprego no mês seguinte' })).status, 403);
+  assert.equal((await call('gestor', 'POST', `/api/vendas/${sale.id}/cancelamento`, { reason: 'dificuldade_financeira', description: 'curto' })).status, 400);
+  const cn = await call('gestor', 'POST', `/api/vendas/${sale.id}/cancelamento`, { reason: 'dificuldade_financeira', description: 'Cliente perdeu o emprego e pediu o cancelamento', responsible_id: await userId('c1@t.com') });
+  assert.equal(cn.status, 200, JSON.stringify(cn.data));
+  assert.equal(cn.data.chargeback, 600, 'estorna a parcela já paga');
+  const after = (await call('c1', 'GET', '/api/comissoes')).data.rows.filter((r) => r.sale_id === sale.id);
+  assert.ok(after.filter((r) => r.kind === 'comissao' && r.status !== 'paga').every((r) => r.status === 'cancelada'));
+  assert.ok(after.some((r) => r.kind === 'estorno' && r.amount === -600));
+  const ind = (await call('gestor', 'GET', '/api/cancelamentos/indicadores')).data.rows.find((r) => r.name === 'Cons 1');
+  assert.ok(ind.cancelamentos >= 1 && ind.taxa > 0);
+  assert.equal((await call('c1', 'GET', '/api/cancelamentos')).data.length >= 1, true);
+});
+
+test('proposta enviada inicia a esteira de follow-up (D0…D10); resposta negativa cria tarefa de revisão; aceite para a esteira', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Esteira', phone1: '11 94444-3003' });
+  const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
+  const p = await call('c1', 'POST', '/api/propostas', { opportunity_id: opp.id, credit_value: 150000 });
+  assert.equal(p.status, 200, JSON.stringify(p.data));
+  assert.equal((await call('c1', 'POST', `/api/propostas/${p.data.id}/status`, { status: 'apresentada', sent_channel: 'whatsapp' })).status, 200);
+  let tasks = (await call('c1', 'GET', `/api/tarefas?contact_id=${c.data.id}&status=pendente`)).data.rows.filter((t) => t.type === 'follow_up_proposta');
+  assert.ok(tasks.length >= 5, 'D1, D2, D3, D5 e D10 (e D0 se enviada pela manhã)');
+  assert.ok(tasks.some((t) => t.cadence_step === 'D10' && t.priority === 'alta'));
+  const pan = (await call('c1', 'GET', '/api/propostas-panorama')).data;
+  const row = pan.rows.find((r) => r.id === p.data.id);
+  assert.ok(row.probability >= 5 && row.probability <= 95);
+  assert.ok(row.next_followup);
+  assert.equal((await call('c1', 'POST', `/api/propostas/${p.data.id}/resposta`, { response: 'negativa' })).status, 200);
+  tasks = (await call('c1', 'GET', `/api/tarefas?contact_id=${c.data.id}&status=pendente`)).data.rows;
+  assert.ok(tasks.some((t) => t.type === 'revisar_proposta'));
+  assert.equal((await call('c1', 'POST', `/api/propostas/${p.data.id}/status`, { status: 'aprovada', accepted_channel: 'whatsapp' })).status, 200);
+  tasks = (await call('c1', 'GET', `/api/tarefas?contact_id=${c.data.id}&status=pendente`)).data.rows;
+  assert.equal(tasks.filter((t) => t.type === 'follow_up_proposta').length, 0, 'aceite encerra a esteira');
+  assert.ok((await call('c1', 'GET', '/api/pre-vendas')).data.rows.some((r) => r.proposal_id === p.data.id), 'aceite abre a pré-venda');
+  // Nova proposta exige cadastro com nome e contato
+  const semTel = await call('c1', 'POST', '/api/cadastros', { name: 'Sem Telefone', email: 'semtel@x.com' });
+  assert.equal((await call('c1', 'POST', '/api/propostas/iniciar', { contact_id: semTel.data.id })).status, 400);
+  const ini = await call('c1', 'POST', '/api/propostas/iniciar', { contact_id: c.data.id });
+  assert.equal(ini.status, 200, JSON.stringify(ini.data));
+  assert.match(ini.data.url, /nome=/);
+});
+
+test('distribuição: fila só para quem tem o módulo, roleta alterna especialistas e cria tarefa de primeiro contato', async () => {
+  assert.equal((await call('c1', 'GET', '/api/distribuicao')).status, 403);
+  const ids = [await userId('c1@t.com'), await userId('c2@t.com')];
+  assert.equal((await call('gestor', 'PATCH', '/api/distribuicao/roleta', { participants: [] })).status, 400, 'só o administrador configura');
+  const rr = await call('admin', 'PATCH', '/api/distribuicao/roleta', { mode: 'sequencial', participants: ids.map((user_id) => ({ user_id, active: true, weight: 1 })), first_contact_hours: 1 });
+  assert.equal(rr.status, 200, JSON.stringify(rr.data));
+  const leads = [];
+  for (const n of [1, 2]) leads.push((await call('admin', 'POST', '/api/cadastros', { name: `Sem dono ${n}`, phone1: `11 93333-00${n}0`, owner_id: '' })).data.id);
+  const q = (await call('admin', 'GET', '/api/distribuicao')).data;
+  assert.ok(leads.every((id) => q.rows.some((r) => r.id === id)));
+  const d = await call('admin', 'POST', '/api/distribuicao', { contact_ids: leads, method: 'roleta' });
+  assert.equal(d.status, 200, JSON.stringify(d.data));
+  assert.deepEqual(d.data.result.map((r) => r.user_id).sort(), ids.slice().sort(), 'um para cada especialista');
+  const t = (await call('admin', 'GET', `/api/tarefas?contact_id=${leads[0]}`)).data.rows;
+  assert.ok(t.some((x) => x.type === 'primeiro_contato'));
+});
+
+test('metas por especialista e equipe; realizado considera vendas confirmadas; só o administrador cadastra', async () => {
+  const month = todayStr().slice(0, 7);
+  const c1 = await userId('c1@t.com');
+  assert.equal((await call('c1', 'POST', '/api/metas', { month, items: [] })).status, 403);
+  const r = await call('admin', 'POST', '/api/metas', { month, items: [{ scope: 'user', user_id: c1, target_credit: 1000000, target_sales: 5 }] });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  const b = (await call('c1', 'GET', `/api/metas?month=${month}`)).data;
+  const me = b.people.find((p) => p.id === c1);
+  assert.equal(me.target_credit, 1000000);
+  assert.ok(me.realized_credit >= 200000, 'vendas confirmadas no mês contam');
+  assert.equal(me.missing_credit, 1000000 - me.realized_credit);
+  assert.equal(b.can_edit, false);
+  const home = (await call('c1', 'GET', '/api/inicio')).data;
+  assert.equal(home.goal.target_credit, 1000000);
+  assert.ok(Array.isArray(home.actions));
+});
+
+test('permissões por módulo: perfil define o padrão e o administrador inclui ou retira telas por usuário', async () => {
+  const c2 = await userId('c2@t.com');
+  const u = (await call('admin', 'GET', '/api/usuarios')).data.find((x) => x.id === c2);
+  assert.ok(!u.effective_modules.includes('distribuicao'));
+  assert.equal((await call('c2', 'GET', '/api/distribuicao')).status, 403);
+  const save = await call('admin', 'POST', '/api/usuarios', { ...u, id: c2, modules: { add: ['distribuicao', 'usuarios'], remove: ['metas'] } });
+  assert.equal(save.status, 200, JSON.stringify(save.data));
+  const meta = (await call('c2', 'GET', '/api/meta')).data;
+  assert.ok(meta.user.modules.includes('distribuicao'));
+  assert.ok(!meta.user.modules.includes('metas'));
+  assert.ok(!meta.user.modules.includes('usuarios'), 'Usuários é exclusivo do administrador');
+  assert.equal((await call('c2', 'GET', '/api/distribuicao')).status, 200);
+  assert.equal((await call('c2', 'GET', '/api/permissoes')).status, 403);
+  const m = (await call('admin', 'GET', '/api/permissoes')).data;
+  assert.equal(m.roles.find((r) => r.key === 'gestor').label, 'Líder de equipe');
+  await call('admin', 'POST', '/api/usuarios', { ...u, id: c2, modules: { add: [], remove: [] } });
+});
+
+test('treinamentos: material com questionário, nota mínima, obrigatório por perfil e acompanhamento', async () => {
+  const t = await call('admin', 'POST', '/api/treinamentos', {
+    title: 'Como funciona o lance embutido', category: 'lances', kind: 'texto', content: 'O lance embutido usa parte da carta…', required_roles: ['consultor'], pass_score: 100,
+    quiz: [{ question: 'O lance embutido usa…', options: ['recursos próprios', 'parte do crédito'], correct: 1 }],
+  });
+  assert.equal(t.status, 200, JSON.stringify(t.data));
+  assert.equal((await call('c1', 'POST', '/api/treinamentos', { title: 'x' })).status, 403);
+  const list = (await call('c1', 'GET', '/api/treinamentos')).data;
+  assert.ok(list.summary.obrigatorios_pendentes >= 1);
+  const open = (await call('c1', 'GET', `/api/treinamentos/${t.data.id}`)).data;
+  assert.equal(open.quiz[0].correct, undefined, 'gabarito não vai para o especialista');
+  assert.equal((await call('c1', 'POST', `/api/treinamentos/${t.data.id}/concluir`, { answers: [0] })).data.passed, false);
+  assert.equal((await call('c1', 'POST', `/api/treinamentos/${t.data.id}/concluir`, { answers: [1] })).data.passed, true);
+  const tr = (await call('admin', 'GET', '/api/treinamentos/acompanhamento')).data;
+  const row = tr.users.find((x) => x.name === 'Cons 1');
+  assert.equal(row.cells.find((c) => c.training_id === t.data.id).status, 'concluido');
+  assert.equal((await call('c1', 'GET', '/api/treinamentos/acompanhamento')).status, 403);
+});
+
+test('ficha do cliente: acesso e conclusão pelo link atualizam a pré-venda; conclusão exige ficha completa', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Link PV', phone1: '11 94444-4004' });
+  const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
+  const ps = await call('c1', 'POST', '/api/pre-vendas', { opportunity_id: opp.id });
+  let d = (await call('c1', 'GET', `/api/pre-vendas/${ps.data.id}`)).data;
+  assert.equal(d.status, 'link_gerado');
+  const token = d.link_url.split('/ficha/')[1];
+  assert.equal((await call(null, 'GET', `/api/publico/ficha?token=${token}`)).status, 200);
+  d = (await call('c1', 'GET', `/api/pre-vendas/${ps.data.id}`)).data;
+  assert.equal(d.status, 'acessado');
+  assert.equal((await call(null, 'POST', '/api/publico/ficha/concluir', { token })).status, 400, 'ficha incompleta');
+  await completeForSale(c.data.id);
+  assert.equal((await call(null, 'POST', '/api/publico/ficha/concluir', { token })).status, 200);
+  d = (await call('c1', 'GET', `/api/pre-vendas/${ps.data.id}`)).data;
+  assert.equal(d.status, 'preenchido');
 });

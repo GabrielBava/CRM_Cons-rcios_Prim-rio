@@ -1,7 +1,7 @@
 import { get, post, download } from '../api.js';
 import {
   html, render, $, $$, on, fresh, state, selectOptions, opts, userItems, table, pager, badge, fmtDateTime, fmtDuration, optLabel, K, can, modal, field,
-  toast, toastError, empty, PERIODS, periodRange,
+  toast, toastError, empty, PERIODS, periodRange, crmTabs,
 } from '../ui.js';
 
 let saved = { period: '7d' };
@@ -19,6 +19,7 @@ export async function show(view, { params }) {
   let tab = params.aba || 'atividades';
   const tabs = [['atividades', 'Atividades'], ...(can.manage() ? [['discadora', 'Eventos da discadora'], ['entradas', 'Entradas de leads e mensagens']] : [])];
   render(view, html`<div class="page">
+    ${crmTabs('atividades')}
     <div class="page-head"><h1>Ligações e atividades</h1></div>
     <nav class="tabs">${tabs.map(([k, l]) => html`<a href="#" data-tab="${k}" class="${tab === k ? 'active' : ''}">${l}</a>`)}</nav>
     <div id="tab"></div></div>`);

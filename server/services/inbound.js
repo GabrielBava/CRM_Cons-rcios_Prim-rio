@@ -105,6 +105,8 @@ function processLead(db, integ, payload, { eventId } = {}) {
     { system: true, skipDuplicateCheck: true, source: 'api_leads', sourceLabel: `via ${platform}` },
   );
   const id = saveEvent(db, 'api_leads', key, payload, 'processado', { contact_id: res.id, eventId });
+  // Sem responsável definido: entra na fila de distribuição (ou na roleta automática, se estiver ligada)
+  if (!integ.config.default_owner_id) require('./distribution').autoDistribute(db, res.id);
   return { status: 'criado', event_id: id, contact_code: res.code };
 }
 

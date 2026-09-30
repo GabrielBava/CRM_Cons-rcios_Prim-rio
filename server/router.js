@@ -21,6 +21,14 @@ const admin = require('./services/admin');
 const record = require('./services/record');
 const finance = require('./services/finance');
 const core = require('./core');
+const perms = require('./permissions');
+const catalog = require('./services/catalog');
+const sales = require('./services/sales');
+const goals = require('./services/goals');
+const distribution = require('./services/distribution');
+const trainings = require('./services/trainings');
+const home = require('./services/home');
+const pipeline = require('./services/pipeline');
 
 function createRouter(db) {
   const routes = [];
@@ -64,6 +72,76 @@ function createRouter(db) {
   add('GET', '/api/meta', ({ user }) => admin.meta(db, user));
   add('GET', '/api/busca', ({ user, query }) => contacts.globalSearch(db, user, query.q));
   add('GET', '/api/dashboard', ({ user, query }) => reports.dashboard(db, user, query));
+  add('GET', '/api/inicio', ({ user, query }) => home.home(db, user, query));
+
+  /* ---------- Distribuição de prospects e leads ---------- */
+  add('GET', '/api/distribuicao', ({ user, query }) => distribution.queue(db, user, query));
+  add('POST', '/api/distribuicao', ({ user, body }) => distribution.distribute(db, user, body));
+  add('PATCH', '/api/distribuicao/roleta', ({ user, body }) => (distribution.saveRoleta(db, user, body), { ok: true }));
+
+  /* ---------- Administradoras e planos ---------- */
+  add('GET', '/api/administradoras', ({ user }) => catalog.listAdministrators(db, user));
+  add('POST', '/api/administradoras', ({ user, body }) => ({ id: catalog.saveAdministrator(db, user, body) }));
+  add('GET', '/api/planos', ({ query }) => catalog.listPlans(db, query));
+  add('POST', '/api/planos', ({ user, body }) => ({ id: catalog.savePlan(db, user, body) }));
+  add('GET', '/api/planos/:id/verificar-credito', ({ params, query }) => {
+    const plan = db.prepare('SELECT * FROM products WHERE id = ?').get(Number(params.id));
+    return { error: catalog.creditError(plan, Number(query.valor)) };
+  });
+
+  /* ---------- Propostas: panorama, esteira e início pelo simulador ---------- */
+  add('GET', '/api/propostas-panorama', ({ user, query }) => (perms.requireModule(user, 'propostas'), proposals.panorama(db, user, query)));
+  add('POST', '/api/propostas/iniciar', ({ user, body }) => proposals.startProposal(db, user, body));
+  add('POST', '/api/propostas/:id/resposta', ({ user, params, body }) => (proposals.registerResponse(db, user, params.id, body), { ok: true }));
+
+  /* ---------- Pré-venda, vendas, comissões e cancelamentos ---------- */
+  add('GET', '/api/pre-vendas', ({ user, query }) => (perms.requireModule(user, 'prevenda'), sales.listPreSales(db, user, query)));
+  add('POST', '/api/pre-vendas', ({ user, body }) => sales.openPreSale(db, user, body));
+  add('GET', '/api/pre-vendas/:id', ({ user, params, query }) => {
+    const ps = sales.getPreSale(db, user, params.id);
+    // O endereço da página do cliente é o mesmo desta aplicação (informado pela interface)
+    const base = /^https?:\/\/[^\s#]+$/.test(query.base || '') ? query.base : '';
+    const url = ps.link_token ? `${base}#/ficha/${ps.link_token}` : null;
+    return { ...ps, link_url: url, message: url ? sales.presaleMessage(db, ps, url) : null };
+  });
+  add('POST', '/api/pre-vendas/:id/enviado', ({ user, params, body }) => (sales.markSent(db, user, params.id, body), { ok: true }));
+  add('POST', '/api/pre-vendas/:id/avancar', ({ user, params, body }) => sales.advancePreSale(db, user, params.id, body));
+  add('POST', '/api/pre-vendas/:id/cancelar', ({ user, params, body }) => (sales.cancelPreSale(db, user, params.id, body), { ok: true }));
+  add('GET', '/api/vendas', ({ user, query }) => (perms.requireModule(user, 'vendas'), sales.listSales(db, user, query)));
+  add('GET', '/api/vendas/:id', ({ user, params }) => sales.getSale(db, user, params.id));
+  add('POST', '/api/vendas/:id/confirmar', ({ user, params, body }) => sales.confirmSale(db, user, params.id, body), { bodyLimit: 12e6 });
+  add('POST', '/api/vendas/:id/cancelar', ({ user, params, body }) => (sales.cancelPendingSale(db, user, params.id, body), { ok: true }));
+  add('POST', '/api/vendas/:id/cancelamento', ({ user, params, body }) => sales.registerCancellation(db, user, params.id, body));
+  add('GET', '/api/comissoes', ({ user, query }) => (perms.requireModule(user, 'comissoes'), sales.listCommissions(db, user, query)));
+  add('POST', '/api/comissoes/pagar', ({ user, body }) => sales.payCommissions(db, user, body));
+  add('GET', '/api/cancelamentos', ({ user, query }) => (perms.requireModule(user, 'comissoes'), sales.listCancellations(db, user, query)));
+  add('GET', '/api/cancelamentos/indicadores', ({ user, query }) => (perms.requireModule(user, 'comissoes'), sales.cancellationIndicators(db, user, query)));
+  add('POST', '/api/publico/ficha/concluir', ({ body }) => record.publicComplete(db, body.token), { public: true });
+
+  /* ---------- Metas ---------- */
+  add('GET', '/api/metas', ({ user, query }) => goals.goalsBoard(db, user, query));
+  add('POST', '/api/metas', ({ user, body }) => (goals.saveGoals(db, user, body), { ok: true }));
+  add('POST', '/api/metas/copiar', ({ user, body }) => goals.copyGoals(db, user, body));
+
+  /* ---------- Treinamentos ---------- */
+  add('GET', '/api/treinamentos', ({ user }) => (perms.requireModule(user, 'treinamentos'), trainings.listTrainings(db, user)));
+  add('POST', '/api/treinamentos', ({ user, body }) => ({ id: trainings.saveTraining(db, user, body) }), { bodyLimit: 22e6 });
+  add('GET', '/api/treinamentos/acompanhamento', ({ user }) => trainings.tracking(db, user));
+  add('GET', '/api/treinamentos/:id', ({ user, params }) => (perms.requireModule(user, 'treinamentos'), trainings.getTraining(db, user, params.id)));
+  add('GET', '/api/treinamentos/:id/arquivo', ({ user, params, res }) => {
+    const t = trainings.getFile(db, user, params.id);
+    return sendBinary(res, t.file_name, t.file_mime, t.file);
+  });
+  add('POST', '/api/treinamentos/:id/concluir', ({ user, params, body }) => trainings.complete(db, user, params.id, body));
+
+  /* ---------- Regras do funil ---------- */
+  add('GET', '/api/funil/regras', () => ({ rules: Object.entries(pipeline.RULES).map(([key, r]) => ({ key, label: r.label, hint: r.hint })), stage_rules: pipeline.stageRules(db), sequential: require('./db').getSetting(db, 'funnel_sequential') !== false }));
+  add('GET', '/api/oportunidades/:id/criterios', ({ user, params }) => {
+    const o = opps.loadOpp(db, user, params.id);
+    const c = db.prepare('SELECT * FROM contacts WHERE id = ?').get(o.contact_id);
+    const next = pipeline.nextStage(db, o);
+    return { next_stage: next, criteria: next ? pipeline.evaluate(db, o, c, next) : [] };
+  });
 
   /* ---------- Cadastros ---------- */
   add('GET', '/api/cadastros', ({ user, query }) => contacts.listContacts(db, user, query));
@@ -169,8 +247,8 @@ function createRouter(db) {
   add('POST', '/api/entradas/:id/descartar', ({ user, params, body }) => (inbound.discardInbound(db, user, params.id, body.reason), { ok: true }));
 
   /* ---------- Relatórios, importação e exportação ---------- */
-  add('GET', '/api/relatorios', () => reports.REPORTS);
-  add('GET', '/api/relatorios/:key', ({ user, params, query }) => reports.report(db, user, params.key, query));
+  add('GET', '/api/relatorios', ({ user }) => (perms.requireModule(user, 'relatorios'), reports.REPORTS));
+  add('GET', '/api/relatorios/:key', ({ user, params, query }) => (perms.requireModule(user, 'relatorios'), reports.report(db, user, params.key, query)));
   add('GET', '/api/relatorios/:key/csv', ({ user, params, query, res }) => {
     const r = reports.report(db, user, params.key, query);
     const csv = toCSV(r.columns, r.totals ? [...r.rows, r.totals] : r.rows);
@@ -187,6 +265,7 @@ function createRouter(db) {
   /* ---------- Administração ---------- */
   add('GET', '/api/usuarios', ({ user }) => admin.listUsers(db, user));
   add('POST', '/api/usuarios', ({ user, body }) => ({ id: admin.saveUser(db, user, body) }));
+  add('GET', '/api/permissoes', ({ user }) => admin.permissionsMatrix(db, user));
   add('GET', '/api/equipes', () => admin.listTeams(db));
   add('POST', '/api/equipes', ({ user, body }) => ({ id: admin.saveTeam(db, user, body) }));
   add('POST', '/api/opcoes', ({ user, body }) => ({ id: admin.saveOption(db, user, body) }));
@@ -297,6 +376,12 @@ function createRouter(db) {
       finance.overdueSweep(db);
     } catch (e) {
       console.error('Falha ao verificar atrasos:', e.message);
+    }
+    try {
+      sales.presaleSweep(db);
+      sales.commissionSweep(db);
+    } catch (e) {
+      console.error('Falha na rotina de pré-venda/comissões:', e.message);
     }
   }
 

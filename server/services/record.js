@@ -238,7 +238,7 @@ function reviewAttachment(db, user, id, data) {
   const upd = {};
   if (data.status !== undefined) {
     if (!['pendente', 'recebido', 'aprovado', 'recusado', 'removido'].includes(data.status)) throw badRequest('Situação inválida.');
-    if (data.status === 'removido' && !isManager(user)) throw badRequest('Apenas gestores e administradores removem arquivos.');
+    if (data.status === 'removido' && !isManager(user)) throw badRequest('Apenas líderes de equipe e administradores removem arquivos.');
     upd.status = data.status;
     if (data.status === 'recusado' && !clean(data.notes)) throw badRequest('Informe o motivo da reprovação.');
     if (['aprovado', 'recusado'].includes(data.status)) {
@@ -396,6 +396,7 @@ function publicForm(db, token) {
   const newVisit = !link.last_used_at || Date.parse(now) - Date.parse(link.last_used_at) > 30 * 60000;
   db.prepare('UPDATE client_links SET last_used_at = ?, first_used_at = COALESCE(first_used_at, ?), access_count = access_count + ? WHERE id = ?').run(now, now, newVisit ? 1 : 0, link.id);
   if (!link.first_used_at) insertActivity(db, { contact_id: contact.id, type: 'cadastro', notes: 'O cliente abriu o link de cadastro pela primeira vez.', source: 'cliente' });
+  require('./sales').onClientLink(db, link.id, 'access');
   const values = {};
   for (const f of EXTERNAL_FIELDS[contact.kind]) values[f] = contact[f] ?? null;
   const address = db.prepare('SELECT cep, street, number, complement, district, city, state, notes FROM addresses WHERE contact_id = ? ORDER BY is_primary DESC, id LIMIT 1').get(contact.id) || null;
@@ -412,6 +413,8 @@ function publicForm(db, token) {
     documents: check.items.filter((i) => i.group === 'Documentos').map((i) => ({ type: i.key.slice(4), label: i.label, status: i.status })),
     options,
     consultant: owner?.name || null,
+    company: getSetting(db, 'company_name') || '',
+    completed: !!db.prepare("SELECT 1 FROM pre_sales WHERE client_link_id = ? AND completed_at IS NOT NULL").get(link.id),
     expires_at: link.expires_at,
   };
 }
@@ -465,6 +468,23 @@ function publicUpload(db, token, body) {
     insertActivity(db, { contact_id: contact.id, type: 'cadastro', notes: `O cliente enviou um arquivo pelo link: ${clean(body.filename)} (${optionLabel(db, 'tipo_documento', clean(body.doc_type) || 'outro')}).`, source: 'cliente', ref_type: 'attachment', ref_id: id });
     audit(db, null, 'attachment', id, 'enviado_pelo_cliente', { arquivo: clean(body.filename) }, contact.id);
     notifyOwner(db, contact, 'Conferir documentos enviados pelo cliente');
+    return { ok: true };
+  });
+}
+
+/**
+ * O cliente conclui o cadastro: dados obrigatórios preenchidos e documentos enviados (a validação dos documentos
+ * continua com a equipe). Atualiza a pré-venda para "Concluído pelo cliente".
+ */
+function publicComplete(db, token) {
+  const { link, contact } = resolveClientLink(db, token);
+  const check = saleChecklist(db, contact);
+  const missing = check.items.filter((i) => (i.group === 'Documentos' ? !['recebido', 'aprovado'].includes(i.status) : !i.ok));
+  if (missing.length) throw badRequest(`Ainda falta: ${missing.map((m) => m.label).join('; ')}.`, { missing });
+  return tx(db, () => {
+    db.prepare('UPDATE client_links SET submissions = submissions + 1, last_used_at = ? WHERE id = ?').run(nowIso(), link.id);
+    insertActivity(db, { contact_id: contact.id, type: 'cadastro', notes: 'O cliente concluiu o cadastro pelo link e enviou os documentos para conferência.', source: 'cliente' });
+    require('./sales').onClientLink(db, link.id, 'complete');
     return { ok: true };
   });
 }
@@ -693,7 +713,8 @@ function proposalSimulatorLink(db, user, contactId, data = {}) {
   if (!base) throw new HttpError(409, 'Endereço do simulador de propostas não configurado (Configurações › Geral).');
   const name = c.kind === 'PJ' ? c.legal_name || c.name : c.name;
   const phone = c.whatsapp || c.phone1 || c.phone2 || '';
-  const params = new URLSearchParams({ nome: name || '', contato: phone, origem: 'crm', cadastro: c.code });
+  const params = new URLSearchParams({ nome: name || '', contato: phone, origem: 'crm', cadastro: c.code, modo: 'proposta' });
+  if (data.proposal_code) params.set('proposta', data.proposal_code);
   const url = `${base.split('#')[0]}${base.includes('?') ? '&' : '?'}${params}#${params}`;
   let oppId = null;
   if (data.opportunity_id) {
@@ -706,7 +727,7 @@ function proposalSimulatorLink(db, user, contactId, data = {}) {
 
 module.exports = {
   lookupCep, saveAddress, deleteAddress, savePartner, uploadAttachment, listAttachments, getAttachment, reviewAttachment,
-  saleChecklist, createClientLink, revokeClientLinks, activeClientLink, clientLinkHistory, publicForm, publicSubmit, publicUpload, publicCep,
+  saleChecklist, createClientLink, revokeClientLinks, activeClientLink, clientLinkHistory, publicForm, publicSubmit, publicUpload, publicCep, publicComplete, insertAttachment,
   postSaleItems, togglePostSale, listNps, createNps, cancelNps, publicNpsForm, publicNpsSubmit, listBidStrategies, saveBidStrategy,
   proposalSimulatorLink, EXTERNAL_FIELDS,
 };

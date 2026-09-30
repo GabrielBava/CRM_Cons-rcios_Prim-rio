@@ -42,10 +42,11 @@ export function quickCreateContact(defaults = {}) {
       ${field({ name: 'origin', label: 'Origem do lead', type: 'select', options: opts('origem'), value: defaults.origin, recommended: true })}
       ${field({ name: 'campaign', label: 'Campanha ou ação de origem' })}
       ${field({ name: 'first_contact_at', label: 'Data do primeiro contato', type: 'datetime' })}
-      ${field({ name: 'owner_id', label: 'Responsável', type: 'select', options: userItems(), value: state.user.id, allowEmpty: can.manage(), placeholder: 'Sem responsável', disabled: !can.manage() })}
+      ${field({ name: 'relationship', label: 'Tipo', type: 'select', options: [{ value: 'prospect', label: 'Prospect (ainda sem interesse demonstrado)' }, { value: 'lead', label: 'Lead (demonstrou interesse)' }], value: defaults.relationship || 'lead', allowEmpty: false })}
+      ${field({ name: 'owner_id', label: 'Responsável', type: 'select', options: userItems(), value: defaults.owner_id !== undefined ? defaults.owner_id : state.user.id, allowEmpty: can.manage(), placeholder: 'Sem responsável (fila de distribuição)', disabled: !can.manage() })}
       ${field({ name: 'product_id', label: 'Produto de interesse', type: 'select', options: productItems() })}
       ${field({ name: 'initial_notes', label: 'Observações iniciais', type: 'textarea', full: true })}
-      ${field({ name: 'create_opportunity', label: 'Criar oportunidade no funil (etapa "Novo prospect")', type: 'checkbox', value: true, full: true })}
+      ${field({ name: 'create_opportunity', label: 'Criar negócio no funil (etapa "Prospect" ou "Lead")', type: 'checkbox', value: true, full: true })}
       <details class="full"><summary>Dados de campanha digital (opcional)</summary>
         <p class="hint">Preencha somente os dados que a plataforma forneceu. Campos sem informação ficam vazios.</p>
         <div class="grid">
@@ -178,6 +179,7 @@ export function taskForm({ contact, opportunity_id, type, task } = {}) {
       ${field({ name: 'title', label: 'Descrição', value: task?.title, placeholder: 'ex.: Retornar com simulação', full: !task })}
       ${field({ name: 'due_at', label: 'Data e hora', type: 'datetime', value: task?.due_at || tomorrow.toISOString(), required: true })}
       ${field({ name: 'assigned_to', label: 'Responsável', type: 'select', options: userItems(), value: task?.assigned_to || state.user.id, allowEmpty: false, disabled: !can.manage() })}
+      ${field({ name: 'priority', label: 'Prioridade', type: 'select', options: toItems(state.meta.constants.task_priorities), value: task?.priority || 'normal', allowEmpty: false })}
       ${!task && oppItems.length ? field({ name: 'opportunity_id', label: 'Oportunidade', type: 'select', options: oppItems, value: opportunity_id, placeholder: 'Nenhuma' }) : ''}
       ${field({ name: 'notes', label: 'Observações', type: 'textarea', value: task?.notes, full: true })}
     </div>`,
@@ -316,48 +318,52 @@ export function opportunityForm(contact, opp) {
 export function moveStage(opp, stageId) {
   const to = stageById(stageId);
   if (!to) return Promise.resolve(null);
+  if (to.kind === 'ganho') {
+    return modal({
+      title: 'Etapa "Venda"',
+      body: html`<p>O negócio entra em <strong>${to.name}</strong> automaticamente quando o pagamento da venda é confirmado.</p>
+        <ol class="small"><li>Proposta aceita → abre a <a href="#/prevenda">Pré-venda</a> (cadastro do cliente, termo de adesão, contrato e boleto).</li>
+        <li>Boleto emitido → a venda aparece em <a href="#/vendas">Vendas</a> aguardando pagamento.</li>
+        <li>Comprovante anexado e pagamento confirmado → o negócio vai para "${to.name}" e o cadastro vira cliente.</li></ol>`,
+    }).then(() => null);
+  }
   let body;
+  const from = stageById(opp.stage_id);
+  const backward = !!from && from.kind === 'aberta' && to.kind === 'aberta' && to.position < from.position;
   if (to.kind === 'perdido') {
     body = html`<p>Mover <strong>${opp.code}</strong> para <strong>${to.name}</strong>.</p><div class="grid">
       ${field({ name: 'lost_reason', label: 'Motivo da perda', type: 'select', options: opts('motivo_perda'), required: true, full: true })}
       ${field({ name: 'lost_notes', label: 'Detalhes', type: 'textarea', full: true })}</div>`;
-  } else if (to.kind === 'ganho') {
-    body = html`<p>Registrar a venda de <strong>${opp.code}</strong>. O cadastro passa a ser <strong>cliente</strong>, mantendo todo o histórico.</p>
-      ${field({ name: 'register_contract', label: 'Registrar agora o produto contratado', type: 'checkbox', value: true, full: true })}
-      <div class="grid contract-fields">
-        ${field({ name: 'administrator', label: 'Administradora' })}
-        ${field({ name: 'group_code', label: 'Grupo' })}
-        ${field({ name: 'quota_code', label: 'Cota' })}
-        ${field({ name: 'credit_value', label: 'Crédito contratado (R$)', type: 'money', value: opp.credit_value })}
-        ${field({ name: 'term_months', label: 'Prazo (meses)', type: 'number', value: opp.term_months })}
-        ${field({ name: 'quotas', label: 'Quantidade de cotas', type: 'number', value: opp.quotas || 1 })}
-        ${field({ name: 'contracted_at', label: 'Data da contratação', type: 'date', value: new Date().toISOString().slice(0, 10) })}
-        ${field({ name: 'status', label: 'Status do contrato', type: 'select', options: opts('status_contrato'), value: 'em_formalizacao', allowEmpty: false })}
-      </div>`;
   } else if (to.kind === 'nutricao') {
-    body = html`<p>Mover <strong>${opp.code}</strong> para <strong>${to.name}</strong>.</p>${field({ name: 'pause_reason', label: 'Motivo da pausa', type: 'textarea', full: true })}`;
+    const d = new Date(Date.now() + 30 * 86400000);
+    d.setHours(10, 0, 0, 0);
+    body = html`<p>Mover <strong>${opp.code}</strong> para <strong>${to.name}</strong>. Será criada uma tarefa para retomar o contato na data escolhida.</p><div class="grid">
+      ${field({ name: 'pause_reason', label: 'Motivo', type: 'textarea', required: true, full: true })}
+      ${field({ name: 'return_at', label: 'Retomar o contato em', type: 'datetime', value: d.toISOString(), required: true })}</div>`;
   } else {
-    body = html`<p>Mover <strong>${opp.code}</strong> de <strong>${opp.stage_name || ''}</strong> para <strong>${to.name}</strong>.</p>${field({ name: 'reason', label: 'Observação (opcional)', type: 'textarea', full: true })}`;
+    body = html`<p>Mover <strong>${opp.code}</strong>${opp.stage_name ? html` de <strong>${opp.stage_name}</strong>` : ''} para <strong>${to.name}</strong>.</p>
+      ${to.playbook ? html`<p class="hint">${to.playbook}</p>` : ''}
+      ${field({ name: 'reason', label: backward ? 'Motivo para voltar a etapa' : 'Observação (opcional)', type: 'textarea', full: true, required: backward })}
+      ${can.admin() ? field({ name: 'force', label: 'Forçar a passagem mesmo sem os critérios (administrador, exige justificativa na observação)', type: 'checkbox', full: true }) : ''}`;
   }
   return modal({
-    title: to.kind === 'ganho' ? 'Registrar venda' : 'Mover oportunidade',
+    title: 'Mover negócio',
     body,
-    submitLabel: to.kind === 'ganho' ? 'Confirmar venda' : 'Mover',
-    onMount(form) {
-      if (form.register_contract) {
-        const sync = () => ($('.contract-fields', form).hidden = !form.register_contract.checked);
-        form.register_contract.addEventListener('change', sync);
+    submitLabel: 'Mover',
+    async onSubmit(d, form, errBox) {
+      const payload = { stage_id: to.id, reason: d.reason, lost_reason: d.lost_reason, lost_notes: d.lost_notes, pause_reason: d.pause_reason, return_at: d.return_at, force: d.force };
+      try {
+        const r = await post(`/api/oportunidades/${opp.id}/etapa`, payload);
+        toast(`Movido para "${to.name}".`);
+        return r;
+      } catch (e) {
+        if (e.details?.missing) {
+          errBox.hidden = false;
+          errBox.innerHTML = String(html`<strong>Para entrar em "${e.details.stage}" falta:</strong><ul class="missing-list">${e.details.missing.map((m) => html`<li>${m.label}${m.stage && m.stage !== e.details.stage ? html` <small>(etapa ${m.stage})</small>` : ''}<br><small>${m.hint}</small></li>`)}</ul>`);
+          return false;
+        }
+        throw e;
       }
-    },
-    async onSubmit(d) {
-      const payload = { stage_id: to.id, reason: d.reason, lost_reason: d.lost_reason, lost_notes: d.lost_notes, pause_reason: d.pause_reason };
-      if (to.kind === 'ganho' && d.register_contract) {
-        const { register_contract, ...contract } = d;
-        payload.contract = contract;
-      }
-      const r = await post(`/api/oportunidades/${opp.id}/etapa`, payload);
-      toast(to.kind === 'ganho' ? 'Venda registrada.' : `Movida para "${to.name}".`);
-      return r;
     },
   });
 }
@@ -406,11 +412,13 @@ export async function quickSimulation(contactId, oppId) {
 export async function openProposalSimulator(contact, oppId) {
   const w = window.open('about:blank', '_blank');
   try {
-    const r = await post(`/api/cadastros/${contact.id}/simulador-proposta`, { opportunity_id: oppId || undefined });
+    const r = await post('/api/propostas/iniciar', { contact_id: contact.id, opportunity_id: oppId || undefined });
+    r.name = contact.name;
+    r.phone = contact.whatsapp || contact.phone1;
     if (w) {
       w.opener = null;
       w.location.href = r.url;
-      toast('Simulador aberto com o nome e o contato do cliente.');
+      toast(`Proposta ${r.code} iniciada: o simulador abriu com o nome e o contato do cliente. Depois de gerar o PDF, complete os dados em Propostas.`);
     } else {
       await modal({
         title: 'Abrir simulador de propostas',
@@ -479,7 +487,8 @@ export function simulationForm(contact, { opportunity_id, simulation } = {}) {
 function proposalFields(p = {}, simulations = []) {
   return html`<div class="grid">
     ${simulations.length ? field({ name: 'simulation_id', label: 'Baseada na simulação', type: 'select', options: simulations.map((s) => ({ value: s.id, label: `${s.code} v${s.version} — ${fmtMoney(s.credit_value)}` })), value: p.simulation_id, placeholder: 'Nenhuma', help: 'Campos vazios são preenchidos com os dados da simulação.' }) : ''}
-    ${field({ name: 'product_id', label: 'Produto', type: 'select', options: productItems(), value: p.product_id })}
+    ${field({ name: 'product_id', label: 'Plano', type: 'select', options: productItems(), value: p.product_id, help: 'O crédito precisa respeitar a faixa e o incremento do plano.' })}
+    ${field({ name: 'category', label: 'Categoria', type: 'select', options: opts('categoria_credito'), value: p.category })}
     ${field({ name: 'credit_value', label: 'Crédito (R$)', type: 'money', value: p.credit_value })}
     ${field({ name: 'term_months', label: 'Prazo (meses)', type: 'number', value: p.term_months })}
     ${field({ name: 'initial_installment', label: 'Parcela inicial estimada (R$)', type: 'money', value: p.initial_installment })}
@@ -544,11 +553,13 @@ export async function proposalDetail(id, onChange) {
       <div class="full"><span>Premissas de reajuste</span>${p.readjustment_assumptions || '—'}</div>
       <div class="full"><span>Observações</span>${p.notes || '—'}</div>
     </div>`}
-    ${p.accepted_at ? html`<div class="alert">Aceite em ${fmtDate(p.accepted_at)} via ${optLabel('canal_aceite', p.accepted_channel)}. Próxima etapa: <a href="#/leads/${p.contact_id}/prevenda">ficha de pré-venda</a>.</div>` : ''}
+    ${p.accepted_at ? html`<div class="alert">Aceite em ${fmtDate(p.accepted_at)} via ${optLabel('canal_aceite', p.accepted_channel)}. Próxima etapa: <a href="#/prevenda">pré-venda</a>.</div>` : ''}
+    ${['apresentada', 'em_analise'].includes(p.status) && can.write() ? html`<div class="inline-actions"><label>Retorno do cliente <select name="response"><option value="">—</option>${opts('resposta_proposta').map((o) => html`<option value="${o.value}" ${p.last_response === o.value ? raw('selected') : ''}>${o.label}</option>`)}</select></label><button type="button" class="btn small" data-act="response">Registrar retorno</button>${p.last_response_at ? html`<small class="muted">último: ${fmtDateTime(p.last_response_at)}</small>` : ''}</div>` : ''}
     ${p.refusal_reason ? html`<div class="alert warn">Recusada: ${optLabel('motivo_recusa_proposta', p.refusal_reason)}.</div>` : ''}
     ${!final && can.write() ? html`<div class="inline-actions"><label>Alterar status para <select name="new_status"><option value="">—</option>${nextStatuses.map((s) => html`<option value="${s}">${K('proposal_status', s)}</option>`)}</select></label>
       <label class="st-extra st-aprovada" hidden>Canal do aceite <select name="accepted_channel"><option value="">Selecione…</option>${opts('canal_aceite').map((o) => html`<option value="${o.value}">${o.label}</option>`)}</select></label>
       <label class="st-extra st-aprovada" hidden>Data do aceite <input type="date" name="accepted_at" value="${new Date().toISOString().slice(0, 10)}"></label>
+      <label class="st-extra st-apresentada" hidden>Enviada por <select name="sent_channel"><option value="whatsapp">WhatsApp</option><option value="email">E-mail</option><option value="presencial">Presencial</option><option value="video">Videochamada</option></select></label>
       <label class="st-extra st-recusada" hidden>Motivo <select name="refusal_reason"><option value="">Selecione…</option>${opts('motivo_recusa_proposta').map((o) => html`<option value="${o.value}">${o.label}</option>`)}</select></label>
       <button type="button" class="btn small" data-act="apply-status">Aplicar</button></div>` : ''}
     ${p.status !== 'substituida' && can.write() ? html`<p><button type="button" class="btn small" data-act="new-version">Criar nova versão</button> <small class="muted">A versão atual será marcada como substituída (se ainda estiver em aberto) e preservada no histórico.</small></p>` : ''}
@@ -578,9 +589,21 @@ export async function proposalDetail(id, onChange) {
         const s = form.new_status.value;
         if (!s) return;
         try {
-          await post(`/api/propostas/${p.id}/status`, { status: s, accepted_channel: form.accepted_channel?.value, accepted_at: form.accepted_at?.value, refusal_reason: form.refusal_reason?.value });
-          if (s === 'aprovada') toast('Aceite registrado. Tarefa criada para completar a ficha de pré-venda.');
-          toast('Status atualizado.');
+          await post(`/api/propostas/${p.id}/status`, { status: s, accepted_channel: form.accepted_channel?.value, accepted_at: form.accepted_at?.value, refusal_reason: form.refusal_reason?.value, sent_channel: form.sent_channel?.value });
+          if (s === 'aprovada') toast('Aceite registrado. A pré-venda foi aberta (veja em Pré-venda).');
+          else if (s === 'apresentada') toast('Proposta enviada: a esteira de follow-up D0 a D10 foi criada na agenda.');
+          else toast('Status atualizado.');
+          close(true);
+          onChange?.();
+        } catch (e) {
+          toastError(e);
+        }
+      });
+      on(form, 'click', '[data-act=response]', async () => {
+        if (!form.response.value) return;
+        try {
+          await post(`/api/propostas/${p.id}/resposta`, { response: form.response.value });
+          toast('Retorno registrado. A probabilidade de fechamento foi atualizada.');
           close(true);
           onChange?.();
         } catch (e) {

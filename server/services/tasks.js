@@ -1,5 +1,5 @@
 'use strict';
-const { TASK_TYPES, MEETING_OUTCOMES } = require('../constants');
+const { TASK_TYPES, MEETING_OUTCOMES, TASK_PRIORITIES } = require('../constants');
 const { loadContact, visibleOwnerIds, childScope, assertAssignable, audit, requireWrite, paging } = require('../core');
 const { badRequest, notFound, clean, toIso, nowIso } = require('../util');
 const { tx } = require('../db');
@@ -27,14 +27,16 @@ function createTask(db, user, data) {
   if (contactId) loadContact(db, user, contactId, { write: true });
   const assigned = data.assigned_to ? Number(data.assigned_to) : user.id;
   assertAssignable(db, user, assigned);
+  const priority = data.priority || 'normal';
+  if (!TASK_PRIORITIES[priority]) throw badRequest('Prioridade inválida.');
   return tx(db, () => {
     const now = nowIso();
     const r = db
       .prepare(
-        `INSERT INTO tasks (contact_id, opportunity_id, type, title, notes, due_at, assigned_to, created_by, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tasks (contact_id, opportunity_id, type, title, notes, due_at, assigned_to, priority, created_by, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(contactId, oppId, type, title, clean(data.notes) ?? null, due, assigned, user.id, now, now);
+      .run(contactId, oppId, type, title, clean(data.notes) ?? null, due, assigned, priority, user.id, now, now);
     const id = Number(r.lastInsertRowid);
     if (contactId) {
       insertActivity(db, {
@@ -120,6 +122,10 @@ function updateTask(db, user, id, data) {
     assertAssignable(db, user, Number(data.assigned_to));
     upd.assigned_to = Number(data.assigned_to);
   }
+  if (data.priority !== undefined) {
+    if (!TASK_PRIORITIES[data.priority]) throw badRequest('Prioridade inválida.');
+    upd.priority = data.priority;
+  }
   const keys = Object.keys(upd);
   if (!keys.length) return;
   tx(db, () => {
@@ -153,8 +159,13 @@ function listTasks(db, user, q) {
     params.push(Number(q.assigned_to));
   }
   if (q.type) {
-    where.push('t.type = ?');
-    params.push(q.type);
+    const types = String(q.type).split(',');
+    where.push(`t.type IN (${types.map(() => '?').join(',')})`);
+    params.push(...types);
+  }
+  if (q.priority) {
+    where.push('t.priority = ?');
+    params.push(q.priority);
   }
   if (q.contact_id) {
     where.push('t.contact_id = ?');
@@ -176,7 +187,7 @@ function listTasks(db, user, q) {
   const rows = db
     .prepare(
       `SELECT t.*, c.name AS contact_name, c.code AS contact_code, c.optouts AS contact_optouts, u.name AS assigned_name, o.code AS opportunity_code
-       ${base} ORDER BY t.status = 'pendente' DESC, t.due_at ${q.status && q.status !== 'pendente' ? 'DESC' : 'ASC'} LIMIT ? OFFSET ?`,
+       ${base} ORDER BY t.status = 'pendente' DESC, ${q.status === 'pendente' ? "t.priority = 'urgente' DESC, " : ''}t.due_at ${q.status && q.status !== 'pendente' ? 'DESC' : 'ASC'} LIMIT ? OFFSET ?`,
     )
     .all(...params, limit, offset);
   rows.forEach((r) => (r.contact_optouts = JSON.parse(r.contact_optouts || '[]')));

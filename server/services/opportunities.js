@@ -104,7 +104,12 @@ function normalizeOpp(db, data, contactId) {
   return o;
 }
 
-function firstOpenStage(db) {
+function firstOpenStage(db, relationship) {
+  // Lead (demonstrou interesse) já entra na etapa "Lead"; os demais começam em "Prospect"
+  if (relationship === 'lead') {
+    const lead = db.prepare("SELECT * FROM pipeline_stages WHERE active = 1 AND kind = 'aberta' AND key = 'lead'").get();
+    if (lead) return lead;
+  }
   const s = db.prepare("SELECT * FROM pipeline_stages WHERE active = 1 AND kind = 'aberta' ORDER BY position LIMIT 1").get();
   if (!s) throw badRequest('Nenhuma etapa aberta configurada no funil.');
   return s;
@@ -112,9 +117,9 @@ function firstOpenStage(db) {
 
 /** Cria a oportunidade sem checagens de acesso (chamada por serviços que já validaram). */
 function createOpportunityRow(db, user, data) {
-  const contact = db.prepare('SELECT id, owner_id, code FROM contacts WHERE id = ?').get(Number(data.contact_id));
+  const contact = db.prepare('SELECT id, owner_id, code, relationship FROM contacts WHERE id = ?').get(Number(data.contact_id));
   const o = normalizeOpp(db, data, contact.id);
-  let stage = firstOpenStage(db);
+  let stage = firstOpenStage(db, contact.relationship);
   if (data.stage_id) {
     stage = db.prepare('SELECT * FROM pipeline_stages WHERE id = ? AND active = 1').get(Number(data.stage_id));
     if (!stage || stage.kind !== 'aberta') throw badRequest('Oportunidades novas devem iniciar em uma etapa aberta.');
@@ -162,7 +167,7 @@ function createOpportunity(db, user, data) {
   if (c.merged_into_id) throw badRequest('Cadastro mesclado. Use o cadastro de destino.');
   if (c.anonymized_at) throw badRequest('Cadastro anonimizado.');
   const owner = data.owner_id ? Number(data.owner_id) : c.owner_id || user.id;
-  if (user.role === 'consultor' && owner !== user.id) throw forbidden('Consultores só podem criar oportunidades sob sua responsabilidade.');
+  if (user.role === 'consultor' && owner !== user.id) throw forbidden('Especialistas só podem criar oportunidades sob sua responsabilidade.');
   assertAssignable(db, user, owner);
   return tx(db, () => createOpportunityRow(db, user, { ...data, contact_id: c.id, owner_id: owner }));
 }
@@ -179,7 +184,7 @@ function updateOpportunity(db, user, id, data) {
   const o = normalizeOpp(db, data, before.contact_id);
   delete o.pause_reason;
   if (o.owner_id !== undefined && o.owner_id !== before.owner_id) {
-    if (!isManager(user)) throw forbidden('Apenas gestores e administradores podem transferir oportunidades.');
+    if (!isManager(user)) throw forbidden('Apenas líderes de equipe e administradores podem transferir oportunidades.');
     assertAssignable(db, user, o.owner_id);
   }
   const changes = diff(before, o, OPP_FIELDS);
@@ -222,15 +227,13 @@ function moveStage(db, user, id, data, opts = {}) {
   const to = db.prepare('SELECT * FROM pipeline_stages WHERE id = ? AND active = 1').get(Number(data.stage_id));
   if (!to) throw badRequest('Etapa de destino inválida.');
   if (to.id === o.stage_id) return { changed: false };
-  if (to.kind === 'ganho' && !opts.skipChecklist && getSetting(db, 'require_sale_checklist') !== false) {
-    const { saleChecklist } = require('./record');
-    const contact = db.prepare('SELECT * FROM contacts WHERE id = ?').get(o.contact_id);
-    const check = saleChecklist(db, contact);
-    if (!check.complete) {
-      throw badRequest(`Para concluir a venda, complete a ficha de pré-venda. Faltam: ${check.missing.map((m) => m.label).join('; ')}.`, { missing: check.missing, contact_id: o.contact_id });
-    }
-  }
   const from = db.prepare('SELECT * FROM pipeline_stages WHERE id = ?').get(o.stage_id);
+  const { validateMove } = require('./pipeline');
+  const check = validateMove(db, user, o, from, to, data, opts);
+  if (to.kind === 'nutricao') {
+    if (!clean(data.pause_reason) && !clean(data.reason)) throw badRequest('Informe o motivo para mover o negócio para "Nutrição futura".');
+    if (!toIso(data.return_at)) throw badRequest('Informe a data para retomar o contato com o lead.');
+  }
   const lostReason = clean(data.lost_reason);
   const reason = clean(data.reason);
   if (to.kind === 'perdido') {
@@ -259,12 +262,21 @@ function moveStage(db, user, id, data, opts = {}) {
     }
     const u = buildUpdate('opportunities', o.id, upd, Object.keys(upd));
     db.prepare(u.sql).run(...u.params);
-    const reasonText =
+    const baseReason =
       to.kind === 'perdido'
         ? `${optionLabel(db, 'motivo_perda', lostReason)}${upd.lost_notes ? ` — ${upd.lost_notes}` : ''}`
         : to.kind === 'nutricao'
           ? upd.pause_reason
           : reason;
+    const reasonText = [baseReason, check.forced ? '(passagem forçada pelo administrador)' : null].filter(Boolean).join(' ') || null;
+    if (to.kind === 'nutricao') {
+      db.prepare("INSERT INTO tasks (contact_id, opportunity_id, type, title, notes, due_at, assigned_to, created_by, created_at, updated_at) VALUES (?, ?, 'follow_up', ?, ?, ?, ?, ?, ?, ?)")
+        .run(o.contact_id, o.id, 'Retomar contato (nutrição futura)', upd.pause_reason, toIso(data.return_at), o.owner_id ?? user.id, user.id, now, now);
+    }
+    // Prospect que avança no funil passa a ser lead
+    if (to.key && to.key !== 'prospect' && to.kind === 'aberta') {
+      db.prepare("UPDATE contacts SET relationship = 'lead', updated_at = ? WHERE id = ? AND relationship = 'prospect'").run(now, o.contact_id);
+    }
     db.prepare(
       `INSERT INTO stage_history (opportunity_id, from_stage_id, to_stage_id, from_stage_name, to_stage_name, seconds_in_previous, reason, user_id, moved_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -276,7 +288,7 @@ function moveStage(db, user, id, data, opts = {}) {
       notes: `${o.code}: "${from?.name ?? '—'}" → "${to.name}"${reasonText ? `. Motivo: ${reasonText}` : ''}`,
       user_id: user.id,
     });
-    audit(db, user, 'opportunity', o.id, 'etapa_alterada', { etapa: [from?.name, to.name], motivo: reasonText ?? null }, o.contact_id);
+    audit(db, user, 'opportunity', o.id, check.forced ? 'etapa_forcada' : 'etapa_alterada', { etapa: [from?.name, to.name], motivo: reasonText ?? null }, o.contact_id);
     let contract = null;
     if (to.kind === 'ganho') {
       const c = db.prepare('SELECT * FROM contacts WHERE id = ?').get(o.contact_id);
@@ -445,8 +457,12 @@ function saveStage(db, user, data) {
       const n = db.prepare('SELECT COUNT(*) AS n FROM opportunities WHERE stage_id = ?').get(s.id).n;
       if (n) throw badRequest(`Existem ${n} oportunidades nesta etapa. Mova-as antes de desativá-la.`);
     }
-    db.prepare('UPDATE pipeline_stages SET name = ?, active = ? WHERE id = ?').run(name, active, s.id);
-    audit(db, user, 'stage', s.id, 'alterada', diff(s, { name, active }, ['name', 'active']));
+    const playbook = data.playbook !== undefined ? clean(data.playbook) : s.playbook;
+    const rot = data.rot_days !== undefined ? (data.rot_days === '' || data.rot_days == null ? null : Number(data.rot_days)) : s.rot_days;
+    if (rot != null && (!Number.isInteger(rot) || rot < 1 || rot > 365)) throw badRequest('Dias para considerar parado: entre 1 e 365.');
+    const training = data.training_id !== undefined ? (data.training_id ? Number(data.training_id) : null) : s.training_id;
+    db.prepare('UPDATE pipeline_stages SET name = ?, active = ?, playbook = ?, rot_days = ?, training_id = ? WHERE id = ?').run(name, active, playbook ?? null, rot, training, s.id);
+    audit(db, user, 'stage', s.id, 'alterada', diff(s, { name, active, playbook, rot_days: rot }, ['name', 'active', 'playbook', 'rot_days']));
     return s.id;
   }
   const kind = data.kind || 'aberta';

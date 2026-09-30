@@ -341,3 +341,20 @@ export function readFilters(form) {
   const range = d.period ? periodRange(d.period, { from: d.cfrom, to: d.cto }) : {};
   return { values: d, query: { ...range, owner_id: d.owner_id, origin: d.origin, stage_id: d.stage_id, product_id: d.product_id, status: d.status } };
 }
+
+/** Subnavegação dentro de um item do menu (ex.: CRM › Funil | Leads | Atividades). items: [[href, rótulo, chave]] */
+export function subnav(items, active) {
+  return html`<nav class="subnav">${items.map(([href, label, key]) => html`<a href="${href}" class="${key === active ? 'active' : ''}">${label}</a>`)}</nav>`;
+}
+export const crmTabs = (active) =>
+  subnav(
+    [
+      ['#/funil', 'Funil de vendas', 'funil'],
+      ['#/leads', 'Leads e prospects', 'leads'],
+      ['#/atividades', 'Ligações e atividades', 'atividades'],
+    ],
+    active,
+  );
+export const hasModule = (m) => (state.user?.modules || []).includes(m);
+/** Mês atual no formato AAAA-MM e rótulo por extenso. */
+export const monthLabel = (m) => new Date(`${m}-15T12:00:00`).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });

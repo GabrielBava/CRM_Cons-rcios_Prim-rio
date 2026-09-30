@@ -10,27 +10,54 @@ import * as agenda from './views/agenda.js';
 import * as activities from './views/activities.js';
 import * as sales from './views/sales.js';
 import * as clients from './views/clients.js';
-import * as products from './views/products.js';
 import * as reports from './views/reports.js';
 import * as settings from './views/settings.js';
 import * as importer from './views/import.js';
 import * as financeView from './views/finance.js';
 import * as publicForm from './views/public-form.js';
+import * as distribution from './views/distribution.js';
+import * as simulator from './views/simulator.js';
+import * as proposalsView from './views/proposals.js';
+import * as goals from './views/goals.js';
+import * as presales from './views/presales.js';
+import * as salesView from './views/salesview.js';
+import * as commissions from './views/commissions.js';
+import * as trainings from './views/trainings.js';
+import * as administrators from './views/administrators.js';
+import * as plans from './views/plans.js';
+import * as users from './views/users.js';
 
+// Menu lateral: [rota, rótulo, tela, módulo de permissão, grupo]
 const NAV = [
-  ['painel', 'Painel inicial', dashboard],
-  ['leads', 'Prospects e leads', leads],
-  ['funil', 'Funil comercial', pipeline],
-  ['agenda', 'Agenda e tarefas', agenda],
-  ['atividades', 'Ligações e atividades', activities],
-  ['simulacoes', 'Simulações e propostas', sales],
-  ['clientes', 'Clientes', clients],
-  ['financeiro', 'Financeiro', financeView],
-  ['produtos', 'Produtos e estratégias', products],
-  ['relatorios', 'Relatórios', reports],
-  ['configuracoes', 'Configurações e usuários', settings],
+  ['painel', '1. Painel inicial', dashboard, 'painel'],
+  ['entrada', '2. Prospects e leads', distribution, 'distribuicao'],
+  ['funil', '3. CRM', pipeline, 'crm'],
+  ['agenda', '4. Agenda e tarefas', agenda, 'agenda'],
+  ['simulador', '5. Simulador', simulator, 'simulador'],
+  ['propostas', '6. Propostas', proposalsView, 'propostas'],
+  ['clientes', '7. Clientes', clients, 'clientes'],
+  ['metas', '8. Metas', goals, 'metas'],
+  ['prevenda', '9. Pré-venda', presales, 'prevenda'],
+  ['vendas', '10. Vendas', salesView, 'vendas'],
+  ['comissoes', '11. Comissões e cancelamentos', commissions, 'comissoes'],
+  ['treinamentos', '12. Treinamentos', trainings, 'treinamentos'],
+  ['administradoras', '13. Administradoras', administrators, 'administradoras', 'admin'],
+  ['planos', '14. Planos', plans, 'planos', 'admin'],
+  ['relatorios', '15. Relatórios', reports, 'relatorios', 'admin'],
+  ['usuarios', '16. Usuários', users, 'usuarios', 'admin'],
+  ['configuracoes', 'Configurações', settings, 'configuracoes', 'admin'],
 ];
-const EXTRA = { oportunidades: pipeline, importar: importer };
+// Rotas secundárias: [tela, módulo, item do menu destacado]
+const EXTRA = {
+  oportunidades: [pipeline, 'crm', 'funil'],
+  leads: [leads, 'crm', 'funil'],
+  atividades: [activities, 'crm', 'funil'],
+  importar: [importer, 'crm', 'funil'],
+  simulacoes: [sales, 'propostas', 'propostas'],
+  financeiro: [financeView, 'clientes', 'clientes'],
+  produtos: [plans, 'planos', 'planos'],
+};
+const allowed = (mod) => (state.user?.modules || []).includes(mod);
 
 const app = document.getElementById('app');
 
@@ -116,7 +143,8 @@ function shell() {
   render(app, html`
     <aside class="sidebar" id="sidebar">
       <div class="brand">CRM Consórcios</div>
-      <nav>${NAV.map(([k, label]) => html`<a href="#/${k}" data-nav="${k}">${label}</a>`)}</nav>
+      <nav>${NAV.filter(([, , , m, g]) => allowed(m) && g !== 'admin').map(([k, label]) => html`<a href="#/${k}" data-nav="${k}">${label}</a>`)}
+        ${NAV.some(([, , , m, g]) => g === 'admin' && allowed(m)) ? html`<div class="nav-group">Administração</div>${NAV.filter(([, , , m, g]) => g === 'admin' && allowed(m)).map(([k, label]) => html`<a href="#/${k}" data-nav="${k}">${label}</a>`)}` : ''}</nav>
       <div class="me">
         <div><strong>${state.user.name}</strong><small>${state.user.role_label}</small></div>
         <button class="btn small ghost" data-act="logout">Sair</button>
@@ -193,8 +221,13 @@ async function route() {
   const [path, qs] = hash.split('?');
   const parts = path.split('/');
   const key = parts[0];
-  const mod = NAV.find(([k]) => k === key)?.[2] || EXTRA[key];
-  document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === key || (key === 'oportunidades' && a.dataset.nav === 'funil')));
+  const navItem = NAV.find(([k]) => k === key);
+  const extra = EXTRA[key];
+  const mod = navItem?.[2] || extra?.[0];
+  const moduleKey = navItem?.[3] || extra?.[1];
+  const isRecord = (key === 'leads' || key === 'clientes') && /^\d+$/.test(parts[1] || '');
+  const navKey = navItem ? key : extra?.[2];
+  document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === navKey));
   let view = $('#view');
   if (!view) return;
   view = fresh(view);
@@ -204,11 +237,17 @@ async function route() {
     render(view, html`<div class="page"><h1>Página não encontrada</h1></div>`);
     return;
   }
+  // A ficha do cadastro é acessível a quem tem CRM ou Clientes; as demais telas seguem o módulo liberado ao usuário
+  const canOpen = isRecord ? allowed('crm') || allowed('clientes') || allowed('distribuicao') : !moduleKey || allowed(moduleKey);
+  if (!canOpen) {
+    render(view, html`<div class="page"><h1>Acesso não liberado</h1><p class="muted">Seu usuário não tem acesso a esta tela. Fale com o administrador para liberar o módulo em Usuários.</p></div>`);
+    return;
+  }
   const params = Object.fromEntries(new URLSearchParams(qs || ''));
   render(view, html`<div class="page loading">Carregando…</div>`);
   try {
     // A ficha abre tanto em #/leads/<id> quanto em #/clientes/<id>
-    const target = (key === 'leads' || key === 'clientes') && /^\d+$/.test(parts[1] || '') ? contact : mod;
+    const target = isRecord ? contact : mod;
     currentCleanup = (await target.show(view, { id: parts[1], sub: parts[2], params, key })) || null;
     view.focus({ preventScroll: true });
   } catch (e) {

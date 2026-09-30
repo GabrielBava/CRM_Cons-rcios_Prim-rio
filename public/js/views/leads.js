@@ -1,7 +1,7 @@
 import { get, download } from '../api.js';
 import {
   html, render, $, on, state, selectOptions, opts, toItems, userItems, stageItems, productItems, table, pager, relBadge, badge, optoutBadge,
-  fmtDateTime, relTime, optLabel, K, can, toastError,
+  fmtDateTime, relTime, optLabel, K, can, toastError, crmTabs,
 } from '../ui.js';
 import { quickCreateContact } from '../forms.js';
 
@@ -39,8 +39,9 @@ export async function show(view, { params }, preset = {}) {
   const fixed = preset.relationship;
   const s = { ...saved, ...params, ...preset };
   render(view, html`<div class="page">
+    ${fixed ? '' : crmTabs('leads')}
     <div class="page-head">
-      <h1>${preset.title || 'Prospects e leads'}</h1>
+      <h1>${preset.title || 'Leads e prospects'}</h1>
       <div class="actions">
         ${can.write() && !fixed ? html`<button class="btn primary" data-act="new">+ Novo lead</button><a class="btn" href="#/importar">Importar CSV</a>` : ''}
         ${state.user.role !== 'leitura' ? html`<button class="btn" data-act="export">Exportar CSV</button>` : ''}

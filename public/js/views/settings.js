@@ -51,7 +51,6 @@ export function bindOptionList(root, reload) {
 /* ------------------------- Tela ------------------------- */
 
 const TABS = [
-  ['usuarios', 'Usuários e equipes', true],
   ['funil', 'Etapas do funil', true],
   ['listas', 'Listas', true],
   ['campos', 'Campos', true],
@@ -65,7 +64,8 @@ export async function show(view, { id }) {
   const tabs = TABS.filter(([, , adminOnly]) => !adminOnly || can.admin());
   let tab = tabs.find(([k]) => k === id)?.[0] || tabs[0][0];
   render(view, html`<div class="page">
-    <div class="page-head"><h1>Configurações e usuários</h1></div>
+    <div class="page-head"><h1>Configurações</h1></div>
+    ${can.admin() ? html`<p class="hint">Usuários, equipes e permissões ficam em <a href="#/usuarios">16. Usuários</a>.</p>` : ''}
     ${!can.admin() ? html`<p class="hint">Seu perfil (${state.user.role_label}) pode consultar o status das integrações e alterar a própria senha. Demais configurações são exclusivas de administradores.</p>` : ''}
     <nav class="tabs">${tabs.map(([k, l]) => html`<a href="#/configuracoes/${k}" data-tab="${k}" class="${tab === k ? 'active' : ''}">${l}</a>`)}</nav>
     <div id="tab"></div></div>`);
@@ -88,65 +88,44 @@ export async function show(view, { id }) {
 }
 
 const RENDER = {
-  async usuarios(box, redraw) {
-    const [users, teams] = await Promise.all([get('/api/usuarios'), get('/api/equipes')]);
-    render(box, html`<section class="card">
-      <div class="section-head"><h3>Usuários</h3><button class="btn primary" data-act="user-new">+ Novo usuário</button></div>
-      <div class="alert">Perfis: <strong>Administrador</strong> acessa tudo; <strong>Gestor</strong> acessa registros da própria equipe (e cadastros sem responsável); <strong>Consultor</strong> acessa apenas os próprios leads e oportunidades; <strong>Leitura</strong> consulta sem editar ou exportar dados pessoais. As permissões são verificadas no servidor.</div>
-      ${table(
-        [
-          { label: 'Nome', render: (u) => html`<strong>${u.name}</strong>${u.active ? '' : html` ${badge('Inativo', 'muted')}`}<br><small>${u.email}</small>` },
-          { label: 'Perfil', render: (u) => state.meta.roles[u.role] },
-          { label: 'Equipe', render: (u) => u.team_name || '—' },
-          { label: 'ID na discadora', render: (u) => u.dialer_agent_ref || '—' },
-          { label: 'Último acesso', render: (u) => fmtDateTime(u.last_login_at) },
-          { label: '', render: (u) => html`<button class="btn small" data-user="${u.id}">Editar</button>` },
-        ],
-        users,
-      )}</section>
-      <section class="card"><div class="section-head"><h3>Equipes</h3><button class="btn" data-act="team-new">+ Nova equipe</button></div>
-        ${table([{ label: 'Equipe', key: 'name' }, { label: 'Membros', key: 'members', cls: 'num' }, { label: '', render: (t) => html`<button class="btn small" data-team="${t.id}">Renomear</button>` }], teams, { emptyMsg: 'Nenhuma equipe. Gestores sem equipe veem apenas os próprios registros.' })}
-      </section>`);
-    const roleItems = Object.entries(state.meta.roles).map(([value, label]) => ({ value, label }));
-    const teamItems = teams.map((t) => ({ value: t.id, label: t.name }));
-    const userForm = (u = {}) =>
-      modal({
-        title: u.id ? `Editar ${u.name}` : 'Novo usuário',
-        body: html`<div class="grid">
-          ${field({ name: 'name', label: 'Nome', value: u.name, required: true })}
-          ${field({ name: 'email', label: 'E-mail (login)', type: 'email', value: u.email, required: true })}
-          ${field({ name: 'role', label: 'Perfil', type: 'select', options: roleItems, value: u.role || 'consultor', allowEmpty: false })}
-          ${field({ name: 'team_id', label: 'Equipe', type: 'select', options: teamItems, value: u.team_id, placeholder: 'Sem equipe' })}
-          ${field({ name: 'dialer_agent_ref', label: 'ID do agente na discadora', value: u.dialer_agent_ref, help: 'Usado para atribuir as ligações recebidas da discadora.' })}
-          ${field({ name: 'password', label: u.id ? 'Nova senha (deixe vazio para manter)' : 'Senha inicial', type: 'password', required: !u.id, help: 'Mínimo de 8 caracteres.' })}
-          ${u.id ? field({ name: 'active', label: 'Usuário ativo', type: 'checkbox', value: u.active }) : ''}
-        </div>`,
-        async onSubmit(d) {
-          await post('/api/usuarios', { ...d, id: u.id });
-          toast('Usuário salvo.');
-          await refreshMeta();
-          return true;
-        },
-      });
-    on(box, 'click', '[data-act=user-new]', async () => (await userForm()) && redraw());
-    on(box, 'click', '[data-user]', async (e, b) => (await userForm(users.find((u) => u.id === Number(b.dataset.user)))) && redraw());
-    const teamForm = (t = {}) => modal({ title: t.id ? 'Renomear equipe' : 'Nova equipe', body: field({ name: 'name', label: 'Nome', value: t.name, required: true, full: true }), onSubmit: (d) => post('/api/equipes', { ...d, id: t.id }) });
-    on(box, 'click', '[data-act=team-new]', async () => (await teamForm()) && redraw());
-    on(box, 'click', '[data-team]', async (e, b) => (await teamForm(teams.find((t) => t.id === Number(b.dataset.team)))) && redraw());
-  },
-
   async funil(box, redraw) {
-    const stages = await get('/api/etapas');
+    const [stages, rules] = await Promise.all([get('/api/etapas'), get('/api/funil/regras')]);
     const active = stages.filter((s) => s.active);
     const KIND = { aberta: 'Aberta', ganho: 'Venda concluída', perdido: 'Perda', nutricao: 'Nutrição' };
+    const ruleLabel = (k) => rules.rules.find((r) => r.key === k)?.label || k;
     render(box, html`<section class="card">
       <div class="section-head"><h3>Etapas do funil</h3><button class="btn primary" data-act="stage-new">+ Nova etapa</button></div>
       <p class="hint">Renomeie, reordene ou crie etapas. As etapas de "venda concluída" e "perda" são obrigatórias (a perda exige motivo). Etapas com oportunidades não podem ser desativadas.</p>
       <ol class="stage-admin">${stages.map(
-        (s) => html`<li class="${s.active ? '' : 'inactive'}"><span><strong>${s.name}</strong> ${badge(KIND[s.kind])} <small class="muted">${s.opp_count} oportunidade(s)</small>${s.active ? '' : html` ${badge('inativa', 'muted')}`}</span>
+        (s) => html`<li class="${s.active ? '' : 'inactive'}"><span><strong>${s.name}</strong> ${badge(KIND[s.kind])} <small class="muted">${s.opp_count} oportunidade(s)${s.rot_days ? ` · parada após ${s.rot_days} dia(s)` : ''}</small>${s.active ? '' : html` ${badge('inativa', 'muted')}`}
+          ${s.key && rules.stage_rules[s.key]?.length ? html`<br><small>Para entrar: ${rules.stage_rules[s.key].map(ruleLabel).join(' · ')}</small>` : ''}</span>
           <span>${s.active ? html`<button class="btn small ghost" data-up="${s.id}" ${active[0]?.id === s.id ? 'disabled' : ''}>↑</button><button class="btn small ghost" data-down="${s.id}" ${active[active.length - 1]?.id === s.id ? 'disabled' : ''}>↓</button>` : ''}
           <button class="btn small" data-stage="${s.id}">Editar</button></span></li>`,
-      )}</ol></section>`);
+      )}</ol></section>
+      <form class="card" id="rules"><h3>Regras de passagem entre etapas</h3>
+        <p class="hint">Como nos CRMs de mercado (Pipedrive, RD Station), o negócio só entra numa etapa quando cumpre os critérios marcados. Assim um lead não pula direto para a venda: a etapa Venda só é alcançada pela confirmação do pagamento em Vendas.</p>
+        ${field({ name: 'funnel_sequential', label: 'Avançar uma etapa por vez (o administrador pode forçar, com justificativa registrada na auditoria)', type: 'checkbox', value: rules.sequential, full: true })}
+        <div class="table-wrap"><table class="matrix compact"><thead><tr><th>Critério</th>${active.filter((s) => s.key && !['prospect', 'perdido', 'nutricao'].includes(s.key)).map((s) => html`<th class="center">${s.name}</th>`)}</tr></thead>
+          <tbody>${rules.rules.map((r) => html`<tr><td>${r.label}<br><small class="muted">${r.hint}</small></td>
+            ${active.filter((s) => s.key && !['prospect', 'perdido', 'nutricao'].includes(s.key)).map((s) => html`<td class="center"><input type="checkbox" data-rule="${s.key}:${r.key}" aria-label="${r.label} em ${s.name}" ${(rules.stage_rules[s.key] || []).includes(r.key) ? 'checked' : ''} ${s.key === 'venda' ? 'disabled' : ''}></td>`)}</tr>`)}</tbody></table></div>
+        <button class="btn primary" type="submit">Salvar regras</button></form>`);
+    $('#rules', box).addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const sr = {};
+      for (const c of $$('[data-rule]', e.target)) {
+        const [st, r] = c.dataset.rule.split(':');
+        sr[st] = sr[st] || [];
+        if (c.checked) sr[st].push(r);
+      }
+      try {
+        await patch('/api/configuracoes', { stage_rules: sr, funnel_sequential: e.target.funnel_sequential.checked });
+        await refreshMeta();
+        toast('Regras do funil salvas.');
+        redraw();
+      } catch (ex) {
+        toastError(ex);
+      }
+    });
     const move = async (id, dir) => {
       const ids = active.map((s) => s.id);
       const i = ids.indexOf(Number(id));
@@ -162,8 +141,11 @@ const RENDER = {
     const form = (s = {}) =>
       modal({
         title: s.id ? `Editar etapa` : 'Nova etapa',
+        wide: true,
         body: html`<div class="grid">${field({ name: 'name', label: 'Nome', value: s.name, required: true, full: true })}
           ${!s.id ? field({ name: 'kind', label: 'Tipo', type: 'select', options: [{ value: 'aberta', label: 'Aberta (em andamento)' }, { value: 'nutricao', label: 'Nutrição / pausa' }], allowEmpty: false }) : ''}
+          ${!['ganho', 'perdido'].includes(s.kind) ? field({ name: 'rot_days', label: 'Considerar parado após (dias sem atividade)', type: 'number', min: 1, step: '1', value: s.rot_days }) : ''}
+          ${field({ name: 'playbook', label: 'Roteiro da etapa (o que o especialista deve fazer aqui)', type: 'textarea', rows: 4, value: s.playbook, full: true })}
           ${s.id && !['ganho', 'perdido'].includes(s.kind) ? field({ name: 'active', label: 'Ativa', type: 'checkbox', value: s.active }) : ''}</div>`,
         async onSubmit(d) {
           await post('/api/etapas', { ...d, id: s.id });
@@ -390,6 +372,7 @@ const RENDER = {
       ${field({ name: 'company_name', label: 'Nome da empresa (usado na pesquisa de satisfação)', value: s.company_name })}
       ${field({ name: 'nps_link_days', label: 'Validade do link da pesquisa de satisfação (dias)', type: 'number', value: s.nps_link_days, min: 1 })}
       ${field({ name: 'proposal_simulator_url', label: 'Endereço do simulador de propostas', type: 'url', value: s.proposal_simulator_url, full: true, help: 'O botão "Gerar proposta" abre este endereço com o nome completo e o contato do cliente (parâmetros nome e contato).' })}
+      ${field({ name: 'presale_alert_hours', label: 'Alertar pré-venda sem acesso ou sem preenchimento após (horas)', type: 'number', value: s.presale_alert_hours, min: 1, help: 'Cria a tarefa urgente "Revisar pré-venda" para o especialista.' })}
       ${field({ name: 'require_sale_checklist', label: 'Exigir a ficha de pré-venda completa para concluir a venda', type: 'checkbox', value: s.require_sale_checklist, full: true })}
     </div><button class="btn primary" type="submit">Salvar</button></form>
     <form class="card" id="docs"><h3>Documentos obrigatórios para a venda</h3>

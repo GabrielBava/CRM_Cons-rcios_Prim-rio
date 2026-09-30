@@ -1,4 +1,5 @@
-// Página aberta pelo cliente (sem login) para atualizar os dados externos: cadastro, endereço e documentos.
+// Ficha Cadastral do Participante: página aberta pelo cliente (sem login) para completar cadastro, endereço e documentos
+// e concluir a pré-venda, com instruções e aviso de privacidade (LGPD).
 import { get, post } from '../api.js';
 import { html, raw, render, $, on, field, formData, toast, toastError, fmtDateTime } from '../ui.js';
 import { fileToBase64, bindCepAutofill } from './record-tabs.js';
@@ -30,9 +31,20 @@ export async function show(app, token) {
   const fieldsFor = (list) =>
     list.map((f) => field({ name: f, label: LABELS[f] || f, value: d.values[f], type: LISTS[f] ? 'select' : TYPES[f] || 'text', options: LISTS[f] ? opt(f) : undefined }));
   const main = Object.keys(d.values).filter((f) => !SPOUSE.includes(f));
+  const filled = () => ['name', 'doc', 'email'].filter((f) => f in d.values).every((f) => d.values[f]);
   const draw = () => {
     render(app, html`<div class="public-page">
-      <header><h1>Atualização de cadastro</h1><p class="muted">Seus dados ficam registrados com segurança e são usados apenas para a contratação e o atendimento${d.consultant ? `, com ${d.consultant} como seu consultor` : ''}. Este link vale até ${fmtDateTime(d.expires_at)}.</p></header>
+      <header><h1>Ficha Cadastral do Participante</h1>
+        <p class="muted">${d.company ? `${d.company} · ` : ''}Cadastro para a sua adesão ao consórcio${d.consultant ? `, com ${d.consultant} como seu especialista` : ''}. Este link é pessoal e vale até ${fmtDateTime(d.expires_at)}.</p></header>
+      ${d.completed ? html`<div class="alert ok-alert"><strong>Cadastro enviado. Obrigado!</strong> Seu especialista vai conferir os dados e os documentos e seguir com o termo de adesão. Se precisar corrigir algo, ainda é possível editar abaixo.</div>` : ''}
+      <section class="card howto"><h2>Como preencher</h2>
+        <ol class="steps-public">
+          <li class="${filled() ? 'done' : ''}"><strong>Confira seus dados</strong> e complete o que estiver em branco. Clique em "Salvar meus dados".</li>
+          <li class="${d.address?.cep ? 'done' : ''}"><strong>Endereço:</strong> digite o CEP e o endereço é preenchido automaticamente.</li>
+          <li class="${d.documents.every((x) => ['recebido', 'aprovado'].includes(x.status)) ? 'done' : ''}"><strong>Documentos:</strong> envie foto legível ou PDF de cada documento pedido.</li>
+          <li class="${d.completed ? 'done' : ''}"><strong>Conclua o cadastro</strong> no botão no fim da página. Pronto: seu especialista é avisado na hora.</li>
+        </ol>
+        <p class="small muted">Leva cerca de 5 minutos. Você pode salvar e voltar depois pelo mesmo link.</p></section>
       <form class="card" id="pf" novalidate>
         <h2>${d.kind === 'PJ' ? 'Dados da empresa' : 'Seus dados'}</h2>
         <div class="grid">${fieldsFor(main)}</div>
@@ -60,6 +72,12 @@ export async function show(app, token) {
         })}</ul>
         <p class="upload-msg small muted"></p>
       </section>
+      <section class="card"><h2>Concluir cadastro</h2>
+        <p class="muted">Depois de salvar os dados e enviar os documentos, clique em concluir para avisar seu especialista.</p>
+        <label class="check"><input type="checkbox" id="lgpd-ok" ${d.completed ? raw('checked') : ''}> Li e concordo com o tratamento dos meus dados pessoais para a contratação do consórcio, conforme o aviso abaixo.</label>
+        <div class="modal-error" id="done-err" hidden></div>
+        <div class="form-actions"><button class="btn primary big" type="button" data-act="complete">${d.completed ? 'Enviar novamente' : 'Concluir cadastro'}</button></div></section>
+      <footer class="lgpd small muted"><strong>Privacidade (LGPD — Lei 13.709/2018).</strong> Os dados e documentos informados aqui são usados somente para análise cadastral, emissão do contrato de adesão junto à administradora do consórcio, cumprimento de obrigações legais e regulatórias (inclusive prevenção à lavagem de dinheiro) e para o seu atendimento. Eles são compartilhados apenas com a administradora escolhida e guardados pelo prazo exigido em lei. Você pode pedir acesso, correção ou informações sobre o uso dos seus dados ao seu especialista${d.company ? ` ou à ${d.company}` : ''}. Nunca pedimos senhas bancárias ou códigos recebidos por SMS.</footer>
     </div>`);
     const form = $('#pf', app);
     form.marital_status?.addEventListener('change', () => ($('.spouse', app).hidden = !married()));
@@ -101,6 +119,26 @@ export async function show(app, token) {
     } catch (ex) {
       msg.textContent = ex.message;
       toastError(ex);
+    }
+  });
+  on(app, 'click', '[data-act=complete]', async (e, b) => {
+    const err = $('#done-err', app);
+    err.hidden = true;
+    if (!$('#lgpd-ok', app).checked) {
+      err.hidden = false;
+      err.textContent = 'Marque a concordância com o aviso de privacidade para concluir.';
+      return;
+    }
+    b.disabled = true;
+    try {
+      await post('/api/publico/ficha/concluir', { token });
+      render(app, html`<div class="public-page"><div class="card center"><h1>Cadastro concluído!</h1>
+        <p>Recebemos seus dados e documentos${d.consultant ? `. ${d.consultant} vai conferir tudo` : ''} e entrar em contato para os próximos passos: termo de adesão, contrato, assinatura e boleto.</p>
+        <p class="muted">Você pode fechar esta página.</p></div></div>`);
+    } catch (ex) {
+      err.hidden = false;
+      err.textContent = ex.message;
+      b.disabled = false;
     }
   });
   draw();

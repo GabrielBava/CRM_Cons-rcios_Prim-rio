@@ -4,13 +4,15 @@ const { ROLES, requireAdmin, requireManager, audit, isAdmin, visibleOwnerIds } =
 const { badRequest, notFound, conflict, clean, normalizeEmail, isValidEmail, hashPassword, nowIso } = require('../util');
 const { getSetting, setSetting } = require('../db');
 const { simulatorAvailability } = require('./simulations');
+const perms = require('../permissions');
 
 /* ------------------------- Usuários e equipes ------------------------- */
 
 function listUsers(db, user) {
   const rows = db
-    .prepare('SELECT u.id, u.name, u.email, u.role, u.team_id, u.active, u.dialer_agent_ref, u.created_at, u.last_login_at, t.name AS team_name FROM users u LEFT JOIN teams t ON t.id = u.team_id ORDER BY u.active DESC, u.name')
-    .all();
+    .prepare('SELECT u.id, u.name, u.email, u.phone, u.role, u.team_id, u.active, u.dialer_agent_ref, u.modules, u.created_at, u.last_login_at, t.name AS team_name FROM users u LEFT JOIN teams t ON t.id = u.team_id ORDER BY u.active DESC, u.name')
+    .all()
+    .map((u) => ({ ...u, modules: perms.parseOverrides(u.modules), effective_modules: perms.userModules(u) }));
   if (isAdmin(user)) return rows;
   const ids = visibleOwnerIds(db, user);
   return rows.filter((r) => ids === null || ids.includes(r.id)).map(({ id, name, role, team_name, active }) => ({ id, name, role, team_name, active }));
@@ -30,7 +32,10 @@ function saveUser(db, user, data) {
   const teamId = data.team_id ? Number(data.team_id) : null;
   if (teamId && !db.prepare('SELECT 1 FROM teams WHERE id = ?').get(teamId)) throw badRequest('Equipe inválida.');
   const agent = clean(data.dialer_agent_ref);
+  const phone = clean(data.phone);
   const now = nowIso();
+  // Módulos incluídos ou retirados deste usuário (além do padrão do perfil)
+  const modules = data.modules !== undefined ? JSON.stringify(perms.parseOverrides(data.modules)) : undefined;
   const dupe = db.prepare('SELECT id FROM users WHERE email = ? AND id <> ?').get(email, Number(data.id) || 0);
   if (dupe) throw conflict('Já existe um usuário com este e-mail.');
   if (data.id) {
@@ -42,7 +47,7 @@ function saveUser(db, user, data) {
       const admins = db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND active = 1").get().n;
       if (admins <= 1) throw badRequest('É necessário manter ao menos um administrador ativo.');
     }
-    db.prepare('UPDATE users SET name = ?, email = ?, role = ?, team_id = ?, dialer_agent_ref = ?, active = ?, updated_at = ? WHERE id = ?').run(name, email, data.role, teamId, agent ?? null, active, now, u.id);
+    db.prepare('UPDATE users SET name = ?, email = ?, role = ?, team_id = ?, dialer_agent_ref = ?, active = ?, phone = ?, modules = COALESCE(?, modules), updated_at = ? WHERE id = ?').run(name, email, data.role, teamId, agent ?? null, active, phone ?? null, modules ?? null, now, u.id);
     if (data.password) {
       validatePassword(data.password);
       db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(data.password), u.id);
@@ -54,25 +59,39 @@ function saveUser(db, user, data) {
   }
   validatePassword(data.password);
   const r = db
-    .prepare('INSERT INTO users (name, email, password_hash, role, team_id, dialer_agent_ref, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(name, email, hashPassword(data.password), data.role, teamId, agent ?? null, now, now);
+    .prepare('INSERT INTO users (name, email, password_hash, role, team_id, dialer_agent_ref, phone, modules, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(name, email, hashPassword(data.password), data.role, teamId, agent ?? null, phone ?? null, modules ?? '{}', now, now);
   audit(db, user, 'user', Number(r.lastInsertRowid), 'criado', { email, perfil: data.role });
   return Number(r.lastInsertRowid);
 }
 
 function listTeams(db) {
-  return db.prepare('SELECT t.*, (SELECT COUNT(*) FROM users u WHERE u.team_id = t.id) AS members FROM teams t ORDER BY name').all();
+  return db.prepare('SELECT t.*, l.name AS leader_name, (SELECT COUNT(*) FROM users u WHERE u.team_id = t.id) AS members FROM teams t LEFT JOIN users l ON l.id = t.leader_id ORDER BY t.name').all();
+}
+
+/** Matriz de perfis × módulos e o escopo de dados de cada perfil (exibida em Usuários). */
+function permissionsMatrix(db, user) {
+  requireAdmin(user);
+  return {
+    modules: perms.MODULES,
+    roles: Object.entries(ROLES).map(([key, label]) => ({ key, label, scope: perms.ROLE_SCOPE[key], modules: perms.ROLE_MODULES[key] })),
+    admin_only: perms.ADMIN_ONLY,
+  };
 }
 
 function saveTeam(db, user, data) {
   requireAdmin(user);
   const name = clean(data.name);
   if (!name) throw badRequest('Informe o nome da equipe.');
+  const leader = data.leader_id ? Number(data.leader_id) : null;
+  if (leader && !db.prepare('SELECT 1 FROM users WHERE id = ? AND active = 1').get(leader)) throw badRequest('Líder inválido.');
   if (data.id) {
-    db.prepare('UPDATE teams SET name = ? WHERE id = ?').run(name, Number(data.id));
+    db.prepare('UPDATE teams SET name = ?, leader_id = ? WHERE id = ?').run(name, leader, Number(data.id));
+    if (leader) db.prepare('UPDATE users SET team_id = ? WHERE id = ?').run(Number(data.id), leader);
     return Number(data.id);
   }
-  const r = db.prepare('INSERT INTO teams (name, created_at) VALUES (?, ?)').run(name, nowIso());
+  const r = db.prepare('INSERT INTO teams (name, leader_id, created_at) VALUES (?, ?, ?)').run(name, leader, nowIso());
+  if (leader) db.prepare('UPDATE users SET team_id = ? WHERE id = ?').run(Number(r.lastInsertRowid), leader);
   audit(db, user, 'team', Number(r.lastInsertRowid), 'criada', { name });
   return Number(r.lastInsertRowid);
 }
@@ -235,6 +254,20 @@ function saveSettings(db, user, data) {
     if (id && !db.prepare('SELECT 1 FROM users WHERE id = ? AND active = 1').get(id)) throw badRequest('Usuário financeiro inválido.');
     setSetting(db, 'finance_user_id', id);
   }
+  if (data.funnel_sequential !== undefined) setSetting(db, 'funnel_sequential', !!data.funnel_sequential && data.funnel_sequential !== 'false');
+  if (data.presale_alert_hours !== undefined) {
+    const n = Number(data.presale_alert_hours);
+    if (!Number.isInteger(n) || n < 1 || n > 240) throw badRequest('Alerta de pré-venda parada: entre 1 e 240 horas.');
+    setSetting(db, 'presale_alert_hours', n);
+  }
+  if (data.stage_rules !== undefined) {
+    const { RULES } = require('./pipeline');
+    const sr = data.stage_rules;
+    if (!sr || typeof sr !== 'object') throw badRequest('Regras do funil inválidas.');
+    const clean2 = {};
+    for (const [k, v] of Object.entries(sr)) clean2[k] = (Array.isArray(v) ? v : []).filter((r) => RULES[r]);
+    setSetting(db, 'stage_rules', clean2);
+  }
   if (data.company_name !== undefined) setSetting(db, 'company_name', String(data.company_name || '').trim().slice(0, 120));
   if (data.nps_link_days !== undefined) {
     const n = Number(data.nps_link_days);
@@ -287,12 +320,14 @@ function meta(db, user) {
     (options[o.list] ||= []).push({ ...o, flags: JSON.parse(o.flags || '{}') });
   }
   return {
-    user: { id: user.id, name: user.name, email: user.email, role: user.role, role_label: ROLES[user.role], team_id: user.team_id },
+    user: { id: user.id, name: user.name, email: user.email, role: user.role, role_label: ROLES[user.role], team_id: user.team_id, modules: perms.userModules(user) },
+    modules: perms.MODULES,
     roles: ROLES,
     options,
     list_labels: LIST_LABELS,
     stages: db.prepare('SELECT * FROM pipeline_stages WHERE active = 1 ORDER BY position').all(),
-    products: db.prepare('SELECT id, name, category, administrator, active FROM products ORDER BY active DESC, name').all(),
+    products: db.prepare('SELECT id, name, category, administrator, administrator_id, credit_min, credit_max, credit_step, term_months, active FROM products ORDER BY active DESC, name').all(),
+    administrators: db.prepare('SELECT id, code, name, active FROM administrators ORDER BY active DESC, name').all(),
     users: listUsers(db, user).filter((u) => u.active),
     teams: listTeams(db),
     custom_fields: db.prepare('SELECT * FROM custom_fields WHERE active = 1 ORDER BY entity, position').all().map((f) => ({ ...f, options: f.options ? JSON.parse(f.options) : null })),
@@ -307,6 +342,8 @@ function meta(db, user) {
       company_name: getSetting(db, 'company_name') || '',
       nps_link_days: getSetting(db, 'nps_link_days'),
       proposal_simulator_url: getSetting(db, 'proposal_simulator_url') || '',
+      presale_alert_hours: getSetting(db, 'presale_alert_hours') || 24,
+      funnel_sequential: getSetting(db, 'funnel_sequential') !== false,
     },
     simulator: simulatorAvailability(db),
     constants: {
@@ -319,6 +356,8 @@ function meta(db, user) {
       proposal_status: C.PROPOSAL_STATUS,
       simulation_status: C.SIMULATION_STATUS,
       task_types: C.TASK_TYPES,
+      task_priorities: C.TASK_PRIORITIES,
+      proposal_cadence: C.PROPOSAL_CADENCE,
       meeting_outcomes: C.MEETING_OUTCOMES,
       contact_channels: C.CONTACT_CHANNELS,
       data_request_types: C.DATA_REQUEST_TYPES,
@@ -328,4 +367,4 @@ function meta(db, user) {
   };
 }
 
-module.exports = { listUsers, saveUser, listTeams, saveTeam, saveOption, listProducts, saveProduct, saveCustomField, saveSettings, globalAudit, meta, LIST_LABELS };
+module.exports = { listUsers, saveUser, listTeams, saveTeam, permissionsMatrix, saveOption, listProducts, saveProduct, saveCustomField, saveSettings, globalAudit, meta, LIST_LABELS };

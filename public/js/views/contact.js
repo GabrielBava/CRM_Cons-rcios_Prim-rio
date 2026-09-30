@@ -45,15 +45,15 @@ export async function show(view, { id, sub }) {
   const draw = () => {
     const tabs = TABS;
     const base = c.relationship === 'cliente' ? 'clientes' : 'leads';
-    // O menu lateral acompanha o tipo do registro: cliente fica em "Clientes"; prospect e lead, em "Prospects e leads"
-    document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === base));
+    // O menu lateral acompanha o tipo do registro: cliente fica em "Clientes"; prospect e lead, em "CRM"
+    document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === (base === 'clientes' ? 'clientes' : 'funil')));
     const active = c.active !== 0;
     const openOpps = c.opportunities.filter((o) => ['aberta', 'pausada'].includes(o.status));
     const referral = c.referred_by || c.origin === 'indicacao';
     const w = can.write() && !c.anonymized_at;
     render(view, html`<div class="page">
       <div class="record-head">
-        <div class="crumbs"><a href="#/${base}">${c.relationship === 'cliente' ? 'Clientes' : 'Prospects e leads'}</a> / ${c.code}</div>
+        <div class="crumbs"><a href="#/${base}">${c.relationship === 'cliente' ? 'Clientes' : 'CRM › Leads'}</a> / ${c.code}</div>
         <div class="title-row"><h1>${c.name}</h1><span class="kind-chip" title="${c.kind === 'PJ' ? 'Pessoa jurídica' : 'Pessoa física'}">${c.kind}</span></div>
         <div class="id-cards">
           <div class="id-card"><span>ID</span><strong>${c.code}</strong></div>
@@ -729,7 +729,7 @@ export function tasksTable(tasks, { showContact = false } = {}) {
   return table(
     [
       { label: 'Prazo', render: (t) => html`<span class="${t.status === 'pendente' && new Date(t.due_at) < new Date() ? 'overdue' : ''}">${fmtDateTime(t.due_at)}<br><small>${relTime(t.due_at)}</small></span>` },
-      { label: 'Tarefa', render: (t) => html`<strong>${t.title}</strong><br><small>${K('task_types', t.type)}${t.opportunity_code ? ` · ${t.opportunity_code}` : ''}</small>${t.notes ? html`<br><small class="muted">${t.notes}</small>` : ''}` },
+      { label: 'Tarefa', render: (t) => html`${t.priority && t.priority !== 'normal' ? html`${badge(t.priority === 'urgente' ? 'Urgente' : 'Alta', t.priority === 'urgente' ? 'danger' : 'warn')} ` : ''}<strong>${t.title}</strong><br><small>${K('task_types', t.type)}${t.opportunity_code ? ` · ${t.opportunity_code}` : ''}</small>${t.notes ? html`<br><small class="muted">${t.notes}</small>` : ''}` },
       ...(showContact ? [{ label: 'Cadastro', render: (t) => (t.contact_id ? html`<a href="#/leads/${t.contact_id}">${t.contact_name}</a> ${optoutBadge(t.contact_optouts)}` : '—') }] : []),
       { label: 'Responsável', render: (t) => t.assigned_name || '—' },
       { label: 'Status', render: (t) => html`${badge(t.status === 'pendente' ? 'Pendente' : t.status === 'concluida' ? 'Concluída' : 'Cancelada', t.status === 'pendente' ? 'warn' : t.status === 'concluida' ? 'ok' : 'muted')}${t.outcome ? html`<br><small>${K('meeting_outcomes', t.outcome)}</small>` : ''}` },

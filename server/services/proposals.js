@@ -1,5 +1,5 @@
 'use strict';
-const { PROPOSAL_STATUS } = require('../constants');
+const { PROPOSAL_STATUS, PROPOSAL_CADENCE } = require('../constants');
 const { loadContact, childScope, audit, diff, paging, optionLabel } = require('../core');
 const { badRequest, notFound, clean, toNumber, toDateOnly, nowIso } = require('../util');
 const { tx, nextCode } = require('../db');
@@ -12,6 +12,88 @@ const COMMERCIAL_FIELDS = [
 ];
 const FREE_FIELDS = ['link_url', 'notes'];
 const FINAL = ['aprovada', 'recusada', 'expirada', 'substituida'];
+const ACTIVE = ['rascunho', 'apresentada', 'em_analise'];
+
+/* ------------------------- Esteira de follow-up (D0 a D10) ------------------------- */
+
+// Horários no fuso de Brasília (UTC−3, sem horário de verão)
+const SP_OFFSET = 3 * 3600000;
+function spDate(base, businessDays, hh, mm) {
+  const d = new Date(new Date(base).getTime() - SP_OFFSET);
+  let added = 0;
+  while (added < businessDays) {
+    d.setUTCDate(d.getUTCDate() + 1);
+    if (![0, 6].includes(d.getUTCDay())) added++;
+  }
+  while (businessDays > 0 && [0, 6].includes(d.getUTCDay())) d.setUTCDate(d.getUTCDate() + 1);
+  d.setUTCHours(hh, mm, 0, 0);
+  return new Date(d.getTime() + SP_OFFSET).toISOString();
+}
+
+/**
+ * Cria as tarefas da esteira a partir do envio. Enviada pela manhã (até 13h): D0 no fim do dia (17h30).
+ * Enviada à tarde: começa no D+1. Depois D+2, D+3, D+5 e D+10 (dias úteis).
+ */
+function startCadence(db, user, p, sentAt) {
+  const localHour = new Date(new Date(sentAt).getTime() - SP_OFFSET).getUTCHours();
+  const opp = db.prepare('SELECT owner_id FROM opportunities WHERE id = ?').get(p.opportunity_id);
+  const now = nowIso();
+  for (const c of PROPOSAL_CADENCE) {
+    if (c.days === 0 && localHour >= 13) continue;
+    const due = c.days === 0 ? spDate(sentAt, 0, 17, 30) : spDate(sentAt, c.days, 10, 0);
+    db.prepare(`INSERT INTO tasks (contact_id, opportunity_id, type, title, notes, due_at, assigned_to, priority, proposal_id, cadence_step, created_by, created_at, updated_at)
+      VALUES (?, ?, 'follow_up_proposta', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(p.contact_id, p.opportunity_id, `${c.title} (${p.code})`, c.script, due, p.owner_id ?? opp?.owner_id ?? user.id, c.step === 'D10' ? 'alta' : 'normal', p.id, c.step, user.id, now, now);
+  }
+  const first = db.prepare("SELECT title, due_at FROM tasks WHERE proposal_id = ? AND status = 'pendente' ORDER BY due_at LIMIT 1").get(p.id);
+  if (first) db.prepare('UPDATE opportunities SET next_action = ?, next_action_at = ? WHERE id = ?').run(first.title, first.due_at, p.opportunity_id);
+}
+
+function stopCadence(db, proposalId, reason) {
+  const now = nowIso();
+  db.prepare("UPDATE tasks SET status = 'cancelada', notes = COALESCE(notes, '') || ?, updated_at = ? WHERE proposal_id = ? AND status = 'pendente' AND cadence_step IS NOT NULL").run(`\n[Esteira encerrada: ${reason}]`, now, proposalId);
+}
+
+/* ------------------------- Probabilidade de fechamento ------------------------- */
+
+/**
+ * Pontuação de 5 a 95 com base em sinais usados em vendas consultivas: temperatura do lead, R1 realizada, decisor
+ * definido, parcela dentro da capacidade, resposta do cliente, follow-ups em dia, pré-venda iniciada e tempo sem decisão.
+ */
+function proposalScore(db, p) {
+  if (p.status === 'aprovada') return { score: 100, level: 'fechada', factors: [['Proposta aceita', 0]] };
+  if (['recusada', 'expirada', 'substituida'].includes(p.status)) return { score: 0, level: 'encerrada', factors: [] };
+  const c = db.prepare('SELECT temperature FROM contacts WHERE id = ?').get(p.contact_id) || {};
+  const o = db.prepare('SELECT * FROM opportunities WHERE id = ?').get(p.opportunity_id) || {};
+  const f = [];
+  let s = 25;
+  if (c.temperature === 'quente') f.push(['Lead quente', 20]);
+  else if (c.temperature === 'morno') f.push(['Lead morno', 10]);
+  else if (c.temperature === 'frio') f.push(['Lead frio', -5]);
+  const r1 = db.prepare("SELECT 1 FROM tasks WHERE contact_id = ? AND type = 'reuniao' AND status = 'concluida' AND outcome = 'realizada' LIMIT 1").get(p.contact_id) ||
+    db.prepare("SELECT 1 FROM activities WHERE contact_id = ? AND type = 'reuniao_realizada' LIMIT 1").get(p.contact_id);
+  f.push(r1 ? ['R1 realizada', 15] : ['Sem R1 registrada', -10]);
+  if (o.decision_maker) f.push(['Decisor identificado', 5]);
+  if (p.initial_installment && o.installment_max) f.push(p.initial_installment <= o.installment_max ? ['Parcela dentro da capacidade', 15] : ['Parcela acima da capacidade', -15]);
+  if (p.last_response) {
+    const opt = db.prepare("SELECT label, flags FROM options WHERE list = 'resposta_proposta' AND value = ?").get(p.last_response);
+    const pts = JSON.parse(opt?.flags || '{}').score || 0;
+    f.push([`Resposta do cliente: ${opt?.label || p.last_response}`, pts]);
+  }
+  const overdue = db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE proposal_id = ? AND status = 'pendente' AND due_at < ?").get(p.id, nowIso()).n;
+  const done = db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE proposal_id = ? AND status = 'concluida'").get(p.id).n;
+  if (overdue) f.push([`${overdue} follow-up(s) atrasado(s)`, -10]);
+  else if (done) f.push(['Follow-ups em dia', 5]);
+  const ps = db.prepare("SELECT status FROM pre_sales WHERE opportunity_id = ? AND status <> 'cancelada' ORDER BY id DESC LIMIT 1").get(p.opportunity_id);
+  if (ps) f.push(['Pré-venda iniciada', 15]);
+  const sent = p.presented_at ? Math.floor((Date.now() - Date.parse(p.presented_at)) / 86400000) : null;
+  if (sent != null && sent > 10) f.push([`${sent} dias sem decisão`, -20]);
+  else if (sent != null && sent > 5) f.push([`${sent} dias sem decisão`, -10]);
+  if (p.status === 'rascunho') f.push(['Ainda não enviada ao cliente', -10]);
+  s += f.reduce((t, [, v]) => t + v, 0);
+  s = Math.max(5, Math.min(95, s));
+  return { score: s, level: s >= 70 ? 'alta' : s >= 40 ? 'media' : 'baixa', factors: f };
+}
 
 function normalize(db, data, contactId) {
   const o = {};
@@ -48,7 +130,18 @@ function normalize(db, data, contactId) {
   if (data.valid_until !== undefined) o.valid_until = toDateOnly(data.valid_until);
   if (data.product_id !== undefined) {
     o.product_id = data.product_id ? Number(data.product_id) : null;
-    if (o.product_id && !db.prepare('SELECT 1 FROM products WHERE id = ?').get(o.product_id)) throw badRequest('Produto inválido.');
+    const plan = o.product_id && db.prepare('SELECT * FROM products WHERE id = ?').get(o.product_id);
+    if (o.product_id && !plan) throw badRequest('Plano inválido.');
+    if (plan) {
+      if (!o.category && plan.category) o.category = plan.category;
+      const credit = o.credit_value !== undefined ? o.credit_value : toNumber(data.credit_value);
+      const err = require('./catalog').creditError(plan, credit);
+      if (err) throw badRequest(err);
+    }
+  }
+  if (data.category !== undefined && data.category !== '') {
+    o.category = clean(data.category);
+    assertOption(db, 'categoria_credito', o.category, 'categoria');
   }
   if (data.link_url !== undefined) {
     o.link_url = clean(data.link_url);
@@ -92,7 +185,8 @@ function createProposal(db, user, data) {
   if (o.product_id == null && opp.product_id) o.product_id = opp.product_id;
   const status = data.status && ['rascunho', 'apresentada', 'em_analise'].includes(data.status) ? data.status : 'rascunho';
   return tx(db, () => {
-    const res = insertProposal(db, user, { ...o, contact_id: opp.contact_id, opportunity_id: opp.id, status, owner_id: opp.owner_id });
+    const res = insertProposal(db, user, { ...o, category: o.category ?? opp.credit_category ?? null, contact_id: opp.contact_id, opportunity_id: opp.id, status, owner_id: opp.owner_id });
+    if (status === 'apresentada') startCadence(db, user, { id: res.id, code: res.code, contact_id: opp.contact_id, opportunity_id: opp.id, owner_id: opp.owner_id }, nowIso());
     insertActivity(db, { contact_id: opp.contact_id, opportunity_id: opp.id, type: 'proposta', notes: `Proposta ${res.code} (v1) criada — ${PROPOSAL_STATUS[status]}.`, user_id: user.id, ref_type: 'proposal', ref_id: res.id });
     audit(db, user, 'proposal', res.id, 'criada', { code: res.code, status }, opp.contact_id);
     return res;
@@ -149,11 +243,14 @@ function changeStatus(db, user, id, data) {
     const ek = Object.keys(extra);
     if (ek.length) db.prepare(`UPDATE proposals SET ${ek.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).run(...ek.map((k) => extra[k]), p.id);
     if (status === 'aprovada') {
-      // Aceite: segue para a ficha de pré-venda (dados e documentos obrigatórios para concluir a venda)
-      const opp = db.prepare('SELECT owner_id FROM opportunities WHERE id = ?').get(p.opportunity_id);
-      db.prepare("INSERT INTO tasks (contact_id, opportunity_id, type, title, notes, due_at, assigned_to, created_by, created_at, updated_at) VALUES (?, ?, 'pre_venda', ?, ?, ?, ?, ?, ?, ?)")
-        .run(p.contact_id, p.opportunity_id, 'Completar ficha de pré-venda', `Proposta ${p.code} aceita. Completar dados e documentos obrigatórios para concluir a venda.`, new Date(Date.now() + 86400000).toISOString(), opp?.owner_id ?? user.id, user.id, now, now);
+      // Aceite: abre a pré-venda (na primeira venda do cliente, gera o link de cadastro para adesão)
+      require('./sales').openPreSale(db, user, { proposal_id: p.id });
     }
+    if (status === 'apresentada' && !p.presented_at) {
+      if (data.sent_channel) db.prepare('UPDATE proposals SET sent_channel = ? WHERE id = ?').run(clean(data.sent_channel), p.id);
+      startCadence(db, user, { ...p, status }, now);
+    }
+    if (FINAL.includes(status)) stopCadence(db, p.id, PROPOSAL_STATUS[status]);
     insertActivity(db, {
       contact_id: p.contact_id,
       opportunity_id: p.opportunity_id,
@@ -188,6 +285,7 @@ function newVersion(db, user, id, data) {
     });
     if (!FINAL.includes(p.status)) {
       db.prepare("UPDATE proposals SET status = 'substituida', updated_at = ? WHERE id = ?").run(nowIso(), p.id);
+      stopCadence(db, p.id, `substituída pela ${res.code}`);
     }
     insertActivity(db, {
       contact_id: p.contact_id,
@@ -210,6 +308,7 @@ function expireSweep(db) {
   for (const p of rows) {
     tx(db, () => {
       db.prepare("UPDATE proposals SET status = 'expirada', updated_at = ? WHERE id = ?").run(nowIso(), p.id);
+      stopCadence(db, p.id, 'proposta expirada');
       insertActivity(db, { contact_id: p.contact_id, opportunity_id: p.opportunity_id, type: 'proposta', notes: `Proposta ${p.code} expirou (validade ${p.valid_until}).`, ref_type: 'proposal', ref_id: p.id });
       audit(db, null, 'proposal', p.id, 'expirada', { validade: p.valid_until }, p.contact_id);
     });
@@ -275,4 +374,123 @@ function listProposals(db, user, q) {
   return { total, page, limit, rows };
 }
 
-module.exports = { createProposal, updateProposal, changeStatus, newVersion, expireSweep, getProposal, listProposals };
+/** Resposta do cliente à proposta (alimenta a probabilidade e a esteira). */
+function registerResponse(db, user, id, data) {
+  const p = loadProposal(db, user, id, true);
+  if (!ACTIVE.includes(p.status)) throw badRequest('A proposta já está encerrada.');
+  const resp = clean(data.response);
+  assertOption(db, 'resposta_proposta', resp, 'resposta do cliente');
+  if (!resp) throw badRequest('Informe a resposta do cliente.');
+  const now = nowIso();
+  tx(db, () => {
+    db.prepare('UPDATE proposals SET last_response = ?, last_response_at = ?, updated_at = ? WHERE id = ?').run(resp, now, now, p.id);
+    insertActivity(db, { contact_id: p.contact_id, opportunity_id: p.opportunity_id, type: 'proposta', notes: `Retorno do cliente sobre a proposta ${p.code}: ${optionLabel(db, 'resposta_proposta', resp)}.${clean(data.notes) ? ` ${clean(data.notes)}` : ''}`, user_id: user.id, source: 'manual', ref_type: 'proposal', ref_id: p.id });
+    if (resp === 'negativa') {
+      db.prepare("INSERT INTO tasks (contact_id, opportunity_id, type, title, notes, due_at, assigned_to, priority, proposal_id, created_by, created_at, updated_at) VALUES (?, ?, 'revisar_proposta', ?, ?, ?, ?, 'alta', ?, ?, ?, ?)")
+        .run(p.contact_id, p.opportunity_id, `Revisar a proposta ${p.code}: nova versão, nutrição ou perdido`, 'O cliente respondeu que não vai seguir agora. Entenda a objeção e decida o próximo passo.', new Date(Date.now() + 3600000).toISOString(), p.owner_id ?? user.id, p.id, user.id, now, now);
+    }
+    audit(db, user, 'proposal', p.id, 'resposta_cliente', { resposta: resp }, p.contact_id);
+  });
+}
+
+/**
+ * Nova proposta: exige o cadastro do cliente (ID) com nome e contato e um negócio aberto.
+ * Cria o registro (rascunho) e devolve o link do simulador com o nome e o contato preenchidos.
+ */
+function startProposal(db, user, data) {
+  const c = loadContact(db, user, data.contact_id, { write: true });
+  if (!c.name || !(c.whatsapp || c.phone1 || c.phone2)) throw badRequest('Para gerar a proposta, o cadastro precisa ter nome completo e telefone/WhatsApp.');
+  let opp = data.opportunity_id ? db.prepare("SELECT * FROM opportunities WHERE id = ? AND contact_id = ?").get(Number(data.opportunity_id), c.id) : null;
+  if (!opp) opp = db.prepare("SELECT * FROM opportunities WHERE contact_id = ? AND status = 'aberta' ORDER BY updated_at DESC LIMIT 1").get(c.id);
+  if (!opp || opp.status !== 'aberta') throw badRequest('Abra um negócio para este cliente antes de gerar a proposta.');
+  const res = tx(db, () => {
+    const r = insertProposal(db, user, { contact_id: c.id, opportunity_id: opp.id, status: 'rascunho', owner_id: opp.owner_id, product_id: opp.product_id, credit_value: opp.credit_value, term_months: opp.term_months, category: opp.credit_category });
+    insertActivity(db, { contact_id: c.id, opportunity_id: opp.id, type: 'proposta', notes: `Proposta ${r.code} iniciada no simulador por ${user.name}.`, user_id: user.id, ref_type: 'proposal', ref_id: r.id });
+    audit(db, user, 'proposal', r.id, 'iniciada', { code: r.code }, c.id);
+    return r;
+  });
+  const link = require('./record').proposalSimulatorLink(db, user, c.id, { opportunity_id: opp.id, proposal_code: res.code });
+  return { ...res, url: link.url };
+}
+
+/** Panorama: propostas vigentes com etapa da esteira, próximo follow-up, alertas e probabilidade. */
+function panorama(db, user, q = {}) {
+  const sc = childScope(db, user, 'pr');
+  const where = [sc.sql, "pr.status <> 'substituida'"];
+  const params = [...sc.params];
+  if (q.owner_id) {
+    where.push('pr.owner_id = ?');
+    params.push(Number(q.owner_id));
+  }
+  if (q.status === 'andamento') where.push("pr.status IN ('rascunho','apresentada','em_analise')");
+  else if (q.status) {
+    where.push('pr.status = ?');
+    params.push(q.status);
+  }
+  if (q.category) {
+    where.push('COALESCE(pr.category, o.credit_category) = ?');
+    params.push(q.category);
+  }
+  if (q.from) {
+    where.push('pr.created_at >= ?');
+    params.push(q.from);
+  }
+  const rows = db
+    .prepare(`SELECT pr.*, c.name AS contact_name, c.code AS contact_code, c.whatsapp AS contact_whatsapp, c.phone1 AS contact_phone, c.temperature,
+      o.code AS opportunity_code, COALESCE(pr.category, o.credit_category) AS category, pd.name AS product_name, u.name AS owner_name
+      FROM proposals pr JOIN contacts c ON c.id = pr.contact_id JOIN opportunities o ON o.id = pr.opportunity_id
+      LEFT JOIN products pd ON pd.id = pr.product_id LEFT JOIN users u ON u.id = pr.owner_id WHERE ${where.join(' AND ')} ORDER BY pr.created_at DESC LIMIT 1000`)
+    .all(...params);
+  const now = nowIso();
+  const out = rows.map((p) => {
+    const sc2 = proposalScore(db, p);
+    const tasks = db.prepare('SELECT id, title, due_at, status, cadence_step, completed_at FROM tasks WHERE proposal_id = ? ORDER BY due_at').all(p.id);
+    const cad = tasks.filter((t) => t.cadence_step);
+    const next = tasks.find((t) => t.status === 'pendente');
+    const lastDone = [...cad].reverse().find((t) => t.status === 'concluida');
+    const days = p.presented_at ? Math.floor((Date.now() - Date.parse(p.presented_at)) / 86400000) : null;
+    const alerts = [];
+    if (next && next.due_at < now) alerts.push('Follow-up atrasado');
+    if (p.valid_until && ACTIVE.includes(p.status)) {
+      const left = Math.floor((Date.parse(`${p.valid_until}T23:59:59Z`) - Date.now()) / 86400000);
+      if (left <= 2) alerts.push(left < 0 ? 'Validade vencida' : `Validade vence em ${left} dia(s)`);
+    }
+    if (p.status === 'rascunho' && Date.now() - Date.parse(p.created_at) > 86400000) alerts.push('Gerada e ainda não enviada');
+    if (ACTIVE.includes(p.status) && cad.length && !cad.some((t) => t.status === 'pendente')) alerts.push('Esteira concluída sem decisão: fechar, nutrir ou perder');
+    const stage = !ACTIVE.includes(p.status) ? p.status : p.status === 'rascunho' ? 'gerada' : lastDone?.cadence_step || (cad.length ? 'enviada' : 'enviada');
+    return {
+      ...p,
+      probability: sc2.score,
+      level: sc2.level,
+      factors: sc2.factors,
+      weighted: p.credit_value ? Math.round((p.credit_value * sc2.score) / 100) : 0,
+      cadence_stage: stage,
+      next_followup: next ? { id: next.id, title: next.title, due_at: next.due_at, overdue: next.due_at < now } : null,
+      cadence: cad.map((t) => ({ step: t.cadence_step, status: t.status, due_at: t.due_at })),
+      days_since_sent: days,
+      alerts,
+    };
+  });
+  const active = out.filter((p) => ACTIVE.includes(p.status));
+  const month = new Date().toISOString().slice(0, 7);
+  const monthRows = out.filter((p) => p.created_at.slice(0, 7) === month);
+  const decided = out.filter((p) => ['aprovada', 'recusada', 'expirada'].includes(p.status));
+  return {
+    rows: out,
+    cadence: PROPOSAL_CADENCE.map(({ step, title }) => ({ step, title })),
+    summary: {
+      geradas_mes: monthRows.length,
+      enviadas_mes: monthRows.filter((p) => p.presented_at).length,
+      em_andamento: active.length,
+      valor_andamento: active.reduce((t, p) => t + (p.credit_value || 0), 0),
+      potencial_ponderado: active.reduce((t, p) => t + p.weighted, 0),
+      alta: active.filter((p) => p.level === 'alta').length,
+      media: active.filter((p) => p.level === 'media').length,
+      baixa: active.filter((p) => p.level === 'baixa').length,
+      com_alerta: active.filter((p) => p.alerts.length).length,
+      taxa_aceite: decided.length ? Math.round((decided.filter((p) => p.status === 'aprovada').length / decided.length) * 1000) / 10 : null,
+    },
+  };
+}
+
+module.exports = { createProposal, updateProposal, changeStatus, newVersion, expireSweep, getProposal, listProposals, registerResponse, startProposal, panorama, proposalScore, startCadence };

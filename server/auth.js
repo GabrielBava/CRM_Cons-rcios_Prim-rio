@@ -35,7 +35,7 @@ function currentUser(db, req) {
   if (!token) return null;
   const s = db.prepare('SELECT * FROM sessions WHERE token_hash = ?').get(sha256(token));
   if (!s || Date.parse(s.expires_at) < Date.now()) return null;
-  const u = db.prepare('SELECT id, name, email, role, team_id, active FROM users WHERE id = ?').get(s.user_id);
+  const u = db.prepare('SELECT id, name, email, role, team_id, active, modules FROM users WHERE id = ?').get(s.user_id);
   if (!u || !u.active) return null;
   // Renovação deslizante da sessão
   const remaining = Date.parse(s.expires_at) - Date.now();
