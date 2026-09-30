@@ -8,21 +8,27 @@ Este documento descreve o que está **implementado** nesta versão e o que ainda
 
 O menu lateral vira um menu recolhível no celular. A barra superior tem **busca global** (nome, telefone, e-mail, CPF/CNPJ, código `C-`, `OP-`, `PR-`, `SIM-`, `CT-` ou UID) e o botão **+ Novo lead**.
 
-| Área | Conteúdo |
+O menu lateral segue a estrutura de ERP do consórcio, com 16 itens. Os itens 13 a 16 ficam no grupo **Administração**. Cada usuário vê apenas os itens liberados para ele (seção 9).
+
+| Item do menu | Conteúdo |
 |---|---|
-| **Painel inicial** | Indicadores com definição de cálculo (ⓘ): leads novos, leads sem tentativa, tentativas de ligação, contatos efetivos com taxa, ligações recebidas, reuniões agendadas e realizadas, simulações, propostas, vendas e crédito. Mostra também leads parados por etapa, próximas tarefas e atrasos, e conversão por origem, usuário e produto. Filtros: período, usuário, origem, etapa, produto e status. |
-| **Prospects e leads** | Lista com busca e filtros: tipo de registro, status, PF/PJ, responsável, origem, campanha, etapa, produto, sem tentativa, cadastro incompleto e restrição de contato. Mostra a próxima ação de cada lead. Permite cadastro rápido, importação CSV, exportação CSV e lista para a discadora. |
-| **Ficha do cadastro** | Cabeçalho com etiquetas (relacionamento, status do lead, status do cliente, "não contatar"), próxima ação em destaque e aviso de campos recomendados pendentes. Abas na ordem da ficha aprovada: Resumo, 1. Cadastro, 2. Origem, 3. Endereço, 4. Negócio, 5. Financeiro, 6. Propostas, 7. Agenda e tarefas, 8. Produtos contratados, 9. Histórico, e ainda Relacionamentos (cônjuge ou sócios e contatos da empresa), Documentos, Pré-venda, Pós-venda, Preferências e LGPD, Auditoria. Detalhes na seção 12. |
-| **Funil comercial** | Kanban com arrastar e soltar. No celular e no teclado, usa-se o seletor "Mover para…". Há também visão em lista e filtros por responsável, origem, produto, etapa, prioridade e próxima ação (atrasada, hoje ou sem ação). |
-| **Oportunidade** | Dados comerciais, validação da estratégia, histórico de etapas, simulações, propostas, tarefas e atividades. |
-| **Agenda e tarefas** | Pendentes, atrasadas, hoje, próximos 7 dias, concluídas e canceladas, com filtro por responsável e tipo. Reuniões são concluídas com um resultado. |
-| **Ligações e atividades** | Todas as atividades, com filtros. Gestores e administradores também veem a **fila da discadora** (sem vínculo, com erro, vinculados, descartados) e as **entradas de leads e mensagens**. |
-| **Simulações e propostas** | Listas com filtros e detalhe da proposta, com versões, histórico e mudança de status. |
-| **Clientes** | Cadastros convertidos e produtos contratados. |
-| **Financeiro** | Parcelas e valores que os clientes pagam à administradora: em atraso, a vencer, pagos, negociados e cancelados, com totais e exportação CSV (seção 12). |
-| **Produtos e estratégias** | Produtos, estratégias, categorias, modalidades e tipos de contemplação. |
-| **Relatórios** | 12 relatórios com "Como é calculado" e exportação CSV. |
-| **Configurações e usuários** | Usuários e equipes, etapas do funil, listas, campos (visibilidade, recomendados e campos adicionais), integrações, parâmetros gerais, auditoria e senha. |
+| **1. Painel inicial** | Leads recebidos, propostas em andamento (com o potencial ponderado pela chance de fechamento), vendas no mês, comissões a receber no mês, meta do mês (quanto falta e o ritmo por dia útil), agenda de hoje, funil por etapa, propostas que pedem atenção, ranking, aniversariantes e treinamentos pendentes. Traz também **ações sugeridas para hoje** (urgentes, leads sem contato, propostas com alta chance, pré-vendas paradas, vendas aguardando pagamento). O administrador e o líder podem ver por especialista. |
+| **2. Prospects e leads** | Fila (administrador e líder) dos cadastros recebidos ainda sem especialista, por canal, com tempo de espera. Distribuição manual, pela **roleta** ou redistribuição (seção 13). |
+| **3. CRM** | Funil em 10 etapas com regras de passagem (seção 3), lista de leads e prospects, ligações e atividades, importação. A ficha do cadastro e a página do negócio ficam aqui. |
+| **4. Agenda e tarefas** | Visões **Hoje** (atrasadas, manhã, tarde, amanhã), **Semana** (calendário), **Urgentes** e **Lista completa**; filtros rápidos por R1, follow-up de proposta, revisar proposta, pré-venda, ligações e pós-venda; prioridade (normal, alta, urgente); indicadores do dia e rotina sugerida. |
+| **5. Simulador** | Abre o simulador para uma simulação rápida (modo simulação). **Não emite proposta**: propostas nascem no item 6, a partir do cadastro do cliente. |
+| **6. Propostas** | **Esteira de follow-up** (Gerada, Enviada, D0, D+1, D+2, D+3, D+5, D+10, Aceitas) e **Panorama geral** (cliente, valor, categoria, data, chance de fechamento, próximo follow-up e alertas). Seção 13. |
+| **7. Clientes** | Clientes e produtos contratados. O especialista vê só os seus; o administrador vê todos. O financeiro dos clientes (parcelas, atrasos) fica aqui. |
+| **8. Metas** | Metas mensais de crédito e de número de vendas por especialista e por equipe, com realizado, quanto falta e ritmo por dia útil. |
+| **9. Pré-venda** | Do aceite da proposta até o boleto: link de cadastro, acompanhamento (gerada, enviada, acessada, concluída), alertas de pré-venda parada e etapas da adesão. |
+| **10. Vendas** | Vendas com ID único (`VD-`), aguardando pagamento até a confirmação com comprovante. |
+| **11. Comissões e cancelamentos** | Comissões do mês (o especialista vê só as suas), cancelamentos com motivo e responsável, e o índice de cancelamento por especialista. |
+| **12. Treinamentos** | Materiais em PDF, vídeo, link ou texto por tema, com questionário e acompanhamento da equipe. |
+| **13. Administradoras** | Somente administrador: identificação, contatos, portal, política de repasse e tabela de comissão. |
+| **14. Planos** | Condições de cada plano por administradora e faixa de crédito com incremento. |
+| **15. Relatórios** | Relatórios com "Como é calculado" e exportação CSV. |
+| **16. Usuários** | Usuários, equipes com líder, perfis e liberação de telas por usuário. |
+| Configurações | Etapas e regras do funil, listas, campos, integrações, parâmetros gerais, auditoria e senha. |
 
 ## 2. Campos de cada cadastro
 
@@ -81,33 +87,39 @@ Os campos **recomendados** aparecem destacados. Um aviso lista o que falta compl
 
 ## 3. Etapas do funil e regras de movimentação
 
-As etapas iniciais são:
+O funil tem 10 etapas, nesta ordem:
 
-1. Novo prospect
-2. Tentativa de contato
-3. Contato realizado
-4. Lead qualificado
-5. Diagnóstico ou reunião agendada
-6. Diagnóstico realizado
-7. Simulação em elaboração
-8. Proposta apresentada
-9. Follow-up
-10. Em negociação
-11. **Venda concluída** (tipo ganho)
-12. **Perdido** (tipo perda)
-13. **Nutrição futura** (tipo nutrição)
+1. **Prospect**: contato ainda sem interesse demonstrado
+2. **Lead**: demonstrou interesse (um lead já entra aqui)
+3. **Tentativa de contato**
+4. **Lead qualificado**
+5. **R1**: reunião de diagnóstico agendada
+6. **Negociação**
+7. **Follow-up**: proposta enviada
+8. **Venda** (tipo ganho)
+9. **Nutrição futura** (tipo nutrição)
+10. **Perdido** (tipo perda)
 
-Regras:
+**Regras de passagem (modelo Pipedrive).** O negócio só entra numa etapa quando cumpre os critérios dela, verificados no servidor:
 
-- As etapas podem ser renomeadas, criadas (tipo aberta ou nutrição), reordenadas e desativadas. Só é possível desativar uma etapa que não tenha oportunidades. As etapas de ganho e perda são obrigatórias.
-- Cada movimentação grava a etapa anterior, a nova etapa, o usuário, a data, o tempo na etapa anterior e o motivo. A movimentação também aparece como atividade "Mudança de etapa".
-- **Perdido** exige motivo, escolhido de uma lista configurável, com detalhe opcional.
-- **Nutrição** registra o motivo da pausa.
-- **Venda concluída** transforma o cadastro em **cliente** (lead "convertido", cliente "ativo") sem perder nenhum histórico e permite registrar o produto contratado no mesmo passo.
-- Reabrir uma oportunidade (voltar para uma etapa aberta) limpa a data de fechamento e o motivo de perda. O histórico de etapas guarda o motivo anterior.
-- Uma oportunidade nova começa na primeira etapa aberta.
-- Lembretes: registrar uma atividade com "data de retorno" cria automaticamente uma tarefa e atualiza a próxima ação da oportunidade.
-- Uma oportunidade é considerada "parada" quando fica *N* dias sem atividade. O padrão é 7 dias, configurável.
+| Etapa | Critérios padrão para entrar |
+|---|---|
+| Lead | Telefone, WhatsApp ou e-mail cadastrado; origem informada |
+| Tentativa de contato | Ao menos uma tentativa de contato registrada |
+| Lead qualificado | Conversa efetiva registrada; qualificação (objetivo, crédito, parcela possível e prazo) |
+| R1 | R1 agendada (tarefa de reunião) |
+| Negociação | R1 realizada; dados da R1 (quem decide, momento financeiro, produtos que já possui) |
+| Follow-up | Proposta registrada e enviada ao cliente |
+| Venda | Venda com pagamento confirmado |
+
+- A passagem é **sequencial**: não é possível pular etapas. O administrador pode forçar, com justificativa, e a passagem fica registrada na auditoria como "etapa forçada".
+- **Venda** só é alcançada pela confirmação do pagamento em Vendas (aceite → pré-venda → boleto → pagamento). Não se arrasta um negócio para Venda.
+- Voltar etapas é permitido, com motivo.
+- **Perdido** exige motivo (lista configurável). **Nutrição futura** exige o motivo e a data para retomar o contato, e cria a tarefa de retorno.
+- A página do negócio mostra o cartão **"Para avançar para…"** com os critérios cumpridos e pendentes e o roteiro (playbook) da etapa.
+- Em Configurações › Etapas do funil, o administrador marca os critérios de cada etapa, liga ou desliga a passagem sequencial, e define o roteiro e os dias para considerar o negócio parado em cada etapa.
+- Cada movimentação grava a etapa anterior, a nova etapa, o usuário, a data, o tempo na etapa anterior e o motivo.
+- A venda transforma o cadastro em **cliente** sem perder histórico.
 
 ## 4. Estrutura dos registros e vínculos
 
@@ -208,16 +220,19 @@ Os relatórios mostram dados pessoais apenas quando necessário (nome e código)
 
 ## 9. Permissões
 
-As permissões são verificadas **no servidor** em todas as consultas e alterações, não apenas escondendo botões.
+As permissões são verificadas **no servidor** em todas as consultas e alterações, não apenas escondendo botões. O modelo segue os ERPs de mercado:
 
-| Perfil | Acesso |
-|---|---|
-| Administrador | Todos os registros e configurações, usuários, integrações, anonimização |
-| Gestor | Registros da própria equipe e cadastros sem responsável. Transfere responsáveis dentro da equipe, mescla cadastros, trata filas de integração, gerencia produtos. |
-| Consultor | Apenas os próprios cadastros e oportunidades (ou aqueles em que é responsável pela oportunidade). Não transfere registros. |
-| Leitura | Consulta os registros da equipe (ou todos, se não tiver equipe). Não edita e não exporta dados pessoais. |
+- o **perfil** define quais registros o usuário enxerga (escopo de dados);
+- os **módulos** definem quais telas ele acessa. Cada perfil tem um conjunto padrão, e o administrador pode **incluir ou retirar telas** de um usuário específico em Usuários, sem mudar o escopo de dados. Usuários e Configurações são sempre exclusivos do administrador.
 
-Um gestor sem equipe vê apenas os próprios registros. Quando um consultor tenta cadastrar alguém que já pertence a outro responsável, ele recebe o alerta de duplicidade **sem ver os dados** do cadastro.
+| Perfil | Escopo de dados | Telas padrão |
+|---|---|---|
+| Administrador | Todos os registros e todas as funções | Todas |
+| Líder de equipe | Registros da própria equipe e leads sem responsável; distribui leads na equipe; acompanha metas, comissões e cancelamentos do time; registra cancelamentos | Comerciais + Prospects e leads + Relatórios |
+| Especialista | Só os próprios leads, clientes, propostas, vendas e comissões | Painel, CRM, Agenda, Simulador, Propostas, Clientes, Metas, Pré-venda, Vendas, Comissões, Treinamentos |
+| Somente leitura | Consulta os registros da equipe, sem editar nem exportar dados pessoais | Painel, CRM, Clientes, Propostas, Treinamentos |
+
+A aba **Perfis e permissões** (Usuários) mostra essa matriz. Um líder sem equipe vê apenas os próprios registros. Quando um especialista tenta cadastrar alguém que já pertence a outro responsável, ele recebe o alerta de duplicidade **sem ver os dados** do cadastro.
 
 ## 10. Segurança e prevenção de duplicidade
 
@@ -257,13 +272,15 @@ Um gestor sem equipe vê apenas os próprios registros. Quando um consultor tent
 2. **Simulador:** URL, implementação dos dois endpoints do lado do simulador, lista oficial de modalidades e estratégias do simulador (hoje são texto livre no retorno) e prazo de validade desejado para o link.
 3. **Meta Ads:** conexão direta ou uso de ferramenta intermediária, formulários e campos do Lead Ads, responsável padrão dos leads recebidos.
 4. **WhatsApp:** provedor, se o texto das mensagens será armazenado e se haverá envio a partir do CRM (exige regras de consentimento e modelos aprovados).
-5. **Produtos:** administradoras, grupos e planos efetivamente comercializados. Taxas e índices hoje são registrados em cada proposta, sem tabela pré-definida.
+5. **Administradoras e planos:** cadastrar as administradoras, planos e tabelas de comissão reais (a demonstração usa dados fictícios).
 6. **Critérios comerciais:** critério formal de lead qualificado, resultados que contam como "contato efetivo" (o padrão é Atendida, Contato realizado e Retorno solicitado) e prazo para considerar um lead parado (padrão de 7 dias).
-7. **Estrutura da equipe:** equipes, gestores e regra de distribuição de leads sem responsável (hoje a distribuição é manual).
+7. **Estrutura da equipe:** equipes, líderes, participantes e pesos da roleta, e se a roleta automática deve ser ligada para os leads recebidos pelas integrações.
 8. **LGPD:** base legal por finalidade, prazo de retenção e rotina de eliminação, encarregado (DPO) e texto de consentimento nos formulários de captação.
 9. **Status de contrato e pós-venda:** valores definitivos (hoje: em formalização, ativo, contemplado, quitado, cancelado). As etapas do checklist de pós-venda podem ser ajustadas em Configurações › Listas.
 11. **Agenda externa:** escolha entre Google Agenda e Outlook.
-12. **Simulador:** retorno da proposta e da simulação para o CRM (hoje o CRM registra quem gerou e quando; a proposta gerada é registrada manualmente com link e anexo).
+12. **Simulador:** retorno automático da proposta para o CRM (hoje a proposta é criada no CRM ao clicar em "Nova proposta" e os valores são registrados manualmente) e bloqueio da emissão de proposta no modo simulação do lado do simulador.
+13. **E-mail automático (SMTP):** o link da pré-venda é enviado pelo WhatsApp ou pelo programa de e-mail do especialista; o envio direto pelo CRM depende de configurar um serviço de envio.
+14. **Boleto e assinatura:** emissão do boleto e assinatura do contrato continuam nos sistemas da administradora; o CRM registra as datas e o comprovante.
 10. **Hospedagem:** servidor, HTTPS, backup e política de acesso externo.
 
 ## 12. Módulo ERP: ficha em 9 blocos, financeiro, pré-venda e pós-venda
@@ -277,7 +294,7 @@ Implementa a ficha aprovada na página de proposta (`docs/proposta-ficha/index.h
 | 3. Endereço | Externo | Vários endereços (residencial, comercial, correspondência, cobrança), um principal, com observação. Ao digitar o CEP o endereço é buscado automaticamente; se não for localizado, o preenchimento é manual. |
 | 4. Negócio | Interno | Qualificação da primeira reunião: objetivo, tipo de produto (primário ou contemplada, no mesmo funil), finalidade do crédito, prazo, momento financeiro, tipo de contratação, FGTS, **quem decide a compra**, produtos que já possui. Consórcio: valor e administradora. Financiamento: saldo devedor, CET e banco. |
 | 5. Financeiro | Interno | Parcelas e demais valores que o cliente paga. Situações: a vencer, pago, negociado, cancelado e **em atraso** (calculado). Geração de parcelas a partir do contrato. Pendências financeiras. |
-| 6. Propostas | — | "Gerar simulação" registra apenas a data, a hora e quem gerou (sem simulação manual). "Gerar proposta" abre o simulador de propostas com o nome completo e o contato do cliente preenchidos; a proposta gerada é registrada com link e anexo. Aprovar exige o **canal e a data do aceite** e cria a tarefa "Completar ficha de pré-venda". Recusar exige o **motivo da recusa** (lista). |
+| 6. Propostas | — | "Gerar simulação" registra apenas a data, a hora e quem gerou (sem simulação manual). "Gerar proposta" abre o simulador de propostas com o nome completo e o contato do cliente preenchidos; a proposta gerada é registrada com link e anexo. Aprovar exige o **canal e a data do aceite** e abre a **pré-venda** (seção 13). Recusar exige o **motivo da recusa** (lista). |
 | 7. Agenda e tarefas | Interno | Tarefas e reuniões. Novos tipos: pré-venda e financeiro. Sincronização com agenda externa: **integração pendente**. |
 | 8. Produtos contratados | Externo | Lançados somente na conclusão da venda (não há cadastro avulso na ficha). Lista com categoria (Imóvel, Veículo, Serviço), administradora e grupo/cota. Contrato: nº na administradora, grupo e cota, valor da parcela, dia de vencimento, primeira parcela, **vendedor** e **valor da venda**, contemplação (data, tipo, lance e bem adquirido). |
 | 9. Histórico | — | Linha do tempo com filtro por **fase**: pré-venda (antes da primeira proposta), venda (depois da primeira proposta) e pós-venda (depois da conversão em cliente). |
@@ -290,7 +307,7 @@ Implementa a ficha aprovada na página de proposta (`docs/proposta-ficha/index.h
 
 **Documentos.** Os obrigatórios são enviados pela própria lista: o formulário pede só o arquivo (obrigatório), a venda vinculada, a validade e a observação. Um anexo pode valer para mais de uma venda (negócio) do cliente. "Anexar arquivo" oferece apenas os tipos que não são obrigatórios, para não haver sobreposição. Arquivos anexados pela equipe entram aprovados; os enviados pelo cliente pelo link ficam "aguardando validação" até o vendedor abrir em "Verificar" e aprovar ou reprovar (com motivo). Só documentos aprovados e dentro da validade contam para a venda. Situações: pendente, aguardando validação, aprovado, reprovado, vencido ou removido. A lista exigida para PF e para PJ é definida em Configurações › Geral. Padrão PF: identificação, comprovante de endereço, comprovante de renda e comprovante de estado civil. Padrão PJ: contrato social, cartão CNPJ, comprovante de endereço, faturamento e documento do representante.
 
-**Checklist de venda (pré-venda).** Mover a oportunidade para "Ganho" só é possível com a ficha completa: campos marcados como obrigatórios na venda (Configurações › Campos), endereço principal completo, dados do cônjuge e regime de bens quando aplicável, e documentos exigidos recebidos ou aprovados. O CRM informa exatamente o que falta. A regra pode ser desligada em Configurações › Geral.
+**Checklist de venda (pré-venda).** A pré-venda só pode ser conferida pela equipe (e o cliente só conclui o cadastro pelo link) com a ficha completa: campos marcados como obrigatórios na venda (Configurações › Campos), endereço principal completo, dados do cônjuge e regime de bens quando aplicável, e documentos exigidos recebidos ou aprovados. O CRM informa exatamente o que falta. A regra pode ser desligada em Configurações › Geral.
 
 **Pré-venda.** Tela com o percentual da ficha, as pendências agrupadas (cadastro, relacionamentos, endereço, documentos) e o atalho para completar cada item.
 
@@ -305,3 +322,61 @@ Implementa a ficha aprovada na página de proposta (`docs/proposta-ficha/index.h
 **Estratégia de lance por produto.** Para cada produto contratado (com categoria, administradora, grupo/cota e crédito): se vai ofertar lance e o tipo (embutido, fixo ou livre). No lance livre, informa-se o percentual e se usará o lance embutido e o FGTS.
 
 **Itens recusados na aprovação** (não implementados): PEP, evento de origem, página de conversão, responsáveis por fase, checklist de FGTS, transcrição automática da R1 e visões adicionais da agenda.
+
+## 13. Módulo ERP: prospects, propostas, pré-venda, vendas, comissões, metas e treinamentos
+
+**Prospects e leads (distribuição).** Cadastros recebidos sem especialista (integrações, importação ou cadastro do administrador) entram na fila, com canal, tempo de espera e totais das últimas 24 horas e 7 dias. O administrador ou o líder distribui manualmente, pela **roleta** ou redistribui. A roleta tem dois modos: sequencial com peso (1 a 5) ou para quem tem a menor carteira. Pode filtrar participantes por canal e ser automática para os leads recebidos pelas integrações. Cada distribuição cria a tarefa "Primeiro contato" com prazo configurável (padrão de 1 hora; recomendação de mercado: primeiro contato em até 5 minutos) e fica no histórico.
+
+**Propostas.** Toda proposta nasce do cadastro do cliente (ID), que precisa ter nome e telefone ou WhatsApp. "Nova proposta" cria o registro e abre o simulador já com o nome e o contato. Ao marcar a proposta como **enviada ao cliente**, o CRM cria a **esteira de follow-up** em dias úteis (horário de Brasília):
+
+| Passo | Quando | Objetivo |
+|---|---|---|
+| D0 | Fim do mesmo dia (só se enviada até 13h) | Confirmar o recebimento e tirar dúvidas |
+| D+1 | 10h | Tirar dúvidas e reforçar o objetivo |
+| D+2 | 10h | Cenários (lance, prazo, parcela) |
+| D+3 | 10h | Prova social e urgência real |
+| D+5 | 10h | Nova condição ou ajuste |
+| D+10 | 10h, prioridade alta | Decisão: fechar, nova versão, nutrição ou perdido |
+
+A resposta do cliente (positiva, dúvidas, sem resposta, negativa) é registrada; a negativa cria a tarefa "Revisar proposta". A **chance de fechamento** (5 a 95%) considera temperatura do lead, R1 realizada, decisor definido, parcela dentro da capacidade, resposta do cliente, follow-ups em dia e tempo sem decisão, e gera a classificação alta, média ou baixa e o **potencial ponderado**. Alertas: follow-up atrasado, validade vencendo ou vencida, e mais de 10 dias sem decisão. Aceite, recusa ou expiração encerram a esteira. O aceite abre a pré-venda.
+
+**Pré-venda.** Aberta automaticamente no aceite da proposta (ou manualmente). Na **primeira venda** do cliente, gera o link da **Ficha Cadastral do Participante**, enviado por WhatsApp ou e-mail com uma mensagem pronta. A página do cliente traz instruções passo a passo, o aviso de privacidade (LGPD), a concordância e o botão **Concluir cadastro**, que só funciona com a ficha e os documentos completos. Clientes com venda anterior pulam o link (dados já cadastrados, só conferência).
+
+Etapas: link gerado → acessado pelo cliente → concluído pelo cliente → conferido pela equipe → termo de adesão (plano e crédito, validados pela faixa e incremento do plano) → contrato enviado → contrato assinado → boleto emitido (a venda é registrada e aguarda o pagamento). A tela acompanha geradas, enviadas, acessadas, concluídas e **paradas**: sem acesso ou sem conclusão depois de 24 horas (configurável), o CRM cria a tarefa **urgente** "Revisar pré-venda" para o especialista.
+
+**Vendas.** Cada venda tem um ID único (`VD-000001`) com plano, administradora, cliente, crédito, nº e data da adesão e boleto. Fica **aguardando pagamento** até o especialista anexar o comprovante e confirmar. A confirmação:
+
+- lança o produto contratado na ficha do cliente;
+- move o negócio para Venda;
+- gera as comissões;
+- registra o canal e o horário preferidos do cliente;
+- cria a tarefa de **onboarding**.
+
+A venda pode ser cancelada antes do pagamento, com motivo.
+
+**Comissões.** Tabela em parcelas por administradora (o plano pode ter tabela própria), em % do crédito. Exemplo: 0,3% no mês da venda, liberada se a cota não for cancelada em 7 dias, depois 0,1% + 0,1% + 0,1% = 0,6%. Cada parcela fica **prevista** durante a carência e até o mês de competência, depois **liberada**, e o administrador marca como **paga**. O especialista vê só as suas: a receber no mês, liberado, pago, estornos e previsão dos próximos 3 meses.
+
+**Cancelamentos.** Registrados pelo líder ou administrador, com motivo da lista, descrição concreta (mínimo de 10 caracteres) e **especialista responsável**. As parcelas ainda não pagas são canceladas, e as já pagas geram **estorno** para o responsável, conforme a política da administradora (estornar ou não, e até quantos dias após a venda). O **índice de cancelamento** por especialista (cancelamentos ÷ vendas, últimos 12 meses, com os cancelados em até 7 dias) entra em alerta a partir de 10%, para desestimular vendas "empurradas".
+
+**Metas.** O administrador cadastra, por mês, a meta de crédito e de número de vendas por especialista e por equipe (se a meta da equipe ficar em branco, vale a soma das individuais). Pode copiar as metas do mês anterior. O realizado considera as vendas com pagamento confirmado no mês. O painel mostra o progresso, quanto falta e o ritmo necessário por dia útil.
+
+**Treinamentos.** O administrador publica materiais (PDF de até 15 MB, vídeo do YouTube ou Vimeo incorporado, link ou texto) por tema: fundamentos, lances, FGTS, cálculos, processo comercial, administradoras, compliance e LGPD, ferramentas. Cada material pode ser **obrigatório por perfil**, com prazo e questionário com nota mínima (o gabarito não é enviado a quem faz o treinamento). A equipe vê o progresso; o administrador acompanha acessos, conclusões e notas de cada usuário.
+
+**Administradoras.** Somente o administrador vê e edita. Campos:
+
+- ID (`ADM-`), nome, CNPJ e site;
+- contatos: direto, comercial e gerente de conta;
+- portal: endereço e usuário de acesso. **Senhas não são guardadas**;
+- repasse: dia, forma, regras e tabela opcional;
+- tabela de comissão do especialista e política de estorno.
+
+Os demais perfis veem só o nome, para escolher o plano.
+
+**Planos.** Por administradora:
+
+- taxa de administração, fundo de reserva, seguro;
+- prazo e prazos alternativos;
+- lance embutido (base %), lance fixo (%), adesão (% e meses de diluição);
+- índice de reajuste: pré-fixado 5% ou 6%, IPCA, INCC, INPC ou outro;
+- **faixa de crédito com incremento**. Exemplo: HS de R$ 100 mil a R$ 180 mil de 10 em 10 mil, de 5 em 5 mil, ou valor livre. A faixa é validada na proposta e no termo de adesão;
+- tabela de comissão própria (opcional).

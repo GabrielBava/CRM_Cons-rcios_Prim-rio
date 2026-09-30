@@ -167,7 +167,7 @@ async function openPreSale(id, reload) {
         ${ps.boleto_due ? html`<div><span>Boleto</span>${fmtMoney(ps.boleto_value)} · vence ${fmtDate(ps.boleto_due)}</div>` : ''}
         ${ps.sale_code ? html`<div><span>Venda</span><a href="#/vendas">${ps.sale_code}</a></div>` : ''}
       </div>
-      ${ps.link_url && ps.first_sale && !['concluida', 'cancelada'].includes(ps.status) ? html`<section class="card inner"><h4>Link do cadastro para o cliente</h4>
+      ${ps.link_url && ps.first_sale && ['link_gerado', 'acessado', 'preenchido'].includes(ps.status) ? html`<section class="card inner"><h4>Link do cadastro para o cliente</h4>
         <p class="small">O cliente recebe o link com as instruções de preenchimento e o aviso de privacidade (LGPD). Acesso: ${ps.accessed_at ? `primeiro acesso em ${fmtDateTime(ps.accessed_at)}` : 'ainda não acessado'} · ${ps.link_access_count || 0} acesso(s).</p>
         <div class="inline-actions">
           ${msg?.whatsapp_url ? html`<a class="btn small primary" href="${msg.whatsapp_url}" target="_blank" rel="noopener noreferrer" data-sent="whatsapp">Enviar por WhatsApp</a>` : ''}

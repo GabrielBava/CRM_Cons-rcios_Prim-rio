@@ -5,7 +5,8 @@
 (function () {
   'use strict';
   const DEMO_PASSWORD = 'demo12345';
-  const DB_KEY = 'crm-preview-db-v1';
+  // v2: menu ERP (administradoras, planos, pré-venda, vendas, comissões…) — recarrega a demonstração nova
+  const DB_KEY = 'crm-preview-db-v2';
   const COOKIE_KEY = 'crm-preview-session';
   const req = (p) => window.CRMBackend.require(p);
   window.CRM_PREVIEW = true;
@@ -177,9 +178,9 @@
   /* ---------- barra da versão de teste ---------- */
   const USERS = [
     ['admin@demo.local', 'Administrador'],
-    ['gestora@demo.local', 'Gestora'],
-    ['consultor1@demo.local', 'Consultor 1'],
-    ['consultor2@demo.local', 'Consultora 2'],
+    ['gestora@demo.local', 'Líder de equipe'],
+    ['consultor1@demo.local', 'Especialista 1'],
+    ['consultor2@demo.local', 'Especialista 2'],
     ['leitura@demo.local', 'Leitura'],
   ];
   let bar = null;

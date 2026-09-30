@@ -1,6 +1,6 @@
 // 13. Administradoras (administrador): identificação, contatos, portal, política de repasse e tabela de comissão.
 import { get, post } from '../api.js';
-import { html, render, $, $$, on, table, badge, field, modal, toast, toastError, fmtPct } from '../ui.js';
+import { html, render, $, $$, on, table, badge, field, modal, toast, toastError } from '../ui.js';
 
 const fmtP = (v) => `${Number(v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 4 })}%`;
 
@@ -68,7 +68,7 @@ export async function show(view) {
           { label: 'Administradora', render: (a) => html`<a href="#" data-edit="${a.id}"><strong>${a.name}</strong></a>${a.active ? '' : html` ${badge('Inativa', 'muted')}`}${a.cnpj ? html`<br><small>CNPJ ${a.cnpj}</small>` : ''}` },
           { label: 'Contatos', render: (a) => html`${a.commercial_name ? html`Comercial: ${a.commercial_name}<br>` : ''}${a.manager_name ? html`Gerente de conta: ${a.manager_name}` : ''}${!a.commercial_name && !a.manager_name ? '—' : ''}` },
           { label: 'Repasse', render: (a) => html`${a.payout_day ? `dia ${a.payout_day}` : '—'}${a.payout_method ? html`<br><small>${a.payout_method}</small>` : ''}` },
-          { label: 'Comissão', render: (a) => html`${scheduleText(a.commission_schedule)}<br><small>total ${fmtPct(a.commission_total)}</small>` },
+          { label: 'Comissão', render: (a) => html`${scheduleText(a.commission_schedule)}<br><small>total ${fmtP(a.commission_total)}</small>` },
           { label: 'Planos', key: 'plans', cls: 'num' },
           { label: 'Vendas', key: 'sales', cls: 'num' },
           { label: '', render: (a) => html`<button class="btn small" data-edit="${a.id}">Editar</button> <a class="btn small ghost" href="#/planos?administradora=${a.id}">Planos</a>` },

@@ -473,8 +473,13 @@ function panorama(db, user, q = {}) {
   });
   const active = out.filter((p) => ACTIVE.includes(p.status));
   const month = new Date().toISOString().slice(0, 7);
-  const monthRows = out.filter((p) => p.created_at.slice(0, 7) === month);
-  const decided = out.filter((p) => ['aprovada', 'recusada', 'expirada'].includes(p.status));
+  // Geradas no mês e taxa de aceite consideram todas as propostas visíveis (independem do filtro de situação)
+  const base = db
+    .prepare(`SELECT pr.status, pr.created_at, pr.presented_at FROM proposals pr JOIN opportunities o ON o.id = pr.opportunity_id
+      WHERE ${sc.sql} AND pr.status <> 'substituida'${q.owner_id ? ' AND pr.owner_id = ?' : ''}`)
+    .all(...sc.params, ...(q.owner_id ? [Number(q.owner_id)] : []));
+  const monthRows = base.filter((p) => p.created_at.slice(0, 7) === month);
+  const decided = base.filter((p) => ['aprovada', 'recusada', 'expirada'].includes(p.status));
   return {
     rows: out,
     cadence: PROPOSAL_CADENCE.map(({ step, title }) => ({ step, title })),

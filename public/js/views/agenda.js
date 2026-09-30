@@ -38,7 +38,7 @@ export async function show(view, { params = {} } = {}) {
       ${can.write() ? html`<div class="actions"><button class="btn primary" data-act="new">+ Nova tarefa</button><button class="btn" data-act="new-meeting">+ Agendar R1</button></div>` : ''}</div>
     <div id="kpis"></div>
     ${subnav([['#/agenda', 'Hoje', 'hoje'], ['#/agenda?visao=semana', 'Semana', 'semana'], ['#/agenda?visao=urgentes', 'Urgentes', 'urgentes'], ['#/agenda?visao=lista', 'Lista completa', 'lista']], visao)}
-    <form class="filters" data-f>
+    <form class="filters" data-f ${!can.manage() && visao !== 'lista' ? 'hidden' : ''}>
       ${can.manage() ? html`<label>Responsável<select name="assigned_to">${selectOptions(userItems(), saved.assigned_to, { placeholder: 'Todos' })}</select></label>` : ''}
       ${visao === 'lista'
         ? html`<label>Situação<select name="status">${selectOptions([{ value: 'pendente', label: 'Pendentes' }, { value: 'concluida', label: 'Concluídas' }, { value: 'cancelada', label: 'Canceladas' }], saved.status || 'pendente', { allowEmpty: false })}</select></label>

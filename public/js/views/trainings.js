@@ -26,7 +26,8 @@ export async function show(view, { params = {} } = {}) {
     ${admin ? subnav([['#/treinamentos', 'Materiais', 'materiais'], ['#/treinamentos?aba=acompanhamento', 'Acompanhamento da equipe', 'acompanhamento']], tab) : ''}
     <div id="tab"></div></div>`);
   const box = fresh($('#tab', view));
-  const reload = () => (tab === 'acompanhamento' ? tracking(box) : list(box));
+  // Recarrega a tela pelo roteador (elemento novo, sem ouvintes duplicados)
+  const reload = () => window.dispatchEvent(new HashChangeEvent('hashchange'));
   on(view, 'click', '[data-act=new]', async () => (await trainingForm()) && reload());
   if (tab === 'acompanhamento') return tracking(box);
   return list(box);
@@ -44,7 +45,8 @@ async function list(box) {
     }
     const s = d.summary;
     const items = d.items.filter((t) => !cat || t.category === cat);
-    const groups = [...new Set(items.map((t) => t.category || ''))];
+    const order = opts('categoria_treinamento', { all: true }).map((o) => o.value);
+    const groups = [...new Set(items.map((t) => t.category || ''))].sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99));
     render(box, html`
       <div class="kpis small">
         <div class="kpi"><div class="kpi-label">Concluídos</div><div class="kpi-value">${s.concluidos} / ${s.total}</div><div class="progress-bar goal"><span style="width:${s.total ? Math.round((s.concluidos / s.total) * 100) : 0}%"></span></div></div>
@@ -57,7 +59,7 @@ async function list(box) {
             <div class="training-list">${items.filter((t) => (t.category || '') === g).map((t) => html`<article class="training ${t.active ? '' : 'inactive'}">
               <div><strong><a href="#" data-open="${t.id}">${t.title}</a></strong> ${badge(KIND[t.kind] || t.kind)}${t.required ? html` ${badge('Obrigatório', t.overdue ? 'danger' : 'warn')}` : ''}${t.active ? '' : html` ${badge('Inativo', 'muted')}`}
                 ${t.description ? html`<p class="muted small">${t.description}</p>` : ''}
-                <small class="muted">${t.duration_min ? `${t.duration_min} min · ` : ''}${t.questions ? `questionário com ${t.questions} pergunta(s), nota mínima ${t.pass_score}% · ` : ''}${t.due_at ? `prazo ${fmtDate(t.due_at)}` : ''}</small></div>
+                <small class="muted">${[t.duration_min ? `${t.duration_min} min` : '', t.questions ? `questionário com ${t.questions} pergunta(s), nota mínima ${t.pass_score}%` : '', t.due_at ? `prazo ${fmtDate(t.due_at)}` : ''].filter(Boolean).join(' · ')}</small></div>
               <div class="training-side">${stBadge(t.status)}${t.progress.quiz_score != null ? html`<small>nota ${t.progress.quiz_score}%</small>` : ''}
                 <button class="btn small ${t.status === 'concluido' ? '' : 'primary'}" data-open="${t.id}">${t.status === 'concluido' ? 'Rever' : t.status === 'em_andamento' ? 'Continuar' : 'Começar'}</button>
                 ${admin ? html`<button class="btn small ghost" data-edit="${t.id}">Editar</button>` : ''}</div>

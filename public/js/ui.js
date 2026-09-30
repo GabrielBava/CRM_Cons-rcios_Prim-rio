@@ -264,7 +264,7 @@ export function table(columns, rows, { rowAttr, emptyMsg = 'Nenhum registro enco
   if (!rows.length) return empty(emptyMsg);
   return html`<div class="table-wrap"><table>
     <thead><tr>${columns.map((c) => html`<th class="${c.cls || ''}">${c.label}</th>`)}</tr></thead>
-    <tbody>${rows.map((r) => html`<tr ${rowAttr ? raw(rowAttr(r)) : ''}>${columns.map((c) => html`<td class="${c.cls || ''}" data-label="${c.label}">${c.render ? c.render(r) : r[c.key] ?? '—'}</td>`)}</tr>`)}</tbody>
+    <tbody>${rows.map((r) => html`<tr ${rowAttr ? raw(rowAttr(r)) : ''}>${columns.map((c) => html`<td class="${c.cls || ''}" data-label="${typeof c.label === 'string' ? c.label : ''}">${c.render ? c.render(r) : r[c.key] ?? '—'}</td>`)}</tr>`)}</tbody>
   </table></div>`;
 }
 

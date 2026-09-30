@@ -64,7 +64,7 @@ export async function show(app, token) {
         <div class="form-actions"><button class="btn primary" type="submit">Salvar meus dados</button></div>
       </form>
       <section class="card"><h2>Documentos obrigatórios</h2>
-        <p class="muted">Envie os documentos abaixo em PDF ou foto legível (até 8 MB cada). Cada arquivo é conferido pelo seu consultor.</p>
+        <p class="muted">Envie os documentos abaixo em PDF ou foto legível (até 8 MB cada). Cada arquivo é conferido pelo seu especialista.</p>
         <ul class="checklist doc-list">${d.documents.map((doc) => {
           const st = DOC_PUBLIC[doc.status] || DOC_PUBLIC.pendente;
           return html`<li class="${doc.status === 'aprovado' ? 'ok' : ''}"><span class="mark">${doc.status === 'aprovado' ? '✓' : '○'}</span> <span class="grow">${doc.label}</span> <span class="badge ${st[1]}">${st[0]}</span>
@@ -157,7 +157,7 @@ export async function showNps(app, token) {
   }
   const company = d.company || 'nossa empresa';
   if (d.status !== 'pendente') {
-    const msg = { respondida: 'Esta pesquisa já foi respondida. Muito obrigado pela sua avaliação!', expirada: 'Esta pesquisa expirou. Se quiser nos avaliar, fale com seu consultor.', cancelada: 'Esta pesquisa foi cancelada.' }[d.status];
+    const msg = { respondida: 'Esta pesquisa já foi respondida. Muito obrigado pela sua avaliação!', expirada: 'Esta pesquisa expirou. Se quiser nos avaliar, fale com seu especialista.', cancelada: 'Esta pesquisa foi cancelada.' }[d.status];
     render(app, html`<div class="public-page"><div class="card"><h1>Pesquisa de satisfação</h1><p>${msg}</p></div></div>`);
     return;
   }

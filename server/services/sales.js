@@ -231,6 +231,8 @@ function markSent(db, user, id, data) {
   const via = ['whatsapp', 'email', 'copiado'].includes(data.via) ? data.via : 'copiado';
   const now = nowIso();
   db.prepare('UPDATE pre_sales SET sent_via = ?, sent_at = COALESCE(sent_at, ?), updated_at = ? WHERE id = ?').run(via, now, now, ps.id);
+  // A tarefa "Enviar o link de cadastro" é concluída automaticamente
+  db.prepare("UPDATE tasks SET status = 'concluida', completed_at = ?, completed_by = ?, updated_at = ? WHERE pre_sale_id = ? AND status = 'pendente' AND title LIKE 'Enviar o link de cadastro%'").run(now, user.id, now, ps.id);
   insertActivity(db, { contact_id: ps.contact_id, opportunity_id: ps.opportunity_id, type: via === 'email' ? 'email_enviado' : via === 'whatsapp' ? 'mensagem_enviada' : 'observacao', notes: `Link de cadastro da pré-venda ${ps.code} enviado ao cliente (${via === 'email' ? 'e-mail' : via === 'whatsapp' ? 'WhatsApp' : 'link copiado'}).`, user_id: user.id, source: 'manual' });
   audit(db, user, 'pre_sale', ps.id, 'enviada', { via }, ps.contact_id);
   // A tarefa de envio é concluída automaticamente
@@ -532,8 +534,10 @@ function generateCommissions(db, sale) {
   const t = today();
   let count = 0;
   for (const item of schedule) {
-    const releaseOn = addDays(sale.payment_date, item.release_after_days || 0);
     const competence = monthOf(addMonths(sale.payment_date, item.month_offset || 0));
+    // Liberada após a carência (ex.: 7 dias sem cancelamento) e nunca antes do mês de competência da parcela
+    const afterGrace = addDays(sale.payment_date, item.release_after_days || 0);
+    const releaseOn = afterGrace > `${competence}-01` ? afterGrace : `${competence}-01`;
     const amount = round2((sale.credit_value * item.pct) / 100);
     db.prepare(`INSERT INTO commission_entries (sale_id, user_id, kind, installment_no, competence, base_value, pct, amount, status, release_on, created_at, updated_at)
       VALUES (?, ?, 'comissao', ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(sale.id, sale.seller_id, item.n, competence, sale.credit_value, item.pct, amount, releaseOn <= t ? 'liberada' : 'prevista', releaseOn, now, now);

@@ -15,12 +15,14 @@ const INDEXES = [
 ];
 const p2 = (v) => (v == null ? '—' : `${Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 4 })}%`);
 
-/** Descrição curta da faixa de crédito: "R$ 100.000 a R$ 180.000, de R$ 10.000 em R$ 10.000". */
+const kMoney = (v) => (v >= 1000 && v % 1000 === 0 ? `R$ ${(v / 1000).toLocaleString('pt-BR')} mil` : fmtMoney(v));
+/** Descrição curta da faixa de crédito: "R$ 100 mil a R$ 180 mil · de 10 em 10 mil". */
 export function creditRange(p) {
   if (p.credit_min == null && p.credit_max == null && !p.credit_step) return 'Livre';
-  const a = p.credit_min != null ? fmtMoney(p.credit_min) : 'sem mínimo';
-  const b = p.credit_max != null ? fmtMoney(p.credit_max) : 'sem máximo';
-  return `${a} a ${b}${p.credit_step ? `, de ${fmtMoney(p.credit_step)} em ${fmtMoney(p.credit_step)}` : ', valor livre'}`;
+  const a = p.credit_min != null ? kMoney(p.credit_min) : 'sem mínimo';
+  const b = p.credit_max != null ? kMoney(p.credit_max) : 'sem máximo';
+  const step = p.credit_step ? kMoney(p.credit_step).replace('R$ ', '') : null;
+  return html`${a} a ${b}<br><small>${step ? `de ${step} em ${step}` : 'valor livre na faixa'}</small>`;
 }
 
 export async function show(view, { params = {} } = {}) {
