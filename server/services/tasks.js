@@ -38,6 +38,9 @@ function createTask(db, user, data) {
       )
       .run(contactId, oppId, type, title, clean(data.notes) ?? null, due, assigned, priority, user.id, now, now);
     const id = Number(r.lastInsertRowid);
+    if (assigned && assigned !== user.id) {
+      require('./notifications').notify(db, assigned, { kind: 'tarefa', level: priority === 'urgente' ? 'danger' : 'info', title: `Nova tarefa de ${user.name}: ${title}`, body: `Prazo: ${new Date(due).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' })}`, link: contactId ? `#/leads/${contactId}` : '#/agenda' });
+    }
     if (contactId) {
       insertActivity(db, {
         contact_id: contactId,

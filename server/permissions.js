@@ -19,6 +19,7 @@ const MODULES = [
   { key: 'metas', label: 'Metas', group: 'Comercial' },
   { key: 'prevenda', label: 'Pré-venda', group: 'Operação' },
   { key: 'vendas', label: 'Vendas', group: 'Operação' },
+  { key: 'posvenda', label: 'Pós-venda (checklist, NPS e lances)', group: 'Operação' },
   { key: 'comissoes', label: 'Comissões e cancelamentos', group: 'Operação' },
   { key: 'treinamentos', label: 'Treinamentos', group: 'Operação' },
   { key: 'administradoras', label: 'Administradoras', group: 'Administração' },
@@ -29,14 +30,14 @@ const MODULES = [
 ];
 const MODULE_KEYS = MODULES.map((m) => m.key);
 
-const COMMERCIAL = ['painel', 'crm', 'agenda', 'simulador', 'propostas', 'clientes', 'metas', 'prevenda', 'vendas', 'comissoes', 'treinamentos'];
+const COMMERCIAL = ['painel', 'crm', 'agenda', 'simulador', 'propostas', 'clientes', 'metas', 'prevenda', 'vendas', 'posvenda', 'comissoes', 'treinamentos'];
 
 /** Módulos padrão de cada perfil. */
 const ROLE_MODULES = {
   admin: MODULE_KEYS,
   gestor: [...COMMERCIAL, 'distribuicao', 'relatorios'],
   consultor: COMMERCIAL,
-  leitura: ['painel', 'crm', 'clientes', 'propostas', 'treinamentos'],
+  leitura: ['painel', 'crm', 'clientes', 'propostas', 'posvenda', 'treinamentos'],
 };
 
 /** Módulos que só o administrador acessa, mesmo que sejam incluídos manualmente para outro perfil. */

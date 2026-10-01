@@ -1,4 +1,4 @@
-// 13. Administradoras (administrador): identificação, contatos, portal, política de repasse e tabela de comissão.
+// 14. Administradoras (administrador): identificação, contatos, portal, política de repasse e tabela de comissão.
 import { get, post } from '../api.js';
 import { html, render, $, $$, on, table, badge, field, modal, toast, toastError } from '../ui.js';
 

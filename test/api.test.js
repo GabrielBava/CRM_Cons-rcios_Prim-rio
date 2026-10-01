@@ -513,7 +513,7 @@ test('pós-venda: pesquisa NPS por link com histórico, cancelamento justificado
   let d = (await call('c1', 'GET', `/api/cadastros/${id}`)).data;
   await sellViaFlow('c1', d.opportunities[0].id, 200000, { group_code: 'G1', quota_code: '10' });
   d = (await call('c1', 'GET', `/api/cadastros/${id}`)).data;
-  assert.deepEqual(d.post_sale.map((p) => p.item), ['primeira_parcela', 'onboarding', 'estrategia_lance', 'recebimento_boletos', 'indicacao']);
+  assert.deepEqual(d.post_sale.map((p) => p.item), ['primeira_parcela', 'onboarding', 'estrategia_lance', 'recebimento_boletos', 'preferencias_contato', 'indicacao']);
   const k = d.contracts[0];
   // NPS
   const n1 = await call('c1', 'POST', `/api/cadastros/${id}/nps`, { contract_id: k.id });
@@ -770,4 +770,166 @@ test('ficha do cliente: acesso e conclusão pelo link atualizam a pré-venda; co
   assert.equal((await call(null, 'POST', '/api/publico/ficha/concluir', { token })).status, 200);
   d = (await call('c1', 'GET', `/api/pre-vendas/${ps.data.id}`)).data;
   assert.equal(d.status, 'preenchido');
+});
+
+test('meu cadastro: dados do próprio usuário, foto validada e e-mail mantido pelo administrador', async () => {
+  const p = await call('c1', 'GET', '/api/perfil');
+  assert.equal(p.status, 200);
+  assert.equal(p.data.role_label, 'Especialista');
+  const r = await call('c1', 'PATCH', '/api/perfil', { name: 'Cons 1', job_title: 'Especialista imobiliário', phone: '(11) 98888-0000', email: 'hack@x.com', specialties: ['imovel', 'invalida'], bio: 'Ajudo famílias a planejar a casa própria.' });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal(r.data.email, 'c1@t.com', 'e-mail não muda pelo próprio usuário');
+  assert.deepEqual(r.data.specialties, ['imovel']);
+  assert.equal((await call('c1', 'PATCH', '/api/perfil', { phone: '123' })).status, 400);
+  assert.equal((await call('c1', 'POST', '/api/perfil/foto', { photo: 'data:text/html;base64,PHNjcmlwdD4=' })).status, 400);
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  assert.equal((await call('c1', 'POST', '/api/perfil/foto', { photo: png })).status, 200);
+  const meta = (await call('c1', 'GET', '/api/meta')).data;
+  assert.equal(meta.user.photo, png);
+  assert.equal(meta.user.job_title, 'Especialista imobiliário');
+});
+
+test('alterar senha: confere a atual, exige confirmação e política mínima e encerra as outras sessões', async () => {
+  await call('admin', 'POST', '/api/usuarios', { name: 'Senha Teste', email: 'senha@t.com', role: 'consultor', password: 'inicial123' });
+  await login('pw1', 'senha@t.com', 'inicial123');
+  await login('pw2', 'senha@t.com', 'inicial123');
+  assert.equal((await call('pw1', 'POST', '/api/me/senha', { current: 'errada123', password: 'NovaSenha2026', confirm: 'NovaSenha2026' })).status, 400);
+  assert.equal((await call('pw1', 'POST', '/api/me/senha', { current: 'inicial123', password: 'NovaSenha2026', confirm: 'Outra2026' })).status, 400, 'confirmação diferente');
+  assert.equal((await call('pw1', 'POST', '/api/me/senha', { current: 'inicial123', password: 'somenteletras', confirm: 'somenteletras' })).status, 400, 'precisa de números');
+  assert.equal((await call('pw1', 'POST', '/api/me/senha', { current: 'inicial123', password: 'senha2026x', confirm: 'senha2026x' })).status, 400, 'não pode conter o e-mail');
+  const ok = await call('pw1', 'POST', '/api/me/senha', { current: 'inicial123', password: 'Casa-Propria-2027', confirm: 'Casa-Propria-2027' });
+  assert.equal(ok.status, 200, JSON.stringify(ok.data));
+  assert.equal(ok.data.sessions_ended, 1);
+  assert.equal((await call('pw1', 'GET', '/api/me')).status, 200, 'sessão atual continua');
+  assert.equal((await call('pw2', 'GET', '/api/me')).status, 401, 'outra sessão encerrada');
+  assert.equal((await call(null, 'POST', '/api/login', { email: 'senha@t.com', password: 'inicial123' })).status, 401);
+  const n = (await call('pw1', 'GET', '/api/notificacoes')).data;
+  assert.ok(n.rows.some((x) => x.kind === 'seguranca'));
+});
+
+test('notificações: lead distribuído avisa o especialista; leitura individual e geral', async () => {
+  const c = await call('admin', 'POST', '/api/cadastros', { name: 'Lead Notificado', phone1: '11 94444-5005', owner_id: '' });
+  const c1 = await userId('c1@t.com');
+  await call('admin', 'POST', '/api/distribuicao', { contact_ids: [c.data.id], method: 'manual', user_id: c1 });
+  const n = (await call('c1', 'GET', '/api/notificacoes')).data;
+  const item = n.rows.find((x) => x.kind === 'lead_distribuido' && x.link === `#/leads/${c.data.id}`);
+  assert.ok(item, 'notificação criada');
+  assert.ok(n.unread >= 1);
+  await call('c1', 'POST', '/api/notificacoes/lidas', { ids: [item.id] });
+  assert.ok((await call('c1', 'GET', '/api/notificacoes')).data.rows.find((x) => x.id === item.id).read_at);
+  await call('c1', 'POST', '/api/notificacoes/lidas', { all: true });
+  assert.equal((await call('c1', 'GET', '/api/notificacoes')).data.unread, 0);
+  assert.equal((await call('c2', 'POST', '/api/notificacoes/lidas', { ids: [item.id] })).data.updated, 0, 'não marca a de outro usuário');
+});
+
+test('funil: valor pela proposta, busca por telefone/e-mail, categoria e ações em massa (etapa e responsável)', async () => {
+  const a = await call('c1', 'POST', '/api/cadastros', { name: 'Massa Um', phone1: '21 97777-1234', email: 'massa.um@x.com', relationship: 'lead', origin: 'site', credit_category: 'imovel' });
+  const b = await call('c1', 'POST', '/api/cadastros', { name: 'Massa Dois', phone1: '21 97777-5678', relationship: 'lead', origin: 'site' });
+  const oa = (await call('c1', 'GET', `/api/cadastros/${a.data.id}`)).data.opportunities[0];
+  const ob = (await call('c1', 'GET', `/api/cadastros/${b.data.id}`)).data.opportunities[0];
+  await call('c1', 'POST', '/api/propostas', { opportunity_id: oa.id, credit_value: 230000 });
+  const f = (await call('c1', 'GET', '/api/funil?q=977771234')).data;
+  const card = f.stages.flatMap((s) => s.cards).find((x) => x.id === oa.id);
+  assert.ok(card, 'busca por telefone');
+  assert.equal(card.deal_value, 230000);
+  assert.equal(card.deal_value_source, 'proposta');
+  assert.ok((await call('c1', 'GET', '/api/funil?q=massa.um@x')).data.stages.some((s) => s.cards.some((x) => x.id === oa.id)), 'busca por e-mail');
+  const stages = (await call('c1', 'GET', '/api/meta')).data.stages;
+  const st = (k) => stages.find((s) => s.key === k).id;
+  const lost = await call('c1', 'POST', '/api/oportunidades/lote', { ids: [oa.id, ob.id], action: 'etapa', stage_id: st('perdido'), lost_reason: 'sem_interesse' });
+  assert.equal(lost.status, 200, JSON.stringify(lost.data));
+  assert.equal(lost.data.done, 2);
+  const skip = await call('c1', 'POST', '/api/oportunidades/lote', { ids: [oa.id], action: 'etapa', stage_id: st('negociacao'), reason: 'teste' });
+  assert.equal(skip.data.failed, 1, 'regras do funil valem na ação em massa');
+  assert.equal((await call('c1', 'POST', '/api/oportunidades/lote', { ids: [ob.id], action: 'responsavel', owner_id: await userId('gestor@t.com') })).status, 403);
+  const c2 = await userId('c2@t.com');
+  assert.equal((await call('gestor', 'POST', '/api/oportunidades/lote', { ids: [ob.id], action: 'responsavel', owner_id: c2 })).status, 403, 'fora da equipe do líder');
+  const tr = await call('admin', 'POST', '/api/oportunidades/lote', { ids: [ob.id], action: 'responsavel', owner_id: c2, stage_id: st('lead'), reason: 'Redistribuição' });
+  assert.equal(tr.status, 200, JSON.stringify(tr.data));
+  assert.equal(tr.data.done, 1, JSON.stringify(tr.data));
+  const moved = (await call('admin', 'GET', `/api/oportunidades/${ob.id}`)).data;
+  assert.equal(moved.owner_id, c2);
+  assert.equal(moved.stage_id, st('lead'));
+  assert.equal((await call('admin', 'GET', `/api/cadastros/${b.data.id}`)).data.owner_id, c2, 'cadastro acompanha');
+  assert.ok((await call('c2', 'GET', '/api/notificacoes')).data.rows.some((x) => x.kind === 'transferencia'));
+});
+
+test('exportação CSV só para o administrador; lista da discadora continua liberada', async () => {
+  assert.equal((await call('gestor', 'GET', '/api/exportar/oportunidades')).status, 403);
+  assert.equal((await call('c1', 'GET', '/api/exportar/propostas')).status, 403);
+  assert.equal((await call('admin', 'GET', '/api/exportar/oportunidades')).status, 200);
+  assert.equal((await call('c1', 'GET', '/api/exportar/lista_discadora')).status, 200);
+});
+
+test('propostas: recusa exige motivo, agenda a retomada e alimenta os motivos de recusa', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Recusa Motivo', phone1: '11 94444-6006' });
+  const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
+  const p = await call('c1', 'POST', '/api/propostas', { opportunity_id: opp.id, credit_value: 120000, status: 'apresentada' });
+  assert.equal((await call('c1', 'POST', `/api/propostas/${p.data.id}/status`, { status: 'recusada' })).status, 400);
+  const past = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  assert.equal((await call('c1', 'POST', `/api/propostas/${p.data.id}/status`, { status: 'recusada', refusal_reason: 'nao_e_momento', retake_at: past })).status, 400, 'retomada no futuro');
+  const future = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+  assert.equal((await call('c1', 'POST', `/api/propostas/${p.data.id}/status`, { status: 'recusada', refusal_reason: 'nao_e_momento', refusal_notes: 'Volta em um mês', retake_at: future })).status, 200);
+  const t = (await call('c1', 'GET', `/api/tarefas?contact_id=${c.data.id}&status=pendente`)).data.rows;
+  assert.ok(t.some((x) => x.type === 'retorno' && x.due_at.startsWith(future)));
+  const pan = (await call('c1', 'GET', '/api/propostas-panorama?status=recusada')).data;
+  const reason = pan.summary.recusas_por_motivo.find((r) => r.reason === 'nao_e_momento');
+  assert.ok(reason && reason.count >= 1 && reason.recuperavel);
+  assert.equal(pan.rows.find((r) => r.id === p.data.id).refusal_notes, 'Volta em um mês');
+});
+
+test('clientes: colunas, responsável pós-venda e filtros por situação, PF/PJ e categoria', async () => {
+  const r = (await call('c1', 'GET', '/api/clientes')).data;
+  assert.ok(r.rows.length >= 1);
+  const row = r.rows[0];
+  for (const k of ['code', 'name', 'active', 'postsale_name', 'seller_name', 'cartas', 'credit_total', 'categories', 'next_action', 'last_activity']) assert.ok(k in row, k);
+  assert.ok(r.rows.every((x) => x.seller_name === 'Cons 1' || x.postsale_name), 'especialista vê só os próprios');
+  const all = (await call('admin', 'GET', '/api/clientes')).data.total;
+  assert.ok(all >= r.total);
+  assert.ok((await call('admin', 'GET', '/api/clientes?category=so_imovel')).data.rows.every((x) => x.categories.length === 1 && x.categories[0] === 'imovel'));
+  assert.ok((await call('admin', 'GET', '/api/clientes?category=ambas')).data.rows.every((x) => x.categories.length > 1));
+  assert.equal((await call('admin', 'GET', '/api/clientes?kind=PJ')).data.rows.filter((x) => x.kind !== 'PJ').length, 0);
+  assert.equal((await call('admin', 'GET', '/api/clientes?active=0')).data.rows.filter((x) => x.active).length, 0);
+});
+
+test('pós-venda: checklist automático, responsável, NPS com motivo e tratativa, estratégia de lance com histórico', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente PosVenda', phone1: '11 94444-7007' });
+  await completeForSale(c.data.id);
+  const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
+  const { sale } = await sellViaFlow('c1', opp.id, 150000);
+  let ov = (await call('c1', 'GET', '/api/pos-venda?status=')).data;
+  let row = ov.rows.find((x) => x.id === c.data.id);
+  assert.ok(row, 'cliente entra no pós-venda após o pagamento');
+  assert.ok(row.checklist.find((i) => i.item === 'preferencias_contato').done_at, 'preferências informadas na confirmação');
+  assert.equal(row.postsale_name, 'Cons 1', 'padrão: especialista da venda');
+  const g = await userId('gestor@t.com');
+  assert.equal((await call('c1', 'POST', `/api/pos-venda/${c.data.id}/responsavel`, { user_id: g })).status, 403);
+  assert.equal((await call('gestor', 'POST', `/api/pos-venda/${c.data.id}/responsavel`, { user_id: g })).status, 200);
+  // NPS detrator com motivo → alerta, tarefa urgente e tratativa
+  const n = (await call('c1', 'POST', `/api/cadastros/${c.data.id}/nps`, {})).data;
+  assert.equal((await call(null, 'POST', '/api/publico/nps', { token: n.token, score: 3, reason: 'motivo_inexistente' })).status, 400);
+  assert.equal((await call(null, 'POST', '/api/publico/nps', { token: n.token, score: 3, reason: 'demora', comment: 'Demoraram a responder' })).status, 200);
+  let nb = (await call('c1', 'GET', '/api/pos-venda/nps')).data;
+  assert.ok(nb.alerts.some((a) => a.kind === 'detrator' && a.survey_id === n.id));
+  assert.ok(nb.summary.motivos.some((m) => m.reason === 'demora'));
+  assert.equal((await call('c1', 'POST', `/api/pos-venda/nps/${n.id}/tratativa`, { notes: 'curta' })).status, 400);
+  assert.equal((await call('c1', 'POST', `/api/pos-venda/nps/${n.id}/tratativa`, { notes: 'Liguei, pedi desculpas e combinei retorno semanal.' })).status, 200);
+  nb = (await call('c1', 'GET', '/api/pos-venda/nps')).data;
+  assert.ok(!nb.alerts.some((a) => a.kind === 'detrator' && a.survey_id === n.id));
+  assert.ok(nb.rows.find((x) => x.id === n.id).treated_by_name);
+  // Estratégia de lance: cada alteração vai para o histórico
+  const k = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.contracts[0];
+  await call('c1', 'POST', `/api/contratos/${k.id}/estrategia-lance`, { will_bid: true, bid_type: 'embutido' });
+  await call('c1', 'POST', `/api/contratos/${k.id}/estrategia-lance`, { will_bid: true, bid_type: 'livre', bid_pct: 20 });
+  const h = (await call('c1', 'GET', `/api/pos-venda/lances/${k.id}/historico`)).data.history;
+  assert.equal(h.length, 2);
+  assert.equal(h[0].bid_type, 'livre');
+  assert.ok(h[0].created_by_name && h[0].created_at);
+  const lb = (await call('c1', 'GET', '/api/pos-venda/lances')).data;
+  assert.equal(lb.rows.find((x) => x.id === k.id).changes, 2);
+  ov = (await call('c1', 'GET', '/api/pos-venda?status=')).data;
+  row = ov.rows.find((x) => x.id === c.data.id);
+  assert.ok(row.checklist.find((i) => i.item === 'estrategia_lance').done_at);
+  assert.equal((await call('c2', 'GET', `/api/pos-venda/lances/${k.id}/historico`)).status, 404, 'fora do escopo');
+  assert.ok(sale.id);
 });

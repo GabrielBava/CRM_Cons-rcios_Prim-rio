@@ -468,6 +468,7 @@ function publicUpload(db, token, body) {
     insertActivity(db, { contact_id: contact.id, type: 'cadastro', notes: `O cliente enviou um arquivo pelo link: ${clean(body.filename)} (${optionLabel(db, 'tipo_documento', clean(body.doc_type) || 'outro')}).`, source: 'cliente', ref_type: 'attachment', ref_id: id });
     audit(db, null, 'attachment', id, 'enviado_pelo_cliente', { arquivo: clean(body.filename) }, contact.id);
     notifyOwner(db, contact, 'Conferir documentos enviados pelo cliente');
+    require('./notifications').notify(db, contact.owner_id, { kind: 'documento', title: `${contact.name} enviou um documento pelo link`, body: `${optionLabel(db, 'tipo_documento', body.doc_type) || 'Documento'}: confira e aprove ou reprove.`, link: `#/leads/${contact.id}/documentos`, dedupe: true });
     return { ok: true };
   });
 }
@@ -622,6 +623,7 @@ function publicNpsForm(db, token) {
     first_name: String(contact.kind === 'PJ' ? contact.trade_name || contact.name : contact.name).split(/\s+/)[0],
     consultant: owner?.name || null,
     questions: NPS_QUESTIONS.map(([key, label]) => ({ key, label })),
+    reasons: db.prepare("SELECT value, label FROM options WHERE list = 'motivo_insatisfacao' AND active = 1 ORDER BY position").all(),
     expires_at: survey.expires_at,
   };
 }
@@ -642,19 +644,30 @@ function publicNpsSubmit(db, token, body = {}) {
     answers[key] = n;
   }
   const comment = clean(body.comment) ? clean(body.comment).slice(0, 2000) : null;
+  const reason = clean(body.reason);
+  if (reason && !db.prepare("SELECT 1 FROM options WHERE list = 'motivo_insatisfacao' AND value = ?").get(reason)) throw badRequest('Motivo inválido.');
   const now = nowIso();
   const category = score >= 9 ? 'promotor' : score >= 7 ? 'neutro' : 'detrator';
   return tx(db, () => {
-    db.prepare('UPDATE nps_surveys SET answered_at = ?, score = ?, answers = ?, comment = ?, token = NULL WHERE id = ?').run(now, score, JSON.stringify(answers), comment, survey.id);
+    db.prepare('UPDATE nps_surveys SET answered_at = ?, score = ?, answers = ?, comment = ?, dissatisfaction_reason = ?, token = NULL WHERE id = ?').run(now, score, JSON.stringify(answers), comment, score <= 8 ? reason ?? null : null, survey.id);
     db.prepare('UPDATE contacts SET nps_score = ?, nps_comment = ?, nps_at = ? WHERE id = ?').run(score, comment, now, contact.id);
     insertActivity(db, { contact_id: contact.id, type: 'pos_venda', notes: `Pesquisa de satisfação ${survey.code} respondida: nota ${score} (${category}).${comment ? ` Comentário: ${comment}` : ''}`, source: 'cliente' });
     audit(db, null, 'nps', survey.id, 'respondida', { nota: score }, contact.id);
+    const responsible = contact.postsale_owner_id || contact.owner_id;
     if (category === 'detrator') {
       const t = nowIso();
-      db.prepare("INSERT INTO tasks (contact_id, type, title, due_at, assigned_to, created_at, updated_at) VALUES (?, 'pos_venda', ?, ?, ?, ?, ?)").run(
-        contact.id, `Tratar avaliação NPS ${survey.code} (nota ${score})`, new Date(Date.now() + 86400000).toISOString(), contact.owner_id, t, t,
+      db.prepare("INSERT INTO tasks (contact_id, type, title, due_at, assigned_to, priority, created_at, updated_at) VALUES (?, 'pos_venda', ?, ?, ?, 'urgente', ?, ?)").run(
+        contact.id, `Tratar avaliação NPS ${survey.code} (nota ${score})`, new Date(Date.now() + 86400000).toISOString(), responsible, t, t,
       );
     }
+    const why = reason ? ` Motivo: ${optionLabel(db, 'motivo_insatisfacao', reason)}.` : '';
+    require('./notifications').notify(db, [responsible, contact.owner_id], {
+      kind: 'nps',
+      level: category === 'detrator' ? 'danger' : category === 'neutro' ? 'warn' : 'ok',
+      title: `${contact.name} respondeu a pesquisa de satisfação: nota ${score}`,
+      body: category === 'detrator' ? `Cliente insatisfeito (detrator).${why} Trate em até 24 h.` : category === 'neutro' ? `Cliente neutro.${why}` : 'Cliente promotor: bom momento para pedir indicações.',
+      link: '#/posvenda?aba=nps',
+    });
     return { ok: true };
   });
 }
@@ -663,10 +676,17 @@ function publicNpsSubmit(db, token, body = {}) {
 
 const BID_TYPES = { embutido: 'Embutido', fixo: 'Fixo', livre: 'Livre' };
 
+function bidHistory(db, contractId) {
+  return db
+    .prepare('SELECT h.*, u.name AS created_by_name FROM bid_strategy_history h LEFT JOIN users u ON u.id = h.created_by WHERE h.contract_id = ? ORDER BY h.created_at DESC, h.id DESC')
+    .all(contractId);
+}
+
 function listBidStrategies(db, contactId) {
   return db
     .prepare(`SELECT b.*, u.name AS updated_by_name FROM bid_strategies b LEFT JOIN users u ON u.id = b.updated_by WHERE b.contact_id = ?`)
-    .all(contactId);
+    .all(contactId)
+    .map((b) => ({ ...b, history: bidHistory(db, b.contract_id) }));
 }
 
 function saveBidStrategy(db, user, contractId, data) {
@@ -700,6 +720,9 @@ function saveBidStrategy(db, user, contractId, data) {
     const desc = !willBid ? 'sem lance' : `lance ${BID_TYPES[row.bid_type].toLowerCase()}${row.bid_type === 'livre' ? ` de ${row.bid_pct}%${row.use_embedded ? ', usando embutido' : ''}${row.use_fgts ? ', usando FGTS' : ''}` : ''}`;
     insertActivity(db, { contact_id: c.id, type: 'pos_venda', notes: `Estratégia de lance do ${k.code}: ${desc}.`, user_id: user.id });
     audit(db, user, 'bid_strategy', k.id, cur ? 'alterada' : 'registrada', row, c.id);
+    // Histórico: cada cadastro ou alteração fica registrado com quem fez, data e hora
+    db.prepare('INSERT INTO bid_strategy_history (contract_id, contact_id, will_bid, bid_type, bid_pct, use_embedded, use_fgts, notes, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(k.id, c.id, row.will_bid, row.bid_type, row.bid_pct, row.use_embedded, row.use_fgts, row.notes, user.id, now);
     markPostSale(db, user.id, c.id, 'estrategia_lance', `Registrada para ${k.code}.`);
   });
 }
@@ -728,6 +751,6 @@ function proposalSimulatorLink(db, user, contactId, data = {}) {
 module.exports = {
   lookupCep, saveAddress, deleteAddress, savePartner, uploadAttachment, listAttachments, getAttachment, reviewAttachment,
   saleChecklist, createClientLink, revokeClientLinks, activeClientLink, clientLinkHistory, publicForm, publicSubmit, publicUpload, publicCep, publicComplete, insertAttachment,
-  postSaleItems, togglePostSale, listNps, createNps, cancelNps, publicNpsForm, publicNpsSubmit, listBidStrategies, saveBidStrategy,
+  postSaleItems, togglePostSale, markPostSale, bidHistory, BID_TYPES, NPS_QUESTIONS, npsStatus, listNps, createNps, cancelNps, publicNpsForm, publicNpsSubmit, listBidStrategies, saveBidStrategy,
   proposalSimulatorLink, EXTERNAL_FIELDS,
 };

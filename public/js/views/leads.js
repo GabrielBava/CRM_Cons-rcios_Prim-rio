@@ -4,6 +4,7 @@ import {
   fmtDateTime, relTime, optLabel, K, can, toastError, crmTabs,
 } from '../ui.js';
 import { quickCreateContact } from '../forms.js';
+import { bindDrawerLinks } from '../drawer.js';
 
 let saved = { sort: 'recentes' };
 
@@ -21,7 +22,7 @@ export function contactsTable(rows) {
       { label: 'Código', render: (r) => html`<a href="${recordHref(r)}">${r.code}</a>` },
       {
         label: 'Nome',
-        render: (r) => html`<a href="${recordHref(r)}"><strong>${r.name}</strong></a> <small class="muted">${r.kind}</small>${r.active === 0 ? html` ${badge('Inativo', 'muted')}` : ''}<br>${relBadge(r.relationship)} ${r.temperature ? badge(optLabel('temperatura', r.temperature), `temp-${r.temperature}`) : ''} ${r.relationship !== 'cliente' ? badge(K('lead_status', r.lead_status)) : badge(K('client_status', r.client_status), 'ok')} ${optoutBadge(r.optouts)}`,
+        render: (r) => html`<a href="${recordHref(r)}" data-drawer="${r.id}"><strong>${r.name}</strong></a> <small class="muted">${r.kind}</small>${r.active === 0 ? html` ${badge('Inativo', 'muted')}` : ''}<br>${relBadge(r.relationship)} ${r.temperature ? badge(optLabel('temperatura', r.temperature), `temp-${r.temperature}`) : ''} ${r.relationship !== 'cliente' ? badge(K('lead_status', r.lead_status)) : badge(K('client_status', r.client_status), 'ok')} ${optoutBadge(r.optouts)}`,
       },
       { label: 'Contato', render: (r) => html`${r.phone1 || r.whatsapp || html`<span class="warn-text">sem telefone</span>`}<br><small>${r.email || ''}</small>` },
       { label: 'Cidade/UF', render: (r) => [r.city, r.state].filter(Boolean).join('/') || '—' },
@@ -44,7 +45,7 @@ export async function show(view, { params }, preset = {}) {
       <h1>${preset.title || 'Leads e prospects'}</h1>
       <div class="actions">
         ${can.write() && !fixed ? html`<button class="btn primary" data-act="new">+ Novo lead</button><a class="btn" href="#/importar">Importar CSV</a>` : ''}
-        ${state.user.role !== 'leitura' ? html`<button class="btn" data-act="export">Exportar CSV</button>` : ''}
+        ${can.admin() ? html`<button class="btn" data-act="export">Exportar CSV</button>` : ''}
         ${state.user.role !== 'leitura' && !fixed ? html`<button class="btn" data-act="export-dialer" title="Exclui automaticamente quem se opôs a ligações">Lista para discadora</button>` : ''}
       </div>
     </div>
@@ -104,6 +105,7 @@ export async function show(view, { params }, preset = {}) {
     load();
   });
   on(view, 'click', '[data-act=new]', () => quickCreateContact());
+  bindDrawerLinks(view);
   on(view, 'click', '[data-act=export]', () => download('/api/exportar/cadastros', { ...query(), page: undefined, limit: undefined }).catch(toastError));
   on(view, 'click', '[data-act=export-dialer]', () => download('/api/exportar/lista_discadora', { ...query(), page: undefined, limit: undefined }).catch(toastError));
   await load();

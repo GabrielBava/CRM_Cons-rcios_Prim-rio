@@ -247,10 +247,14 @@ function onClientLink(db, linkId, event) {
   if (event === 'access' && ps.status === 'link_gerado') {
     db.prepare("UPDATE pre_sales SET status = 'acessado', accessed_at = ?, updated_at = ? WHERE id = ?").run(now, now, ps.id);
     audit(db, null, 'pre_sale', ps.id, 'acessada_pelo_cliente', null, ps.contact_id);
+    const c = db.prepare('SELECT name FROM contacts WHERE id = ?').get(ps.contact_id);
+    require('./notifications').notify(db, ps.owner_id, { kind: 'prevenda', title: `${c?.name || 'O cliente'} abriu o link da ficha cadastral`, body: `Pré-venda ${ps.code}. Acompanhe e ajude no preenchimento se precisar.`, link: '#/prevenda' });
   }
   if (event === 'complete' && stepIndex(ps.status) < 2) {
     db.prepare("UPDATE pre_sales SET status = 'preenchido', accessed_at = COALESCE(accessed_at, ?), completed_at = ?, updated_at = ? WHERE id = ?").run(now, now, now, ps.id);
     audit(db, null, 'pre_sale', ps.id, 'concluida_pelo_cliente', null, ps.contact_id);
+    const c = db.prepare('SELECT name FROM contacts WHERE id = ?').get(ps.contact_id);
+    require('./notifications').notify(db, ps.owner_id, { kind: 'prevenda', level: 'ok', title: `${c?.name || 'O cliente'} concluiu a ficha cadastral`, body: `Pré-venda ${ps.code}: confira os dados e os documentos para seguir com o termo de adesão.`, link: '#/prevenda' });
     addTask(db, { contact_id: ps.contact_id, opportunity_id: ps.opportunity_id, type: 'pre_venda', title: `Conferir o cadastro enviado pelo cliente (${ps.code})`, notes: 'Valide os documentos enviados e confira os dados antes do termo de adesão.', due_at: new Date(Date.now() + 4 * 3600000).toISOString(), assigned_to: ps.owner_id, pre_sale_id: ps.id, priority: 'alta' });
   }
 }
@@ -315,6 +319,8 @@ function advancePreSale(db, user, id, data) {
     insertActivity(db, { contact_id: ps.contact_id, opportunity_id: ps.opportunity_id, type: 'cadastro', notes: `Pré-venda ${ps.code}: ${PRESALE_STATUS[to]}.${sale ? ` Venda ${sale.code} registrada, aguardando o pagamento.` : ''}`, user_id: user.id });
     audit(db, user, 'pre_sale', ps.id, to, Object.fromEntries(Object.entries(upd).filter(([k]) => !['status', 'updated_at'].includes(k))), ps.contact_id);
     db.prepare("UPDATE tasks SET status = 'concluida', completed_at = ?, completed_by = ?, updated_at = ? WHERE pre_sale_id = ? AND status = 'pendente' AND priority = 'urgente'").run(now, user.id, now, ps.id);
+    // Conferida a ficha, as tarefas de envio do link e de conferência deixam de fazer sentido
+    if (to === 'conferido') db.prepare("UPDATE tasks SET status = 'concluida', completed_at = ?, completed_by = ?, updated_at = ? WHERE pre_sale_id = ? AND status = 'pendente' AND type = 'pre_venda'").run(now, user.id, now, ps.id);
     return { ok: true, sale };
   });
 }
@@ -345,6 +351,7 @@ function presaleSweep(db) {
     const title = ps.status === 'link_gerado' ? `URGENTE: revisar pré-venda ${ps.code} (cliente não acessou o link)` : `URGENTE: revisar pré-venda ${ps.code} (cliente acessou e não concluiu)`;
     tx(db, () => {
       addTask(db, { contact_id: ps.contact_id, opportunity_id: ps.opportunity_id, type: 'pre_venda', title, notes: `Mais de ${hours} horas sem avanço. Entre em contato com o cliente e ajude no preenchimento.`, due_at: nowIso(), assigned_to: ps.owner_id, priority: 'urgente', pre_sale_id: ps.id });
+      require('./notifications').notify(db, ps.owner_id, { kind: 'prevenda_parada', level: 'danger', title: `Pré-venda ${ps.code} parada há mais de ${hours} h`, body: ps.status === 'link_gerado' ? 'O cliente ainda não acessou o link.' : 'O cliente acessou e não concluiu o cadastro.', link: '#/prevenda' });
       db.prepare('UPDATE pre_sales SET alert_status = ? WHERE id = ?').run(ps.status, ps.id);
     });
     n++;
@@ -487,6 +494,10 @@ function confirmSale(db, user, id, data) {
       db.prepare(`UPDATE contacts SET ${Object.keys(prefs).map((k) => `${k} = ?`).join(', ')}, pref_updated_at = ?, pref_source = ? WHERE id = ?`).run(...Object.values(prefs), now, 'Informado na confirmação da venda', s.contact_id);
     }
     const comm = generateCommissions(db, { ...s, payment_date: paymentDate });
+    // Pós-venda: responsável (padrão da empresa ou o especialista da venda) e preferências de contato informadas
+    const postsaleDefault = getSetting(db, 'postsale_user_id');
+    db.prepare('UPDATE contacts SET postsale_owner_id = COALESCE(postsale_owner_id, ?) WHERE id = ?').run(postsaleDefault || s.seller_id || null, s.contact_id);
+    if (Object.keys(prefs).length) record.markPostSale(db, user.id, s.contact_id, 'preferencias_contato', `Informadas na confirmação da venda ${s.code}.`);
     db.prepare("UPDATE tasks SET status = 'concluida', completed_at = ?, completed_by = ?, updated_at = ? WHERE sale_id = ? AND status = 'pendente'").run(now, user.id, now, s.id);
     addTask(db, {
       contact_id: s.contact_id,
@@ -502,6 +513,9 @@ function confirmSale(db, user, id, data) {
     });
     insertActivity(db, { contact_id: s.contact_id, opportunity_id: s.opportunity_id, type: 'cadastro', notes: `Venda ${s.code} confirmada: pagamento em ${paymentDate.split('-').reverse().join('/')}. Produto contratado ${contract.code} registrado.${comm.count ? ` ${comm.count} parcela(s) de comissão prevista(s).` : ' Sem tabela de comissão cadastrada para o plano/administradora.'}`, user_id: user.id });
     audit(db, user, 'sale', s.id, 'confirmada', { pagamento: paymentDate, contrato: contract.code, comissoes: comm.count }, s.contact_id);
+    const cName = db.prepare('SELECT name FROM contacts WHERE id = ?').get(s.contact_id)?.name;
+    const notifs = require('./notifications');
+    notifs.notify(db, [s.seller_id, ...notifs.managersOf(db, s.seller_id)], { kind: 'venda', level: 'ok', title: `Venda ${s.code} confirmada: ${cName}`, body: `Crédito de R$ ${Number(s.credit_value || 0).toLocaleString('pt-BR')}. Onboarding agendado.`, link: '#/vendas', exclude: user.id });
     return { ok: true, contract, commissions: comm.count };
   });
 }
@@ -548,7 +562,12 @@ function generateCommissions(db, sale) {
 
 /** Libera as parcelas cuja carência (ex.: 7 dias sem cancelamento) já passou. */
 function commissionSweep(db) {
-  return db.prepare("UPDATE commission_entries SET status = 'liberada', updated_at = ? WHERE status = 'prevista' AND release_on <= ?").run(nowIso(), today()).changes;
+  const due = db.prepare("SELECT user_id, COUNT(*) AS n, SUM(amount) AS total FROM commission_entries WHERE status = 'prevista' AND release_on <= ? GROUP BY user_id").all(today());
+  const changes = db.prepare("UPDATE commission_entries SET status = 'liberada', updated_at = ? WHERE status = 'prevista' AND release_on <= ?").run(nowIso(), today()).changes;
+  for (const d of due) {
+    require('./notifications').notify(db, d.user_id, { kind: 'comissao', level: 'ok', title: `Comissão liberada: R$ ${round2(d.total).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, body: `${d.n} parcela(s) passaram da carência e estão liberadas para pagamento.`, link: '#/comissoes' });
+  }
+  return changes;
 }
 
 function commissionScope(db, user, alias = 'ce') {
@@ -655,9 +674,12 @@ function registerCancellation(db, user, saleId, data) {
     }
     db.prepare('UPDATE cancellations SET chargeback_total = ? WHERE id = ?').run(chargeback, cid);
     db.prepare("UPDATE sales SET status = 'cancelada', cancelled_at = ?, cancel_reason = ?, updated_at = ? WHERE id = ?").run(now, reason, now, s.id);
+    // Tarefas da venda (onboarding, confirmação) deixam de valer
+    db.prepare("UPDATE tasks SET status = 'cancelada', notes = COALESCE(notes, '') || ?, updated_at = ? WHERE sale_id = ? AND status = 'pendente'").run(`\n[Venda cancelada: ${code}]`, now, s.id);
     if (s.contract_id) db.prepare("UPDATE contracts SET status = 'cancelado', updated_at = ? WHERE id = ?").run(now, s.contract_id);
     insertActivity(db, { contact_id: s.contact_id, opportunity_id: s.opportunity_id, type: 'cadastro', notes: `Cancelamento ${code} da venda ${s.code}: ${optionLabel(db, 'motivo_cancelamento', reason)} — ${description}${chargeback ? ` Estorno de comissão: R$ ${chargeback.toFixed(2).replace('.', ',')}.` : ''}`, user_id: user.id });
     audit(db, user, 'sale', s.id, 'cancelada', { cancelamento: code, motivo: reason, dias_apos_venda: days, estorno: chargeback, responsavel: responsible }, s.contact_id);
+    require('./notifications').notify(db, [responsible, s.seller_id], { kind: 'cancelamento', level: 'danger', title: `Cancelamento ${code} da venda ${s.code}`, body: `${optionLabel(db, 'motivo_cancelamento', reason)}.${chargeback ? ` Estorno de R$ ${chargeback.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}.` : ''}`, link: '#/comissoes?aba=cancelamentos', exclude: user.id });
     return { id: cid, code, chargeback };
   });
 }

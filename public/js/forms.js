@@ -555,12 +555,14 @@ export async function proposalDetail(id, onChange) {
     </div>`}
     ${p.accepted_at ? html`<div class="alert">Aceite em ${fmtDate(p.accepted_at)} via ${optLabel('canal_aceite', p.accepted_channel)}. Próxima etapa: <a href="#/prevenda">pré-venda</a>.</div>` : ''}
     ${['apresentada', 'em_analise'].includes(p.status) && can.write() ? html`<div class="inline-actions"><label>Retorno do cliente <select name="response"><option value="">—</option>${opts('resposta_proposta').map((o) => html`<option value="${o.value}" ${p.last_response === o.value ? raw('selected') : ''}>${o.label}</option>`)}</select></label><button type="button" class="btn small" data-act="response">Registrar retorno</button>${p.last_response_at ? html`<small class="muted">último: ${fmtDateTime(p.last_response_at)}</small>` : ''}</div>` : ''}
-    ${p.refusal_reason ? html`<div class="alert warn">Recusada: ${optLabel('motivo_recusa_proposta', p.refusal_reason)}.</div>` : ''}
+    ${p.refusal_reason ? html`<div class="alert warn">Recusada${p.refused_at ? ` em ${fmtDate(p.refused_at)}` : ''}: <strong>${optLabel('motivo_recusa_proposta', p.refusal_reason)}</strong>.${p.refusal_notes ? ` ${p.refusal_notes}` : ''}${p.retake_at ? html`<br>Retomar contato em ${fmtDate(p.retake_at)}.` : ''}</div>` : ''}
     ${!final && can.write() ? html`<div class="inline-actions"><label>Alterar status para <select name="new_status"><option value="">—</option>${nextStatuses.map((s) => html`<option value="${s}">${K('proposal_status', s)}</option>`)}</select></label>
       <label class="st-extra st-aprovada" hidden>Canal do aceite <select name="accepted_channel"><option value="">Selecione…</option>${opts('canal_aceite').map((o) => html`<option value="${o.value}">${o.label}</option>`)}</select></label>
       <label class="st-extra st-aprovada" hidden>Data do aceite <input type="date" name="accepted_at" value="${new Date().toISOString().slice(0, 10)}"></label>
       <label class="st-extra st-apresentada" hidden>Enviada por <select name="sent_channel"><option value="whatsapp">WhatsApp</option><option value="email">E-mail</option><option value="presencial">Presencial</option><option value="video">Videochamada</option></select></label>
-      <label class="st-extra st-recusada" hidden>Motivo <select name="refusal_reason"><option value="">Selecione…</option>${opts('motivo_recusa_proposta').map((o) => html`<option value="${o.value}">${o.label}</option>`)}</select></label>
+      <label class="st-extra st-recusada" hidden>Motivo da recusa <select name="refusal_reason"><option value="">Selecione…</option>${opts('motivo_recusa_proposta').map((o) => html`<option value="${o.value}">${o.label}${o.flags?.recuperavel ? ' (recuperável)' : ''}</option>`)}</select></label>
+      <label class="st-extra st-recusada" hidden>Detalhe <input name="refusal_notes" placeholder="O que o cliente disse?"></label>
+      <label class="st-extra st-recusada" hidden>Retomar contato em <input type="date" name="retake_at"></label>
       <button type="button" class="btn small" data-act="apply-status">Aplicar</button></div>` : ''}
     ${p.status !== 'substituida' && can.write() ? html`<p><button type="button" class="btn small" data-act="new-version">Criar nova versão</button> <small class="muted">A versão atual será marcada como substituída (se ainda estiver em aberto) e preservada no histórico.</small></p>` : ''}
     <h3>Versões</h3>
@@ -589,7 +591,7 @@ export async function proposalDetail(id, onChange) {
         const s = form.new_status.value;
         if (!s) return;
         try {
-          await post(`/api/propostas/${p.id}/status`, { status: s, accepted_channel: form.accepted_channel?.value, accepted_at: form.accepted_at?.value, refusal_reason: form.refusal_reason?.value, sent_channel: form.sent_channel?.value });
+          await post(`/api/propostas/${p.id}/status`, { status: s, accepted_channel: form.accepted_channel?.value, accepted_at: form.accepted_at?.value, refusal_reason: form.refusal_reason?.value, refusal_notes: form.refusal_notes?.value, retake_at: form.retake_at?.value || undefined, sent_channel: form.sent_channel?.value });
           if (s === 'aprovada') toast('Aceite registrado. A pré-venda foi aberta (veja em Pré-venda).');
           else if (s === 'apresentada') toast('Proposta enviada: a esteira de follow-up D0 a D10 foi criada na agenda.');
           else toast('Status atualizado.');

@@ -126,6 +126,7 @@ function assign(db, user, contactId, toUser, method) {
   const label = { manual: 'manualmente', roleta: 'pela roleta', auto: 'automaticamente pela roleta', redistribuicao: 'por redistribuição' }[method] || method;
   insertActivity(db, { contact_id: c.id, type: 'cadastro', notes: `Cadastro distribuído ${label} para ${toName}.`, user_id: user?.id ?? null });
   audit(db, user, 'contact', c.id, 'distribuido', { para: toName, metodo: method }, c.id);
+  require('./notifications').notify(db, toUser, { kind: 'lead_distribuido', level: 'warn', title: `Novo lead para você: ${c.name}`, body: `Origem: ${optionLabel(db, 'origem', c.origin) || 'não informada'}. Faça o primeiro contato em até ${hours >= 1 ? `${hours} hora(s)` : `${Math.round(hours * 60)} minutos`}.`, link: `#/leads/${c.id}`, exclude: user?.id });
 }
 
 /** Distribui os cadastros escolhidos para um especialista ou pela roleta. */
@@ -158,7 +159,12 @@ function distribute(db, user, data) {
 /** Distribuição automática na entrada (API de leads, importação), se ligada. */
 function autoDistribute(db, contactId) {
   const cfg = roleta(db);
-  if (!cfg.auto) return null;
+  if (!cfg.auto) {
+    // Sem roleta automática: avisa quem distribui (administradores e líderes), sem repetir enquanto houver aviso não lido
+    const ids = db.prepare("SELECT id FROM users WHERE role IN ('admin','gestor') AND active = 1").all().map((u) => u.id);
+    require('./notifications').notify(db, ids, { kind: 'fila', level: 'warn', title: 'Novos leads aguardando distribuição', body: 'Há leads recebidos sem especialista na fila de Prospects e leads.', link: '#/entrada', dedupe: true });
+    return null;
+  }
   const c = db.prepare('SELECT * FROM contacts WHERE id = ?').get(contactId);
   if (!c || c.owner_id) return null;
   const to = pickNext(db, c, cfg);

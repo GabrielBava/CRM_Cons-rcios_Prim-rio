@@ -138,7 +138,7 @@ function createOpportunityRow(db, user, data) {
     contact_id: contact.id,
     stage_id: stage.id,
     status: 'aberta',
-    owner_id: o.owner_id ?? contact.owner_id ?? user.id,
+    owner_id: o.owner_id ?? contact.owner_id ?? null, // lead sem responsável: o negócio também fica sem, até a distribuição
     stage_entered_at: now,
     created_by: user.id,
     updated_by: user.id,
@@ -348,9 +348,21 @@ function oppFilters(db, user, q) {
   if (q.next_action === 'atrasada') where.push("o.next_action_at IS NOT NULL AND o.next_action_at < strftime('%Y-%m-%dT%H:%M:%fZ','now') AND o.status = 'aberta'");
   if (q.next_action === 'hoje') where.push("date(o.next_action_at, 'localtime') = date('now', 'localtime')");
   if (q.next_action === 'sem') where.push("o.next_action IS NULL AND o.status = 'aberta'");
+  if (q.category) {
+    where.push('COALESCE(o.credit_category, p.category) = ?');
+    params.push(q.category);
+  }
   if (q.q) {
-    where.push('(c.name LIKE ? OR o.code = ? OR o.title LIKE ? OR c.code = ?)');
-    params.push(`%${q.q}%`, String(q.q).toUpperCase(), `%${q.q}%`, String(q.q).toUpperCase());
+    // Nome, código do cadastro ou do negócio, telefone/WhatsApp (só dígitos) ou e-mail
+    const term = String(q.q).trim();
+    const d = term.replace(/\D/g, '');
+    const or = ['c.name LIKE ?', 'c.trade_name LIKE ?', 'o.code = ?', 'o.title LIKE ?', 'c.code = ?', 'c.email_norm LIKE ?'];
+    params.push(`%${term}%`, `%${term}%`, term.toUpperCase(), `%${term}%`, term.toUpperCase(), `%${term.toLowerCase()}%`);
+    if (d.length >= 4) {
+      or.push('c.phone1_norm LIKE ?', 'c.phone2_norm LIKE ?', 'c.whatsapp_norm LIKE ?');
+      params.push(`%${d}%`, `%${d}%`, `%${d}%`);
+    }
+    where.push(`(${or.join(' OR ')})`);
   }
   if (q.from) {
     where.push('o.created_at >= ?');
@@ -363,7 +375,11 @@ function oppFilters(db, user, q) {
   return { where, params };
 }
 
+// deal_value: valor de referência do negócio = maior proposta ativa (gerada, enviada, em análise ou aceita); sem proposta, o crédito desejado
 const OPP_SELECT = `SELECT o.*, c.name AS contact_name, c.code AS contact_code, c.kind AS contact_kind, c.origin AS contact_origin,
+  c.created_at AS contact_created_at, c.temperature AS contact_temperature, c.relationship AS contact_relationship,
+  (SELECT MAX(pr.credit_value) FROM proposals pr WHERE pr.opportunity_id = o.id AND pr.status IN ('rascunho','apresentada','em_analise','aprovada')) AS proposal_value,
+  (SELECT COUNT(*) FROM proposals pr WHERE pr.opportunity_id = o.id AND pr.status <> 'substituida') AS proposal_count,
   c.optouts AS contact_optouts, s.name AS stage_name, s.kind AS stage_kind, p.name AS product_name, u.name AS owner_name,
   (SELECT t.title || '|' || t.due_at FROM tasks t WHERE t.opportunity_id = o.id AND t.status = 'pendente' ORDER BY t.due_at LIMIT 1) AS next_task
   FROM opportunities o JOIN contacts c ON c.id = o.contact_id JOIN pipeline_stages s ON s.id = o.stage_id
@@ -388,6 +404,8 @@ function decorate(db, rows) {
     }
     delete r.next_task;
     r.custom = JSON.parse(r.custom || '{}');
+    r.deal_value = r.proposal_value ?? r.credit_value ?? null;
+    r.deal_value_source = r.proposal_value != null ? 'proposta' : r.credit_value != null ? 'desejado' : null;
   }
   return rows;
 }
@@ -402,10 +420,66 @@ function board(db, user, q) {
   return {
     stages: stages.map((s) => {
       const cards = rows.filter((r) => r.stage_id === s.id);
-      return { ...s, count: cards.length, total_credit: cards.reduce((a, r) => a + (r.credit_value || 0), 0), cards };
+      return { ...s, count: cards.length, total_credit: cards.reduce((a, r) => a + (r.deal_value || 0), 0), cards };
     }),
     closed_days: closedDays,
   };
+}
+
+/**
+ * Ações em massa no funil: mover os cartões selecionados para uma etapa ou transferir para outro responsável
+ * (com a etapa de destino). Cada cartão é processado separadamente: os que não cumprem as regras são informados.
+ */
+function bulkAction(db, user, data) {
+  const ids = [...new Set((Array.isArray(data.ids) ? data.ids : []).map(Number).filter(Boolean))];
+  if (!ids.length) throw badRequest('Selecione ao menos um cartão.');
+  if (ids.length > 200) throw badRequest('Selecione no máximo 200 cartões por vez.');
+  const action = data.action === 'responsavel' ? 'responsavel' : 'etapa';
+  const stageId = data.stage_id ? Number(data.stage_id) : null;
+  const moveData = { stage_id: stageId, lost_reason: data.lost_reason, lost_notes: data.lost_notes, pause_reason: data.pause_reason, return_at: data.return_at, reason: data.reason };
+  let toUser = null;
+  if (action === 'etapa' && !stageId) throw badRequest('Escolha a etapa de destino.');
+  if (action === 'responsavel') {
+    if (!['admin', 'gestor'].includes(user.role)) throw forbidden('Apenas o administrador ou o líder de equipe transfere negócios entre responsáveis.');
+    toUser = db.prepare('SELECT id, name FROM users WHERE id = ? AND active = 1').get(Number(data.owner_id));
+    if (!toUser) throw badRequest('Escolha o novo responsável.');
+    assertAssignable(db, user, toUser.id);
+  }
+  const results = [];
+  for (const id of ids) {
+    const row = { id, ok: true };
+    try {
+      tx(db, () => {
+        const o = loadOpp(db, user, id, { write: true });
+        row.code = o.code;
+        if (action === 'responsavel' && o.owner_id !== toUser.id) {
+          const now = nowIso();
+          const c = db.prepare('SELECT id, name, owner_id FROM contacts WHERE id = ?').get(o.contact_id);
+          db.prepare('UPDATE opportunities SET owner_id = ?, updated_at = ? WHERE id = ?').run(toUser.id, now, o.id);
+          if (!c.owner_id || c.owner_id === o.owner_id) {
+            db.prepare('UPDATE contacts SET owner_id = ?, assigned_at = ?, assigned_by = ?, updated_at = ? WHERE id = ?').run(toUser.id, now, user.id, now, c.id);
+            db.prepare("UPDATE tasks SET assigned_to = ?, updated_at = ? WHERE contact_id = ? AND status = 'pendente' AND (assigned_to IS NULL OR assigned_to = ?)").run(toUser.id, now, c.id, o.owner_id ?? -1);
+          }
+          db.prepare('INSERT INTO distribution_log (contact_id, from_user, to_user, method, by_user, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(c.id, o.owner_id ?? null, toUser.id, 'transferencia', user.id, now);
+          insertActivity(db, { contact_id: c.id, opportunity_id: o.id, type: 'cadastro', notes: `Negócio ${o.code} transferido para ${toUser.name}${clean(data.reason) ? `: ${clean(data.reason)}` : ''}.`, user_id: user.id });
+          audit(db, user, 'opportunity', o.id, 'transferida', { de: o.owner_id, para: toUser.id }, c.id);
+        }
+        if (stageId && stageId !== o.stage_id) {
+          const md = action === 'responsavel' ? { ...moveData, reason: clean(data.reason) || `Transferido para ${toUser.name}` } : moveData;
+          moveStage(db, user, o.id, md);
+        }
+      });
+    } catch (e) {
+      row.ok = false;
+      row.error = e.message;
+    }
+    results.push(row);
+  }
+  const done = results.filter((r) => r.ok).length;
+  if (action === 'responsavel' && done) {
+    require('./notifications').notify(db, toUser.id, { kind: 'transferencia', level: 'warn', title: `${done} negócio(s) transferido(s) para você`, body: `Transferência feita por ${user.name}. Confira no funil.`, link: '#/funil', exclude: user.id });
+  }
+  return { done, failed: results.length - done, results };
 }
 
 function listOpportunities(db, user, q) {
@@ -493,6 +567,7 @@ module.exports = {
   getOpportunity,
   loadOpp,
   listStages,
+  bulkAction,
   saveStage,
   reorderStages,
   assertOption,

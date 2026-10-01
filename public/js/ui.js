@@ -358,3 +358,11 @@ export const crmTabs = (active) =>
 export const hasModule = (m) => (state.user?.modules || []).includes(m);
 /** Mês atual no formato AAAA-MM e rótulo por extenso. */
 export const monthLabel = (m) => new Date(`${m}-15T12:00:00`).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+
+/** Foto do usuário (ou iniciais, quando não houver foto). size: px. */
+export function avatar(u, size = 32) {
+  const initials = String(u?.name || '?').trim().split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]).join('').toUpperCase();
+  const hue = [...String(u?.name || '')].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
+  if (u?.photo) return html`<img class="avatar" src="${u.photo}" alt="" width="${size}" height="${size}" style="width:${size}px;height:${size}px">`;
+  return html`<span class="avatar initials" aria-hidden="true" style="width:${size}px;height:${size}px;font-size:${Math.round(size * 0.4)}px;background:hsl(${hue} 45% 42%)">${initials}</span>`;
+}

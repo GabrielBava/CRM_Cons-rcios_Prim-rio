@@ -57,7 +57,6 @@ const TABS = [
   ['integracoes', 'Integrações', false],
   ['geral', 'Geral', true],
   ['auditoria', 'Auditoria', true],
-  ['conta', 'Minha conta', false],
 ];
 
 export async function show(view, { id }) {
@@ -65,8 +64,7 @@ export async function show(view, { id }) {
   let tab = tabs.find(([k]) => k === id)?.[0] || tabs[0][0];
   render(view, html`<div class="page">
     <div class="page-head"><h1>Configurações</h1></div>
-    ${can.admin() ? html`<p class="hint">Usuários, equipes e permissões ficam em <a href="#/usuarios">16. Usuários</a>.</p>` : ''}
-    ${!can.admin() ? html`<p class="hint">Seu perfil (${state.user.role_label}) pode consultar o status das integrações e alterar a própria senha. Demais configurações são exclusivas de administradores.</p>` : ''}
+    ${can.admin() ? html`<p class="hint">Usuários, equipes e permissões ficam em <a href="#/usuarios">17. Usuários</a>.</p>` : ''}
     <nav class="tabs">${tabs.map(([k, l]) => html`<a href="#/configuracoes/${k}" data-tab="${k}" class="${tab === k ? 'active' : ''}">${l}</a>`)}</nav>
     <div id="tab"></div></div>`);
   const draw = async () => {
@@ -370,6 +368,8 @@ const RENDER = {
       ${field({ name: 'client_link_days', label: 'Validade do link para o cliente atualizar os dados (dias)', type: 'number', value: s.client_link_days, min: 1 })}
       ${field({ name: 'finance_user_id', label: 'Responsável financeiro (recebe os alertas de parcelas em atraso)', type: 'select', options: userItems(), value: s.finance_user_id, placeholder: 'Responsável pelo cliente' })}
       ${field({ name: 'company_name', label: 'Nome da empresa (usado na pesquisa de satisfação)', value: s.company_name })}
+      ${field({ name: 'logout_url', label: 'Site da empresa (para onde o usuário vai ao sair do sistema)', type: 'url', value: s.logout_url, placeholder: 'https://www.suaempresa.com.br', help: 'Em branco, o usuário volta para a tela de login.' })}
+      ${field({ name: 'postsale_user_id', label: 'Responsável pós-venda padrão dos novos clientes', type: 'select', options: userItems(), value: s.postsale_user_id, placeholder: 'O especialista da venda' })}
       ${field({ name: 'nps_link_days', label: 'Validade do link da pesquisa de satisfação (dias)', type: 'number', value: s.nps_link_days, min: 1 })}
       ${field({ name: 'proposal_simulator_url', label: 'Endereço do simulador de propostas', type: 'url', value: s.proposal_simulator_url, full: true, help: 'O botão "Gerar proposta" abre este endereço com o nome completo e o contato do cliente (parâmetros nome e contato).' })}
       ${field({ name: 'presale_alert_hours', label: 'Alertar pré-venda sem acesso ou sem preenchimento após (horas)', type: 'number', value: s.presale_alert_hours, min: 1, help: 'Cria a tarefa urgente "Revisar pré-venda" para o especialista.' })}
@@ -423,22 +423,5 @@ const RENDER = {
       { label: 'Ação', key: 'action' },
       { label: 'Detalhes', render: (r) => (r.changes ? html`<code class="clip">${JSON.stringify(r.changes)}</code>` : '—') },
     ], rows)}</section>`);
-  },
-
-  async conta(box) {
-    render(box, html`<form class="card narrow" id="pw"><h3>Alterar minha senha</h3>
-      ${field({ name: 'current', label: 'Senha atual', type: 'password', required: true })}
-      ${field({ name: 'password', label: 'Nova senha (mín. 8 caracteres)', type: 'password', required: true })}
-      <button class="btn primary" type="submit">Alterar senha</button></form>`);
-    $('#pw', box).addEventListener('submit', async (e) => {
-      e.preventDefault();
-      try {
-        await post('/api/me/senha', formData(e.target));
-        toast('Senha alterada.');
-        e.target.reset();
-      } catch (ex) {
-        toastError(ex);
-      }
-    });
   },
 };

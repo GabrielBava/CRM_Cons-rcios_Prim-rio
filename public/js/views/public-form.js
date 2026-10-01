@@ -168,12 +168,17 @@ export async function showNps(app, token) {
       <div class="q"><h2>De 0 a 10, quanto você recomendaria ${company} a um amigo ou familiar? <span class="req">*</span></h2>
         ${scale('score', 0, 10)}<div class="scale-legend"><span>Nada provável</span><span>Muito provável</span></div></div>
       ${d.questions.map((q) => html`<div class="q"><h3>${q.label}</h3>${scale(`q_${q.key}`, 1, 5)}<div class="scale-legend"><span>Muito ruim</span><span>Excelente</span></div></div>`)}
+      ${d.reasons?.length ? html`<div class="q nps-reason" hidden><h3>O que mais pesou na sua nota?</h3>${field({ name: 'reason', label: 'Motivo principal', type: 'select', options: d.reasons, full: true })}</div>` : ''}
       ${field({ name: 'comment', label: 'O que podemos melhorar? (opcional)', type: 'textarea', full: true, rows: 3 })}
       <div class="modal-error" hidden></div>
       <div class="form-actions"><button class="btn primary" type="submit">Enviar avaliação</button></div>
       <p class="small muted">Pesquisa válida até ${fmtDateTime(d.expires_at)}.</p>
     </form></div>`);
   const form = $('#nps', app);
+  // Notas até 8: pergunta o motivo principal (alimenta os motivos de insatisfação no pós-venda)
+  form.addEventListener('change', (e) => {
+    if (e.target.name === 'score' && $('.nps-reason', form)) $('.nps-reason', form).hidden = Number(e.target.value) > 8;
+  });
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const err = $('.modal-error', form);
@@ -187,7 +192,7 @@ export async function showNps(app, token) {
     const answers = {};
     for (const q of d.questions) if (all[`q_${q.key}`] !== undefined) answers[q.key] = Number(all[`q_${q.key}`]);
     try {
-      await post('/api/publico/nps', { token, score: Number(all.score), answers, comment: all.comment });
+      await post('/api/publico/nps', { token, score: Number(all.score), answers, comment: all.comment, reason: Number(all.score) <= 8 ? all.reason || undefined : undefined });
       render(app, html`<div class="public-page"><div class="card"><h1>Obrigado!</h1><p>Sua avaliação foi registrada. Ela é muito importante para ${company}.</p></div></div>`);
     } catch (ex) {
       err.hidden = false;

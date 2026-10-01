@@ -1,4 +1,4 @@
-// 12. Treinamentos: materiais em PDF, vídeo, link ou texto por tema (FGTS, como funciona o consórcio, cálculos, lances…),
+// 13. Treinamentos: materiais em PDF, vídeo, link ou texto por tema (FGTS, como funciona o consórcio, cálculos, lances…),
 // com questionário de verificação, obrigatoriedade por perfil e acompanhamento de progresso pelo administrador.
 import { get, post } from '../api.js';
 import { html, render, raw, $, $$, on, fresh, badge, field, modal, opts, optLabel, toast, toastError, can, subnav, fmtDate, fmtDateTime, empty, state } from '../ui.js';

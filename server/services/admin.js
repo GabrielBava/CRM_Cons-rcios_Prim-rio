@@ -268,6 +268,17 @@ function saveSettings(db, user, data) {
     for (const [k, v] of Object.entries(sr)) clean2[k] = (Array.isArray(v) ? v : []).filter((r) => RULES[r]);
     setSetting(db, 'stage_rules', clean2);
   }
+  if (data.logout_url !== undefined) {
+    let url = String(data.logout_url || '').trim();
+    if (url && !/^https?:\/\//i.test(url)) url = `https://${url}`;
+    if (url && !/^https?:\/\/[^\s/$.?#].[^\s]*$/i.test(url)) throw badRequest('Endereço do site inválido.');
+    setSetting(db, 'logout_url', url);
+  }
+  if (data.postsale_user_id !== undefined) {
+    const id = data.postsale_user_id ? Number(data.postsale_user_id) : null;
+    if (id && !db.prepare('SELECT 1 FROM users WHERE id = ? AND active = 1').get(id)) throw badRequest('Responsável pós-venda inválido.');
+    setSetting(db, 'postsale_user_id', id);
+  }
   if (data.company_name !== undefined) setSetting(db, 'company_name', String(data.company_name || '').trim().slice(0, 120));
   if (data.nps_link_days !== undefined) {
     const n = Number(data.nps_link_days);
@@ -320,7 +331,7 @@ function meta(db, user) {
     (options[o.list] ||= []).push({ ...o, flags: JSON.parse(o.flags || '{}') });
   }
   return {
-    user: { id: user.id, name: user.name, email: user.email, role: user.role, role_label: ROLES[user.role], team_id: user.team_id, modules: perms.userModules(user) },
+    user: { id: user.id, name: user.name, email: user.email, role: user.role, role_label: ROLES[user.role], team_id: user.team_id, modules: perms.userModules(user), photo: user.photo || null, job_title: user.job_title || null },
     modules: perms.MODULES,
     roles: ROLES,
     options,
@@ -344,6 +355,8 @@ function meta(db, user) {
       proposal_simulator_url: getSetting(db, 'proposal_simulator_url') || '',
       presale_alert_hours: getSetting(db, 'presale_alert_hours') || 24,
       funnel_sequential: getSetting(db, 'funnel_sequential') !== false,
+      logout_url: getSetting(db, 'logout_url') || '',
+      postsale_user_id: getSetting(db, 'postsale_user_id') || null,
     },
     simulator: simulatorAvailability(db),
     constants: {

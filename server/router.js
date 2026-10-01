@@ -29,6 +29,9 @@ const distribution = require('./services/distribution');
 const trainings = require('./services/trainings');
 const home = require('./services/home');
 const pipeline = require('./services/pipeline');
+const profile = require('./services/profile');
+const notifications = require('./services/notifications');
+const postsale = require('./services/postsale');
 
 function createRouter(db) {
   const routes = [];
@@ -68,7 +71,12 @@ function createRouter(db) {
 
   /* ---------- Usuário ---------- */
   add('GET', '/api/me', ({ user }) => user);
-  add('POST', '/api/me/senha', ({ user, body }) => (auth.changePassword(db, user, body), { ok: true }));
+  add('POST', '/api/me/senha', ({ req, user, body }) => auth.changePassword(db, req, user, body));
+  add('GET', '/api/perfil', ({ user }) => profile.getProfile(db, user));
+  add('PATCH', '/api/perfil', ({ user, body }) => (profile.saveProfile(db, user, body), profile.getProfile(db, user)));
+  add('POST', '/api/perfil/foto', ({ user, body }) => profile.savePhoto(db, user, body), { bodyLimit: 1e6 });
+  add('GET', '/api/notificacoes', ({ user, query }) => notifications.list(db, user, query));
+  add('POST', '/api/notificacoes/lidas', ({ user, body }) => notifications.markRead(db, user, body));
   add('GET', '/api/meta', ({ user }) => admin.meta(db, user));
   add('GET', '/api/busca', ({ user, query }) => contacts.globalSearch(db, user, query.q));
   add('GET', '/api/dashboard', ({ user, query }) => reports.dashboard(db, user, query));
@@ -190,6 +198,12 @@ function createRouter(db) {
   add('POST', '/api/cadastros/:id/simulador-proposta', ({ user, params, body }) => record.proposalSimulatorLink(db, user, params.id, body));
   add('GET', '/api/publico/nps', ({ query }) => record.publicNpsForm(db, query.token), { public: true });
   add('POST', '/api/publico/nps', ({ body }) => record.publicNpsSubmit(db, body.token, body), { public: true });
+  add('GET', '/api/pos-venda', ({ user, query }) => (perms.requireModule(user, 'posvenda'), postsale.overview(db, user, query)));
+  add('GET', '/api/pos-venda/nps', ({ user, query }) => (perms.requireModule(user, 'posvenda'), postsale.npsBoard(db, user, query)));
+  add('POST', '/api/pos-venda/nps/:id/tratativa', ({ user, params, body }) => (postsale.treatNps(db, user, params.id, body), { ok: true }));
+  add('GET', '/api/pos-venda/lances', ({ user, query }) => (perms.requireModule(user, 'posvenda'), postsale.bidBoard(db, user, query)));
+  add('GET', '/api/pos-venda/lances/:id/historico', ({ user, params }) => postsale.bidHistory(db, user, params.id));
+  add('POST', '/api/pos-venda/:id/responsavel', ({ user, params, body }) => (postsale.setOwner(db, user, params.id, body), { ok: true }));
   add('POST', '/api/cadastros/:id/pos-venda', ({ user, params, body }) => (record.togglePostSale(db, user, params.id, body), { ok: true }));
   add('GET', '/api/publico/ficha', ({ query }) => record.publicForm(db, query.token), { public: true });
   add('GET', '/api/publico/cep/:cep', ({ params, query }) => record.publicCep(db, query.token, params.cep), { public: true });
@@ -210,6 +224,7 @@ function createRouter(db) {
   add('POST', '/api/oportunidades', ({ user, body }) => opps.createOpportunity(db, user, body));
   add('GET', '/api/oportunidades/:id', ({ user, params }) => opps.getOpportunity(db, user, params.id));
   add('PATCH', '/api/oportunidades/:id', ({ user, params, body }) => opps.updateOpportunity(db, user, params.id, body));
+  add('POST', '/api/oportunidades/lote', ({ user, body }) => opps.bulkAction(db, user, body));
   add('POST', '/api/oportunidades/:id/etapa', ({ user, params, body }) => opps.moveStage(db, user, params.id, body));
   add('POST', '/api/oportunidades/:id/validar-estrategia', ({ user, params }) => (opps.validateStrategy(db, user, params.id), { ok: true }));
 
@@ -232,6 +247,7 @@ function createRouter(db) {
   add('PATCH', '/api/propostas/:id', ({ user, params, body }) => (proposals.updateProposal(db, user, params.id, body), { ok: true }));
   add('POST', '/api/propostas/:id/status', ({ user, params, body }) => (proposals.changeStatus(db, user, params.id, body), { ok: true }));
   add('POST', '/api/propostas/:id/nova-versao', ({ user, params, body }) => proposals.newVersion(db, user, params.id, body));
+  add('GET', '/api/clientes', ({ user, query }) => (perms.requireModule(user, 'clientes'), clients.listClients(db, user, query)));
   add('GET', '/api/contratos', ({ user, query }) => clients.listContracts(db, user, query));
   add('POST', '/api/contratos', ({ user, body }) => clients.createContract(db, user, body));
   add('PATCH', '/api/contratos/:id', ({ user, params, body }) => (clients.updateContract(db, user, params.id, body), { ok: true }));

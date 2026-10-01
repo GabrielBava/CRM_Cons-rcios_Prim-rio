@@ -1,4 +1,4 @@
-// 14. Planos: condições de cada plano por administradora (taxa, fundo de reserva, prazo, lances, adesão, reajuste e
+// 15. Planos: condições de cada plano por administradora (taxa, fundo de reserva, prazo, lances, adesão, reajuste e
 // faixa de crédito com incremento). A faixa é validada nas propostas e no termo de adesão.
 import { get, post } from '../api.js';
 import { html, render, $, on, table, badge, field, modal, opts, optLabel, selectOptions, fmtMoney, toast, toastError, can } from '../ui.js';

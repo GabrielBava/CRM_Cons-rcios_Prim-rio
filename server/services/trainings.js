@@ -154,8 +154,14 @@ function saveTraining(db, user, data) {
   const row = { kind: 'texto', required_roles: '[]', quiz: '[]', ...o, created_by: user.id, created_at: now, updated_at: now };
   const cols = Object.keys(row);
   const r = db.prepare(`INSERT INTO trainings (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...cols.map((c) => row[c] ?? null));
-  audit(db, user, 'training', Number(r.lastInsertRowid), 'criado', { titulo: o.title });
-  return Number(r.lastInsertRowid);
+  const id = Number(r.lastInsertRowid);
+  audit(db, user, 'training', id, 'criado', { titulo: o.title });
+  const roles = JSON.parse(row.required_roles || '[]');
+  if (roles.length && row.active !== 0) {
+    const ids = db.prepare(`SELECT id FROM users WHERE active = 1 AND role IN (${roles.map(() => '?').join(',')})`).all(...roles).map((u) => u.id);
+    require('./notifications').notify(db, ids, { kind: 'treinamento', title: `Novo treinamento obrigatório: ${o.title}`, body: row.due_days ? `Conclua em até ${row.due_days} dia(s).` : 'Acesse em Treinamentos.', link: '#/treinamentos', exclude: user.id });
+  }
+  return id;
 }
 
 /** Acompanhamento (administrador): situação de cada usuário em cada treinamento. */

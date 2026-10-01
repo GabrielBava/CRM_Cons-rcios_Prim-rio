@@ -1,23 +1,24 @@
 # ERP/CRM de Consórcios Primários
 
-ERP/CRM para a venda de consórcios contratados do zero, do primeiro contato ao pós-venda. O menu tem 16 itens:
+ERP/CRM para a venda de consórcios contratados do zero, do primeiro contato ao pós-venda. No topo à direita ficam o sino de notificações e o menu do usuário (foto, Meu cadastro, Alterar senha e Sair). O menu lateral tem 17 itens:
 
 1. Painel inicial
 2. Prospects e leads (distribuição com roleta)
-3. CRM (funil em 10 etapas com regras de passagem)
+3. CRM (funil em 10 etapas com regras de passagem, ordenação, ações em massa e painel lateral de consulta)
 4. Agenda e tarefas
 5. Simulador
-6. Propostas (esteira de follow-up D0–D10 e chance de fechamento)
+6. Propostas (esteira de propostas D0–D10, aceitas e recusadas com motivo, chance de fechamento)
 7. Clientes
 8. Metas
 9. Pré-venda (link da ficha cadastral para o cliente, alertas e adesão)
 10. Vendas (confirmação com comprovante)
-11. Comissões e cancelamentos
-12. Treinamentos
-13. Administradoras
-14. Planos
-15. Relatórios
-16. Usuários (perfis e liberação de telas por usuário)
+11. Pós-venda (checklist, satisfação NPS e estratégias de lance com histórico)
+12. Comissões e cancelamentos
+13. Treinamentos
+14. Administradoras
+15. Planos
+16. Relatórios
+17. Usuários (perfis e liberação de telas por usuário)
 
 A ficha do cliente tem 9 blocos, com documentos validados, financeiro, pós-venda e pesquisa NPS por link. As integrações com discadora, simulador, Meta Ads, WhatsApp e agenda externa estão preparadas ou marcadas como pendentes até serem validadas.
 
@@ -102,6 +103,13 @@ Os testes automatizados cobrem:
 - permissões por módulo (incluir e retirar telas por usuário);
 - treinamentos com questionário e acompanhamento;
 - ficha do cliente pela pré-venda (acesso e conclusão pelo link);
+- Meu cadastro (dados e foto do usuário) e troca de senha (senha atual, confirmação, política e encerramento das outras sessões);
+- notificações (lead distribuído, transferência, segurança) e leitura;
+- funil: valor pela proposta, busca por telefone/e-mail e ações em massa (etapa e responsável);
+- exportação CSV exclusiva do administrador;
+- recusa de proposta com motivo, retomada agendada e motivos de recusa;
+- lista de clientes com responsáveis, cartas, crédito e filtros;
+- pós-venda (checklist automático, responsável, NPS com motivo e tratativa, histórico de estratégias de lance);
 - bloqueio por oposição a contato;
 - idempotência e fila da discadora;
 - token e vínculo do simulador;
@@ -134,7 +142,8 @@ server/
                     (record.js), financeiro (finance.js), regras do funil (pipeline.js),
                     administradoras e planos (catalog.js), pré-venda, vendas, comissões e
                     cancelamentos (sales.js), metas (goals.js), distribuição (distribution.js),
-                    treinamentos (trainings.js), painel inicial (home.js))
+                    treinamentos (trainings.js), painel inicial (home.js), pós-venda (postsale.js),
+                    notificações (notifications.js), Meu cadastro (profile.js))
   permissions.js    perfis e módulos (telas) liberados por usuário
 public/             interface web (HTML + CSS + JavaScript em módulos, sem build).
                     A página do cliente (#/ficha/<token>) não exige login.

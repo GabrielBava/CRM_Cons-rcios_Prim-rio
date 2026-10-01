@@ -1,13 +1,13 @@
 // Módulo Financeiro (ERP): acompanhamento de parcelas e pagamentos de todos os clientes.
 import { get, download } from '../api.js';
-import { html, render, $, $$, on, state, selectOptions, userItems, pager, fmtMoney, toastError, PERIODS, periodRange } from '../ui.js';
+import { html, render, $, $$, on, state, selectOptions, userItems, pager, fmtMoney, toastError, PERIODS, periodRange, can } from '../ui.js';
 import { entriesTable, bindEntries } from './record-tabs.js';
 
 let saved = { status: 'atrasado', period: '' };
 
 export async function show(view) {
   render(view, html`<div class="page">
-    <div class="page-head"><h1>Financeiro</h1>${state.user.role !== 'leitura' ? html`<div class="actions"><button class="btn" data-act="export">Exportar CSV</button></div>` : ''}</div>
+    <div class="page-head"><h1>Financeiro</h1>${can.admin() ? html`<div class="actions"><button class="btn" data-act="export">Exportar CSV</button></div>` : ''}</div>
     <p class="hint">Parcelas e valores que os clientes pagam à administradora, acompanhados pela equipe. Lançamentos vencidos e não pagos aparecem como "Em atraso" e geram tarefa para o responsável financeiro definido em Configurações › Geral. Para lançar ou gerar parcelas, abra a aba Financeiro do cliente.</p>
     <div id="kpis"></div>
     <form class="filters" data-f>

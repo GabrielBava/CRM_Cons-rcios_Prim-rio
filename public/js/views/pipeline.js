@@ -1,38 +1,94 @@
 import { get, post, download } from '../api.js';
 import {
-  html, render, $, $$, on, state, selectOptions, opts, toItems, userItems, productItems, stageItems, fmtMoney, fmtDateTime, fmtDate, relTime,
-  badge, optoutBadge, optLabel, K, can, toast, toastError, table, empty, fresh, crmTabs,
+  html, raw, render, $, $$, on, state, selectOptions, opts, toItems, userItems, stageItems, fmtMoney, fmtDateTime, fmtDate, relTime,
+  badge, optoutBadge, optLabel, K, can, toast, toastError, table, empty, fresh, crmTabs, modal, field,
 } from '../ui.js';
+import { bindDrawerLinks } from '../drawer.js';
 import { moveStage, opportunityForm, activityForm, taskForm, simulationForm, proposalForm, proposalDetail, quickSimulation, openProposalSimulator } from '../forms.js';
 import { timeline, tasksTable, bindTasks } from './contact.js';
 
 let saved = {};
+let sortBy = 'next_action';
+let sortDir = 'asc';
+const SORTS = [
+  { value: 'next_action', label: 'Próxima atividade' },
+  { value: 'value', label: 'Valor da negociação' },
+  { value: 'entry', label: 'Data de entrada do lead' },
+  { value: 'created', label: 'Data de criação do negócio' },
+];
+const sortKey = {
+  next_action: (o) => (o.next_action_at ? Date.parse(o.next_action_at) : null),
+  value: (o) => o.deal_value ?? null,
+  entry: (o) => (o.contact_created_at ? Date.parse(o.contact_created_at) : null),
+  created: (o) => Date.parse(o.created_at),
+};
+/** Ordena os cartões de cada coluna; quem não tem o dado (ex.: sem próxima atividade) fica sempre no fim. */
+function sortCards(cards) {
+  const f = sortKey[sortBy];
+  return [...cards].sort((a, b) => {
+    const x = f(a);
+    const y = f(b);
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    return sortDir === 'asc' ? x - y : y - x;
+  });
+}
 
 export async function show(view, { key, id, params }) {
   if (key === 'oportunidades' && id) return showOpp(view, id);
   const s = { ...saved, ...params };
+  const manager = can.manage();
   render(view, html`<div class="page wide">
     ${crmTabs('funil')}
     <div class="page-head"><h1>Funil de vendas</h1>
       <div class="actions">
         <div class="seg small"><button class="btn small ${s.mode !== 'lista' ? 'active' : ''}" data-mode="kanban">Kanban</button><button class="btn small ${s.mode === 'lista' ? 'active' : ''}" data-mode="lista">Lista</button></div>
-        ${state.user.role !== 'leitura' ? html`<button class="btn" data-act="export">Exportar CSV</button>` : ''}
+        ${can.admin() ? html`<button class="btn" data-act="export">Exportar CSV</button>` : ''}
       </div></div>
     <form class="filters" data-f>
-      <label class="grow">Buscar<input type="search" name="q" value="${s.q || ''}" placeholder="Nome, código do cadastro ou da oportunidade"></label>
-      <label>Responsável<select name="owner_id">${selectOptions(userItems(), s.owner_id, { placeholder: 'Todos' })}</select></label>
+      <label class="grow">Buscar<input type="search" name="q" value="${s.q || ''}" placeholder="Nome, código (C-…, OP-…), telefone ou e-mail"></label>
+      ${manager ? html`<label>Funil de<select name="owner_id">${selectOptions(userItems(), s.owner_id, { placeholder: 'Todos os usuários' })}</select></label>` : ''}
       <label>Origem<select name="origin">${selectOptions(opts('origem'), s.origin, { placeholder: 'Todas' })}</select></label>
-      <label>Produto<select name="product_id">${selectOptions(productItems(), s.product_id, { placeholder: 'Todos' })}</select></label>
+      <label>Categoria<select name="category">${selectOptions(opts('categoria_credito'), s.category, { placeholder: 'Todas' })}</select></label>
       <label>Etapa<select name="stage_id">${selectOptions(stageItems(), s.stage_id, { placeholder: 'Todas' })}</select></label>
       <label>Prioridade<select name="priority">${selectOptions(toItems(state.meta.constants.priorities), s.priority, { placeholder: 'Todas' })}</select></label>
       <label>Próxima ação<select name="next_action">${selectOptions([{ value: 'atrasada', label: 'Atrasada' }, { value: 'hoje', label: 'Para hoje' }, { value: 'sem', label: 'Sem próxima ação' }], s.next_action, { placeholder: 'Qualquer' })}</select></label>
       <label>Fechadas nos últimos<select name="closed_days">${selectOptions([{ value: '30', label: '30 dias' }, { value: '60', label: '60 dias' }, { value: '180', label: '180 dias' }, { value: '3650', label: 'Todas' }], s.closed_days || '60', { allowEmpty: false })}</select></label>
     </form>
-    <div id="board"></div></div>`);
+    <div class="board-tools">
+      <div class="sort-box"><label>Ordenar por<select data-sort>${selectOptions(SORTS, sortBy, { allowEmpty: false })}</select></label>
+        <button type="button" class="btn small sort-dir" data-sortdir aria-label="Inverter a ordem">${sortDir === 'asc' ? '↑ Crescente' : '↓ Decrescente'}</button></div>
+      ${can.write() ? html`<button type="button" class="btn" data-act="bulk" aria-pressed="false">☑ Mover em massa</button>` : ''}
+    </div>
+    <div id="board"></div>
+    <div class="bulk-bar" hidden><strong data-bulk-count>0 selecionado(s)</strong>
+      <button type="button" class="btn small ghost" data-act="bulk-all">Selecionar todos visíveis</button>
+      <span class="grow"></span>
+      <button type="button" class="btn primary" data-act="bulk-move">Mover para etapa…</button>
+      ${manager ? html`<button type="button" class="btn" data-act="bulk-owner">Transferir responsável…</button>` : ''}
+      <button type="button" class="btn ghost" data-act="bulk-cancel">Cancelar</button></div>
+  </div>`);
   const form = $('[data-f]', view);
   let mode = s.mode || 'kanban';
   let data = null;
+  let bulk = false;
+  const selected = new Set();
   const query = () => Object.fromEntries(new FormData(form).entries());
+  const allCards = () => data?.stages.flatMap((st) => st.cards) || [];
+  const syncBulk = () => {
+    const bar = $('.bulk-bar', view);
+    bar.hidden = !bulk;
+    $('[data-bulk-count]', view).textContent = `${selected.size} selecionado(s)`;
+    $$('[data-act=bulk-move], [data-act=bulk-owner]', view).forEach((b) => (b.disabled = !selected.size));
+    $('[data-act=bulk]', view)?.setAttribute('aria-pressed', String(bulk));
+    $('[data-act=bulk]', view)?.classList.toggle('active', bulk);
+  };
+  const draw = () => {
+    const box = $('#board', view);
+    if (mode === 'kanban' && data) render(box, board(data, bulk, selected));
+    syncBulk();
+  };
   const load = async () => {
     saved = { ...query(), mode };
     const box = $('#board', view);
@@ -40,7 +96,9 @@ export async function show(view, { key, id, params }) {
     try {
       if (mode === 'kanban') {
         data = await get('/api/funil', query());
-        render(box, board(data));
+        const ids = new Set(allCards().map((c) => c.id));
+        [...selected].forEach((sid) => !ids.has(sid) && selected.delete(sid));
+        draw();
       } else {
         const r = await get('/api/oportunidades', { ...query(), limit: 200 });
         render(box, oppTable(r.rows));
@@ -62,25 +120,117 @@ export async function show(view, { key, id, params }) {
   on(view, 'click', '[data-mode]', (e, b) => {
     mode = b.dataset.mode;
     $$('[data-mode]', view).forEach((x) => x.classList.toggle('active', x === b));
+    $('.board-tools', view).hidden = mode !== 'kanban';
+    if (mode !== 'kanban') {
+      bulk = false;
+      selected.clear();
+    }
     load();
   });
+  on(view, 'change', '[data-sort]', (e, sel) => ((sortBy = sel.value), draw()));
+  on(view, 'click', '[data-sortdir]', (e, b) => {
+    sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+    b.textContent = sortDir === 'asc' ? '↑ Crescente' : '↓ Decrescente';
+    draw();
+  });
   on(view, 'click', '[data-act=export]', () => download('/api/exportar/oportunidades', query()).catch(toastError));
+  bindDrawerLinks(view, () => ({ onChange: load }));
+
+  /* ---- Seleção e ações em massa ---- */
+  on(view, 'click', '[data-act=bulk]', () => {
+    bulk = !bulk;
+    if (!bulk) selected.clear();
+    draw();
+  });
+  on(view, 'click', '[data-act=bulk-cancel]', () => {
+    bulk = false;
+    selected.clear();
+    draw();
+  });
+  on(view, 'change', '[data-sel]', (e, c) => {
+    const n = Number(c.dataset.sel);
+    if (c.checked) selected.add(n);
+    else selected.delete(n);
+    c.closest('.opp-card').classList.toggle('selected', c.checked);
+    syncBulk();
+  });
+  on(view, 'change', '[data-sel-col]', (e, c) => {
+    const st = data.stages.find((x) => x.id === Number(c.dataset.selCol));
+    st.cards.forEach((k) => (c.checked ? selected.add(k.id) : selected.delete(k.id)));
+    draw();
+  });
+  on(view, 'click', '[data-act=bulk-all]', () => {
+    allCards().forEach((k) => selected.add(k.id));
+    draw();
+  });
+  const runBulk = async (body) => {
+    const r = await post('/api/oportunidades/lote', { ...body, ids: [...selected] });
+    if (r.failed) {
+      await modal({
+        title: `${r.done} movido(s), ${r.failed} não movido(s)`,
+        body: html`<p>Os cartões abaixo não cumprem as regras da etapa (ou não puderam ser alterados):</p>
+          <ul class="missing-list">${r.results.filter((x) => !x.ok).map((x) => html`<li><strong>${x.code || `#${x.id}`}</strong>: ${x.error}</li>`)}</ul>`,
+      });
+    } else toast(`${r.done} cartão(ões) atualizados.`);
+    bulk = false;
+    selected.clear();
+    load();
+    return true;
+  };
+  on(view, 'click', '[data-act=bulk-move]', () => {
+    if (!selected.size) return;
+    modal({
+      title: `Mover ${selected.size} cartão(ões)`,
+      body: html`<div class="grid">${field({ name: 'stage_id', label: 'Etapa de destino', type: 'select', options: state.meta.stages.filter((x) => x.kind !== 'ganho').map((x) => ({ value: x.id, label: x.name })), required: true, full: true })}
+        <div class="full" data-k="perdido" hidden>${field({ name: 'lost_reason', label: 'Motivo da perda', type: 'select', options: opts('motivo_perda'), full: true })}${field({ name: 'lost_notes', label: 'Detalhe (opcional)', full: true })}</div>
+        <div class="full" data-k="nutricao" hidden>${field({ name: 'pause_reason', label: 'Motivo da pausa', full: true })}${field({ name: 'return_at', label: 'Retomar contato em', type: 'date', full: true })}</div>
+        ${field({ name: 'reason', label: 'Observação (obrigatória para voltar etapas)', type: 'textarea', rows: 2, full: true })}</div>
+        <p class="hint">Cada cartão é validado pelas regras do funil. A etapa "Venda" só é alcançada pela confirmação do pagamento.</p>`,
+      submitLabel: 'Mover cartões',
+      onMount(f) {
+        const sync = () => {
+          const st = state.meta.stages.find((x) => x.id === Number(f.stage_id.value));
+          $$('[data-k]', f).forEach((d) => (d.hidden = d.dataset.k !== st?.kind));
+        };
+        f.stage_id.addEventListener('change', sync);
+      },
+      async onSubmit(d) {
+        const st = state.meta.stages.find((x) => x.id === Number(d.stage_id));
+        if (st?.kind === 'perdido' && !d.lost_reason) throw new Error('Informe o motivo da perda.');
+        if (st?.kind === 'nutricao' && (!d.pause_reason || !d.return_at)) throw new Error('Informe o motivo e a data para retomar o contato.');
+        return runBulk({ action: 'etapa', ...d });
+      },
+    });
+  });
+  on(view, 'click', '[data-act=bulk-owner]', () => {
+    if (!selected.size) return;
+    modal({
+      title: `Transferir ${selected.size} cartão(ões)`,
+      body: html`<div class="grid">${field({ name: 'owner_id', label: 'Novo responsável', type: 'select', options: userItems(), required: true, full: true })}
+        ${field({ name: 'stage_id', label: 'Coluna do funil para o novo responsável', type: 'select', options: state.meta.stages.filter((x) => x.kind === 'aberta').map((x) => ({ value: x.id, label: x.name })), placeholder: 'Manter a etapa atual', full: true })}
+        ${field({ name: 'reason', label: 'Motivo da transferência', type: 'textarea', rows: 2, full: true, placeholder: 'Ex.: redistribuição da carteira, férias, desligamento' })}</div>
+        <p class="hint">O cadastro, os negócios abertos e as tarefas pendentes passam para o novo responsável, que recebe uma notificação.</p>`,
+      submitLabel: 'Transferir',
+      onSubmit: (d) => runBulk({ action: 'responsavel', ...d }),
+    });
+  });
 
   const doMove = async (oppId, stageId) => {
-    const card = data?.stages.flatMap((st) => st.cards).find((c) => c.id === Number(oppId));
+    const card = allCards().find((c) => c.id === Number(oppId));
     if (!card || card.stage_id === Number(stageId)) return;
     const r = await moveStage(card, stageId);
     if (r) load();
   };
-  // Arrastar e soltar (desktop)
+  // Arrastar e soltar (desktop). No celular e no teclado, o painel lateral do cartão tem "Mover etapa".
   on(view, 'dragstart', '.opp-card', (e, c) => {
+    if (bulk) return e.preventDefault();
     e.dataTransfer.setData('text/plain', c.dataset.id);
     e.dataTransfer.effectAllowed = 'move';
     c.classList.add('dragging');
   });
   on(view, 'dragend', '.opp-card', (e, c) => c.classList.remove('dragging'));
   on(view, 'dragover', '.column', (e, col) => {
-    if (!can.write()) return;
+    if (!can.write() || bulk) return;
     e.preventDefault();
     col.classList.add('over');
   });
@@ -91,46 +241,44 @@ export async function show(view, { key, id, params }) {
     const oppId = e.dataTransfer.getData('text/plain');
     if (oppId) doMove(oppId, col.dataset.stage);
   });
-  // Alternativa sem arrastar (celular e teclado)
-  on(view, 'change', 'select[data-move]', (e, sel) => {
-    if (sel.value) doMove(sel.dataset.move, sel.value).finally(() => (sel.value = ''));
-  });
+  if (mode !== 'kanban') $('.board-tools', view).hidden = true;
   await load();
 }
 
-function board(d) {
-  return html`<div class="kanban">${d.stages.map(
+function board(d, bulk, selected) {
+  return html`<div class="kanban ${bulk ? 'bulk' : ''}">${d.stages.map(
     (s) => html`<section class="column kind-${s.kind}" data-stage="${s.id}">
-      <header><strong>${s.name}</strong><span class="count">${s.count}</span>${s.total_credit ? html`<small>${fmtMoney(s.total_credit)}</small>` : ''}</header>
-      <div class="cards">${s.cards.length ? s.cards.map(card) : html`<div class="empty small">—</div>`}</div>
+      <header>${bulk && s.cards.length ? html`<input type="checkbox" data-sel-col="${s.id}" aria-label="Selecionar todos de ${s.name}" ${s.cards.every((c) => selected.has(c.id)) ? raw('checked') : ''}>` : ''}<strong>${s.name}</strong><span class="count">${s.count}</span>${s.total_credit ? html`<small>${fmtMoney(s.total_credit)}</small>` : ''}</header>
+      <div class="cards">${s.cards.length ? sortCards(s.cards).map((c) => card(c, bulk, selected)) : html`<div class="empty small">—</div>`}</div>
     </section>`,
-  )}</div><p class="muted small">Arraste os cartões entre as etapas ou use "Mover para". Oportunidades fechadas aparecem por ${d.closed_days} dias. Cartões com borda vermelha estão sem atividade há ${state.meta.settings.stalled_days}+ dias.</p>`;
+  )}</div><p class="muted small">Clique no nome para ver o resumo sem sair do funil (botão do meio ou Ctrl+clique abre o cadastro em nova guia). Arraste os cartões entre as etapas. O valor é o da maior proposta ativa; sem proposta, o crédito desejado. Fechadas aparecem por ${d.closed_days} dias. Borda vermelha: sem atividade há ${state.meta.settings.stalled_days}+ dias.</p>`;
 }
 
-function card(o) {
+function card(o, bulk, selected) {
   const late = o.next_action_at && new Date(o.next_action_at) < new Date() && o.status === 'aberta';
-  return html`<article class="opp-card prio-${o.priority} ${o.stalled ? 'stalled' : ''}" draggable="${can.write() ? 'true' : 'false'}" data-id="${o.id}">
-    <a href="#/oportunidades/${o.id}" class="title">${o.contact_name}</a>
-    <div class="small muted">${o.code} · ${o.product_name || optLabel('categoria_credito', o.credit_category)}</div>
-    ${o.credit_value ? html`<div class="small">${fmtMoney(o.credit_value)}${o.term_months ? ` · ${o.term_months}m` : ''}</div>` : ''}
-    <div class="small ${late ? 'overdue' : ''}">${o.next_action ? html`▸ ${o.next_action} ${o.next_action_at ? html`<span>(${relTime(o.next_action_at)})</span>` : ''}` : html`<span class="warn-text">Sem próxima ação</span>`}</div>
+  const sel = selected.has(o.id);
+  return html`<article class="opp-card prio-${o.priority} ${o.stalled ? 'stalled' : ''} ${sel ? 'selected' : ''}" draggable="${can.write() && !bulk ? 'true' : 'false'}" data-id="${o.id}">
+    ${bulk ? html`<input type="checkbox" class="card-check" data-sel="${o.id}" aria-label="Selecionar ${o.contact_name}" ${sel ? raw('checked') : ''}>` : ''}
+    <a href="#/leads/${o.contact_id}" class="title" data-drawer="${o.contact_id}" data-opp="${o.id}">${o.contact_name}</a>
+    <div class="small muted">ID ${o.contact_code}</div>
+    <div class="card-tags"><span class="chip-sm">${optLabel('origem', o.contact_origin) || 'Sem origem'}</span>${o.credit_category ? html`<span class="chip-sm muted">${optLabel('categoria_credito', o.credit_category)}</span>` : ''}</div>
+    ${o.deal_value ? html`<div class="small deal-value"><strong>${fmtMoney(o.deal_value)}</strong> <small class="muted">${o.deal_value_source === 'proposta' ? `${o.proposal_count > 1 ? `${o.proposal_count} propostas` : 'proposta'}` : 'desejado'}</small></div>` : ''}
+    <div class="small ${late ? 'overdue' : ''}">${o.next_action ? html`▸ ${o.next_action} ${o.next_action_at ? html`<span>(${relTime(o.next_action_at)})</span>` : ''}` : html`<span class="warn-text">Sem próxima atividade</span>`}</div>
     <div class="card-foot"><span class="small muted">${o.owner_name || '—'} · ${o.days_in_stage}d na etapa</span>${optoutBadge(o.contact_optouts)}${o.status === 'perdida' && o.lost_reason ? badge(optLabel('motivo_perda', o.lost_reason), 'muted') : ''}</div>
-    ${can.write() ? html`<select data-move="${o.id}" aria-label="Mover para etapa"><option value="">Mover para…</option>${state.meta.stages.filter((s) => s.id !== o.stage_id).map((s) => html`<option value="${s.id}">${s.name}</option>`)}</select>` : ''}
   </article>`;
 }
 
 function oppTable(rows) {
   return table(
     [
-      { label: 'Código', render: (o) => html`<a href="#/oportunidades/${o.id}">${o.code}</a>` },
-      { label: 'Cadastro', render: (o) => html`<a href="#/leads/${o.contact_id}">${o.contact_name}</a> ${optoutBadge(o.contact_optouts)}` },
+      { label: 'Cadastro', render: (o) => html`<a href="#/leads/${o.contact_id}" data-drawer="${o.contact_id}" data-opp="${o.id}">${o.contact_name}</a> ${optoutBadge(o.contact_optouts)}<br><small>${o.contact_code} · <a href="#/oportunidades/${o.id}">${o.code}</a></small>` },
       { label: 'Etapa', render: (o) => html`${o.stage_name}<br><small>${K('opp_status', o.status)}</small>` },
-      { label: 'Prioridade', render: (o) => K('priorities', o.priority) },
-      { label: 'Produto', render: (o) => o.product_name || '—' },
-      { label: 'Crédito', render: (o) => fmtMoney(o.credit_value), cls: 'num' },
       { label: 'Origem', render: (o) => optLabel('origem', o.contact_origin) },
+      { label: 'Categoria', render: (o) => optLabel('categoria_credito', o.credit_category) || '—' },
+      { label: 'Valor', render: (o) => html`${fmtMoney(o.deal_value)}${o.deal_value ? html`<br><small>${o.deal_value_source === 'proposta' ? 'proposta' : 'desejado'}</small>` : ''}`, cls: 'num' },
       { label: 'Responsável', render: (o) => o.owner_name || '—' },
-      { label: 'Próxima ação', render: (o) => (o.next_action ? html`${o.next_action}<br><small>${fmtDateTime(o.next_action_at)}</small>` : html`<span class="warn-text">—</span>`) },
+      { label: 'Próxima atividade', render: (o) => (o.next_action ? html`${o.next_action}<br><small>${fmtDateTime(o.next_action_at)}</small>` : html`<span class="warn-text">—</span>`) },
+      { label: 'Entrada', render: (o) => fmtDate(o.contact_created_at) },
       { label: 'Na etapa', render: (o) => `${o.days_in_stage} d` },
     ],
     rows,

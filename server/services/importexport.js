@@ -265,6 +265,8 @@ const optLabel = (db) => {
 
 function exportData(db, user, entity, q) {
   if (user.role === 'leitura') throw forbidden('Perfis de leitura não exportam dados pessoais. Use os relatórios agregados.');
+  // Exportação em CSV é exclusiva do administrador (a lista da discadora segue liberada para líderes e especialistas)
+  if (entity !== 'lista_discadora' && user.role !== 'admin') throw forbidden('A exportação em CSV é exclusiva do administrador.');
   const L = optLabel(db);
   const all = { ...q, all: true };
   let columns;

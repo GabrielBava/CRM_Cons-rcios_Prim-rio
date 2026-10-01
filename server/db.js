@@ -531,7 +531,25 @@ const POS_VENDA_ITEMS = [
   ['onboarding', 'Onboarding'],
   ['estrategia_lance', 'Cadastro de estratégia de lance'],
   ['recebimento_boletos', 'Cadastro de recebimento de boletos'],
+  ['preferencias_contato', 'Preferências de contato'],
   ['indicacao', 'Pedido de indicação'],
+];
+
+// Motivos de recusa de proposta usados no mercado de consórcio (base para o trabalho de recuperação/closer)
+const MOTIVOS_RECUSA = [
+  ['nao_e_momento', 'Não é o momento (adiou a decisão)', { recuperavel: true }],
+  ['parcela_alta', 'Parcela acima do esperado', { recuperavel: true }],
+  ['prazo', 'Prazo não atende', { recuperavel: true }],
+  ['credito', 'Crédito não atende', { recuperavel: true }],
+  ['taxa_adm', 'Taxa de administração alta', { recuperavel: true }],
+  ['contemplacao', 'Insegurança com o prazo de contemplação', { recuperavel: true }],
+  ['financiamento', 'Preferiu financiamento'],
+  ['concorrente', 'Escolheu outra administradora ou empresa'],
+  ['decisor', 'Cônjuge ou sócio (decisor) não aprovou', { recuperavel: true }],
+  ['renda', 'Renda ou crédito insuficiente'],
+  ['sem_retorno', 'Parou de responder', { recuperavel: true }],
+  ['desistiu', 'Desistiu da compra'],
+  ['outro', 'Outro motivo'],
 ];
 
 const DEFAULT_OPTIONS = {
@@ -695,12 +713,16 @@ const DEFAULT_OPTIONS = {
     ['presencial', 'Presencial'],
     ['assinatura_digital', 'Assinatura digital'],
   ],
-  motivo_recusa_proposta: [
-    ['parcela_alta', 'Parcela acima do esperado'],
-    ['prazo', 'Prazo não atende'],
-    ['credito', 'Crédito não atende'],
-    ['concorrente', 'Escolheu outra empresa'],
-    ['desistiu', 'Desistiu da compra'],
+  motivo_recusa_proposta: MOTIVOS_RECUSA,
+  // Motivos de insatisfação na pesquisa de satisfação (NPS) do pós-venda
+  motivo_insatisfacao: [
+    ['atendimento', 'Atendimento do especialista'],
+    ['demora', 'Demora para responder'],
+    ['informacao', 'Falta de informação (assembleias, lances, contemplação)'],
+    ['expectativa_contemplacao', 'Expectativa de contemplação não atendida'],
+    ['boleto_cobranca', 'Boleto ou cobrança'],
+    ['valor_parcela', 'Valor da parcela ou reajuste'],
+    ['administradora', 'Atendimento ou portal da administradora'],
     ['outro', 'Outro motivo'],
   ],
   tipo_lancamento: [
@@ -876,6 +898,10 @@ const DEFAULT_INTEGRATIONS = [
 ];
 
 const DEFAULT_SETTINGS = {
+  // Endereço do site para onde o usuário vai ao sair do sistema (vazio: volta para a tela de login)
+  logout_url: '',
+  // Responsável pós-venda padrão dos novos clientes (vazio: o especialista da venda)
+  postsale_user_id: null,
   stalled_days: 7,
   simulation_link_hours: 24,
   field_config: {},
@@ -925,6 +951,22 @@ function seedDefaults(db) {
     });
     db.prepare("INSERT INTO settings (key, value) VALUES ('migr_pos_venda_v2', 'true')").run();
   }
+  // Inclui itens novos em listas já existentes (sem alterar os que o administrador editou)
+  const addMissing = (list, items) => {
+    const has = new Set(db.prepare('SELECT value FROM options WHERE list = ?').all(list).map((r) => r.value));
+    let pos = db.prepare('SELECT COALESCE(MAX(position), -1) + 1 AS p FROM options WHERE list = ?').get(list).p;
+    for (const [value, label, flags] of items) if (!has.has(value)) ins.run(list, value, label, pos++, JSON.stringify(flags || {}));
+  };
+  if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_listas_v3'").get()) {
+    addMissing('motivo_recusa_proposta', MOTIVOS_RECUSA);
+    for (const [value, , flags] of MOTIVOS_RECUSA) if (flags) db.prepare("UPDATE options SET flags = ? WHERE list = 'motivo_recusa_proposta' AND value = ? AND flags = '{}'").run(JSON.stringify(flags), value);
+    if (!db.prepare("SELECT 1 FROM options WHERE list = 'etapa_pos_venda' AND value = 'preferencias_contato'").get()) {
+      const ind = db.prepare("SELECT position FROM options WHERE list = 'etapa_pos_venda' AND value = 'indicacao'").get();
+      if (ind) db.prepare("UPDATE options SET position = position + 1 WHERE list = 'etapa_pos_venda' AND position >= ?").run(ind.position);
+      ins.run('etapa_pos_venda', 'preferencias_contato', 'Preferências de contato', ind ? ind.position : 99, '{}');
+    }
+    db.prepare("INSERT INTO settings (key, value) VALUES ('migr_listas_v3', 'true')").run();
+  }
   if (db.prepare('SELECT COUNT(*) AS n FROM products').get().n === 0) {
     const ins = db.prepare(
       'INSERT INTO products (name, category, administrator, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
@@ -946,9 +988,15 @@ const ADDED_COLUMNS = {
     ['nps_score', 'INTEGER'], ['nps_comment', 'TEXT'], ['nps_at', 'TEXT'],
     ['active', 'INTEGER NOT NULL DEFAULT 1'], ['inactive_reason', 'TEXT'], ['inactivated_at', 'TEXT'],
     ['assigned_at', 'TEXT'], ['assigned_by', 'INTEGER REFERENCES users(id)'],
+    ['postsale_owner_id', 'INTEGER REFERENCES users(id)'],
   ],
+  nps_surveys: [['dissatisfaction_reason', 'TEXT'], ['treated_at', 'TEXT'], ['treated_by', 'INTEGER REFERENCES users(id)'], ['treatment_notes', 'TEXT']],
   addresses: [['notes', 'TEXT']],
-  users: [['modules', "TEXT NOT NULL DEFAULT '{}'"], ['phone', 'TEXT']],
+  users: [
+    ['modules', "TEXT NOT NULL DEFAULT '{}'"], ['phone', 'TEXT'], ['whatsapp', 'TEXT'], ['job_title', 'TEXT'], ['birth_date', 'TEXT'],
+    ['photo', 'TEXT'], ['bio', 'TEXT'], ['specialties', "TEXT NOT NULL DEFAULT '[]'"], ['pix_key', 'TEXT'], ['professional_reg', 'TEXT'],
+    ['password_changed_at', 'TEXT'],
+  ],
   teams: [['leader_id', 'INTEGER REFERENCES users(id)']],
   pipeline_stages: [['key', 'TEXT'], ['playbook', 'TEXT'], ['rot_days', 'INTEGER'], ['training_id', 'INTEGER']],
   tasks: [['priority', "TEXT NOT NULL DEFAULT 'normal'"], ['proposal_id', 'INTEGER REFERENCES proposals(id)'], ['cadence_step', 'TEXT'], ['pre_sale_id', 'INTEGER'], ['sale_id', 'INTEGER']],
@@ -970,6 +1018,7 @@ const ADDED_COLUMNS = {
   proposals: [
     ['accepted_at', 'TEXT'], ['accepted_channel', 'TEXT'], ['accepted_by', 'INTEGER REFERENCES users(id)'], ['refusal_reason', 'TEXT'],
     ['category', 'TEXT'], ['sent_channel', 'TEXT'], ['last_response_at', 'TEXT'], ['last_response', 'TEXT'],
+    ['refusal_notes', 'TEXT'], ['refused_at', 'TEXT'], ['retake_at', 'TEXT'],
   ],
   contracts: [
     ['contract_number', 'TEXT'], ['installment_value', 'REAL'], ['due_day', 'INTEGER'], ['first_due_date', 'TEXT'],
@@ -1309,6 +1358,36 @@ CREATE TABLE IF NOT EXISTS bid_strategies (
   updated_by INTEGER REFERENCES users(id),
   updated_at TEXT NOT NULL
 );
+
+-- Histórico das estratégias de lance (cada alteração gera um registro com quem cadastrou, data e hora)
+CREATE TABLE IF NOT EXISTS bid_strategy_history (
+  id INTEGER PRIMARY KEY,
+  contract_id INTEGER NOT NULL REFERENCES contracts(id),
+  contact_id INTEGER NOT NULL REFERENCES contacts(id),
+  will_bid INTEGER NOT NULL DEFAULT 0,
+  bid_type TEXT,
+  bid_pct REAL,
+  use_embedded INTEGER NOT NULL DEFAULT 0,
+  use_fgts INTEGER NOT NULL DEFAULT 0,
+  notes TEXT,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_bid_hist_contract ON bid_strategy_history(contract_id, created_at);
+
+-- Notificações da plataforma (sino no topo)
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  kind TEXT NOT NULL,
+  level TEXT NOT NULL DEFAULT 'info',
+  title TEXT NOT NULL,
+  body TEXT,
+  link TEXT,
+  created_at TEXT NOT NULL,
+  read_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(user_id, read_at, created_at);
 `;
 
 function migrate(db) {
@@ -1319,6 +1398,10 @@ function migrate(db) {
       if (!existing.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
     }
   }
+  // Estratégias de lance anteriores ao histórico: registra a situação atual como o primeiro item do histórico
+  db.exec(`INSERT INTO bid_strategy_history (contract_id, contact_id, will_bid, bid_type, bid_pct, use_embedded, use_fgts, notes, created_by, created_at)
+    SELECT b.contract_id, b.contact_id, b.will_bid, b.bid_type, b.bid_pct, b.use_embedded, b.use_fgts, b.notes, b.updated_by, b.updated_at FROM bid_strategies b
+    WHERE NOT EXISTS (SELECT 1 FROM bid_strategy_history h WHERE h.contract_id = b.contract_id)`);
   // Clientes marcados como inativos antes do status Ativo/Inativo do cadastro
   db.exec("UPDATE contacts SET active = 0 WHERE client_status = 'inativo' AND active = 1");
 }

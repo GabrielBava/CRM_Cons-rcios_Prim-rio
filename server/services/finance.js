@@ -111,6 +111,8 @@ function updateEntry(db, user, id, data) {
       closeAlert(db, user, e, `pagamento registrado em ${paidAt}`);
       insertActivity(db, { contact_id: e.contact_id, type: 'financeiro', notes: `Pagamento registrado: ${e.code}${e.installment_number ? ` (parcela ${e.installment_number})` : ''} — R$ ${paid.toFixed(2).replace('.', ',')} em ${paidAt.split('-').reverse().join('/')}${method ? ` via ${optionLabel(db, 'forma_pagamento', method)}` : ''}.`, user_id: user.id, ref_type: 'finance_entry', ref_id: e.id });
       audit(db, user, 'finance_entry', e.id, 'pago', { valor: paid, data: paidAt }, e.contact_id);
+      // 1ª parcela paga: marca o item do checklist de pós-venda
+      if (e.installment_number === 1) require('./record').markPostSale(db, user.id, e.contact_id, 'primeira_parcela', `${e.code} paga em ${paidAt.split('-').reverse().join('/')}.`);
     });
   }
   if (data.action === 'negociar' || data.action === 'cancelar' || data.action === 'reabrir') {

@@ -52,6 +52,10 @@ function seedDemo(db, password) {
   const c2 = mkUser('Especialista Demo 2', 'consultor2@demo.local', 'consultor', team, 'ramal-202', '(11) 90000-0004');
   mkUser('Leitura Demo', 'leitura@demo.local', 'leitura', team, null, null);
   db.prepare('UPDATE teams SET leader_id = ? WHERE id = ?').run(gestor.id, team);
+  // Cargos e dados do "Meu cadastro"
+  for (const [u, title, specs] of [[admin, 'Diretor comercial', '[]'], [gestor, 'Líder de equipe comercial', '["imovel","veiculo"]'], [c1, 'Especialista em consórcio imobiliário', '["imovel"]'], [c2, 'Especialista em consórcio de veículos', '["veiculo","servico"]']]) {
+    db.prepare('UPDATE users SET job_title = ?, specialties = ?, whatsapp = phone WHERE id = ?').run(title, specs, u.id);
+  }
   // A demonstração preenche dados cadastrais parciais; a conferência da pré-venda não exige a ficha completa aqui
   const checklistSetting = getSetting(db, 'require_sale_checklist');
   setSetting(db, 'require_sale_checklist', false);
@@ -169,7 +173,7 @@ function seedDemo(db, password) {
       if (step === until) break;
     }
     if (sale && paidDaysAgo != null) {
-      const r = sales.confirmSale(db, owner, sale.id, { payment_date: dateAgo(paidDaysAgo), filename: 'comprovante-pagamento.pdf', mime: 'application/pdf', content_base64: PDF, group_code: `G${100 + i}`, quota_code: `${i}`, pref_channel: 'whatsapp', pref_time: 'manha' });
+      const r = sales.confirmSale(db, owner, sale.id, { payment_date: dateAgo(paidDaysAgo), filename: 'comprovante-pagamento.pdf', mime: 'application/pdf', content_base64: PDF, group_code: `G${100 + i}`, quota_code: `${i}`, pref_channel: 'whatsapp', pref_time: 'Manhã, das 9h às 12h' });
       return { sale, contract: r.contract, pre_sale: ps.id };
     }
     return { sale, pre_sale: ps.id };
@@ -245,6 +249,9 @@ function seedDemo(db, password) {
         }
         if (i === 9) {
           record.togglePostSale(db, owner, id, { item: 'onboarding', done: true });
+          // Histórico de estratégias: primeiro lance embutido; depois da análise do FGTS, lance livre de 25%
+          record.saveBidStrategy(db, owner, r.contract.id, { will_bid: true, bid_type: 'embutido', notes: 'Definido no onboarding.' });
+          db.prepare('UPDATE bid_strategy_history SET created_at = ? WHERE contract_id = ?').run(ago(15, 11), r.contract.id);
           record.saveBidStrategy(db, owner, r.contract.id, { will_bid: true, bid_type: 'livre', bid_pct: 25, use_embedded: true, use_fgts: true, notes: 'Ofertar a partir da 6ª assembleia.' });
           const n = record.createNps(db, owner, id, { contract_id: r.contract.id });
           record.publicNpsForm(db, n.token);
@@ -252,11 +259,22 @@ function seedDemo(db, password) {
         } else {
           // Cancelamento dentro dos 7 dias: comissão futura cancelada e índice do especialista atualizado
           sales.registerCancellation(db, gestor, r.sale.id, { cancelled_on: dateAgo(1), reason: 'arrependimento_7_dias', description: 'Cliente desistiu no prazo de arrependimento: decidiu esperar a venda de outro imóvel.', responsible_id: owner.id });
+          // Pesquisa de satisfação respondida com nota baixa (detrator sem tratativa: aparece nos alertas do pós-venda)
+          const n = record.createNps(db, owner, id, {});
+          record.publicNpsForm(db, n.token);
+          record.publicNpsSubmit(db, n.token, { score: 4, reason: 'expectativa_contemplacao', answers: { atendimento: 4, clareza: 2, agilidade: 3, confianca: 2 }, comment: 'Entendi que seria contemplado mais rápido.' });
         }
       }
       if (i === 15) {
         opps.moveStage(db, owner, opp.id, { stage_id: stageId.perdido, lost_reason: 'optou_financiamento' });
         contacts.updateContact(db, admin, id, { active: false, inactive_reason: 'Optou por financiamento bancário.' });
+      }
+      if (i === 5 || i === 15) {
+        // Propostas recusadas com o motivo (base para o trabalho de recuperação)
+        const pr = proposals.createProposal(db, owner, { opportunity_id: opp.id, product_id: pImovel, category: 'imovel', credit_value: i === 5 ? 250000 : 180000, valid_until: new Date(Date.now() + 10 * DAY).toISOString().slice(0, 10), status: 'apresentada' });
+        proposals.changeStatus(db, owner, pr.id, i === 5
+          ? { status: 'recusada', refusal_reason: 'nao_e_momento', refusal_notes: 'Quer primeiro quitar o carro; pediu para falar em 2 meses.', retake_at: new Date(Date.now() + 60 * DAY).toISOString().slice(0, 10) }
+          : { status: 'recusada', refusal_reason: 'financiamento', refusal_notes: 'Banco liberou financiamento com entrada menor.' });
       }
       if (i === 14) opps.moveStage(db, owner, opp.id, { stage_id: stageId.nutricao, pause_reason: 'Vai decidir depois do bônus do fim do ano.', return_at: new Date(Date.now() + 60 * DAY).toISOString().slice(0, 10) });
       if (i === 12) contacts.updateContact(db, admin, id, { referred_by_id: ids[9] });

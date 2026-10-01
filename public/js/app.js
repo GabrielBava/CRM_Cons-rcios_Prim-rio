@@ -1,6 +1,6 @@
 // Estrutura da aplicação: autenticação, navegação, busca global e roteamento.
 import { get, post, setUnauthorizedHandler } from './api.js';
-import { html, render, state, $, on, toastError, relBadge, can, fresh } from './ui.js';
+import { html, render, state, $, $$, on, toastError, relBadge, can, fresh, avatar, relTime } from './ui.js';
 import { quickCreateContact } from './forms.js';
 import * as dashboard from './views/dashboard.js';
 import * as leads from './views/leads.js';
@@ -26,6 +26,8 @@ import * as trainings from './views/trainings.js';
 import * as administrators from './views/administrators.js';
 import * as plans from './views/plans.js';
 import * as users from './views/users.js';
+import * as profileView from './views/profile.js';
+import * as postsaleView from './views/postsale.js';
 
 // Menu lateral: [rota, rótulo, tela, módulo de permissão, grupo]
 const NAV = [
@@ -39,12 +41,13 @@ const NAV = [
   ['metas', '8. Metas', goals, 'metas'],
   ['prevenda', '9. Pré-venda', presales, 'prevenda'],
   ['vendas', '10. Vendas', salesView, 'vendas'],
-  ['comissoes', '11. Comissões e cancelamentos', commissions, 'comissoes'],
-  ['treinamentos', '12. Treinamentos', trainings, 'treinamentos'],
-  ['administradoras', '13. Administradoras', administrators, 'administradoras', 'admin'],
-  ['planos', '14. Planos', plans, 'planos', 'admin'],
-  ['relatorios', '15. Relatórios', reports, 'relatorios', 'admin'],
-  ['usuarios', '16. Usuários', users, 'usuarios', 'admin'],
+  ['posvenda', '11. Pós-venda', postsaleView, 'posvenda'],
+  ['comissoes', '12. Comissões e cancelamentos', commissions, 'comissoes'],
+  ['treinamentos', '13. Treinamentos', trainings, 'treinamentos'],
+  ['administradoras', '14. Administradoras', administrators, 'administradoras', 'admin'],
+  ['planos', '15. Planos', plans, 'planos', 'admin'],
+  ['relatorios', '16. Relatórios', reports, 'relatorios', 'admin'],
+  ['usuarios', '17. Usuários', users, 'usuarios', 'admin'],
   ['configuracoes', 'Configurações', settings, 'configuracoes', 'admin'],
 ];
 // Rotas secundárias: [tela, módulo, item do menu destacado]
@@ -56,6 +59,7 @@ const EXTRA = {
   simulacoes: [sales, 'propostas', 'propostas'],
   financeiro: [financeView, 'clientes', 'clientes'],
   produtos: [plans, 'planos', 'planos'],
+  'meu-cadastro': [profileView, null, null],
 };
 const allowed = (mod) => (state.user?.modules || []).includes(mod);
 
@@ -74,6 +78,7 @@ function previewBackLink(show) {
 }
 
 async function boot() {
+  stopNotifications();
   previewBackLink(/^#\/(ficha|nps)\//.test(location.hash));
   // Link enviado ao cliente: página pública, sem login
   const pub = location.hash.match(/^#\/ficha\/([A-Za-z0-9_-]+)/);
@@ -118,6 +123,7 @@ function showSetup() {
 }
 
 function showLogin(msg) {
+  stopNotifications();
   state.meta = null;
   render(app, html`<div class="auth"><form class="card" id="login">
     <h1>CRM de Consórcios</h1>${msg ? html`<p class="warn-text">${msg}</p>` : html`<p>Entre com seu usuário.</p>`}
@@ -139,16 +145,27 @@ function showLogin(msg) {
   });
 }
 
+function userBox() {
+  const u = state.user;
+  return html`<button class="user-btn" data-act="usermenu" aria-haspopup="menu" aria-expanded="false" aria-label="Menu do usuário">
+      ${avatar(u, 34)}<span class="user-id"><strong>${u.name}</strong><small>${u.job_title || u.role_label}</small></span><span class="caret" aria-hidden="true">▾</span></button>
+    <div class="user-dropdown" role="menu" hidden>
+      <div class="ud-head">${avatar(u, 44)}<div><strong>${u.name}</strong><small>${u.email}</small><small>${u.role_label}</small></div></div>
+      <a href="#/meu-cadastro" role="menuitem" data-close-menu>Meu cadastro</a>
+      <button type="button" role="menuitem" data-act="password">Alterar senha</button>
+      <hr>
+      <button type="button" role="menuitem" data-act="logout" class="danger-text">Sair</button>
+    </div>`;
+}
+
+const BELL = html`<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 0 0-5.5-6.84V3.5a1.5 1.5 0 0 0-3 0v.66A7 7 0 0 0 5 11v5l-2 2v1h18v-1l-2-2Z"/></svg>`;
+
 function shell() {
   render(app, html`
     <aside class="sidebar" id="sidebar">
       <div class="brand">CRM Consórcios</div>
       <nav>${NAV.filter(([, , , m, g]) => allowed(m) && g !== 'admin').map(([k, label]) => html`<a href="#/${k}" data-nav="${k}">${label}</a>`)}
         ${NAV.some(([, , , m, g]) => g === 'admin' && allowed(m)) ? html`<div class="nav-group">Administração</div>${NAV.filter(([, , , m, g]) => g === 'admin' && allowed(m)).map(([k, label]) => html`<a href="#/${k}" data-nav="${k}">${label}</a>`)}` : ''}</nav>
-      <div class="me">
-        <div><strong>${state.user.name}</strong><small>${state.user.role_label}</small></div>
-        <button class="btn small ghost" data-act="logout">Sair</button>
-      </div>
     </aside>
     <div class="main">
       <header class="topbar">
@@ -158,17 +175,112 @@ function shell() {
           <div class="search-results" hidden></div>
         </div>
         ${can.write() ? html`<button class="btn primary" data-act="new-lead">+ Novo lead</button>` : ''}
+        <div class="top-right">
+          <div class="notif">
+            <button class="icon-btn bell" data-act="notif" aria-haspopup="true" aria-expanded="false" aria-label="Notificações">${BELL}<span class="notif-badge" hidden></span></button>
+            <div class="notif-panel" hidden></div>
+          </div>
+          <div class="usermenu" id="userbox">${userBox()}</div>
+        </div>
       </header>
       <main id="view" tabindex="-1"></main>
     </div>`);
+  const closeMenus = (except) => {
+    for (const [btn, panel] of [['[data-act=usermenu]', '.user-dropdown'], ['[data-act=notif]', '.notif-panel']]) {
+      if (panel === except) continue;
+      const p = $(panel, app);
+      if (p) p.hidden = true;
+      $(btn, app)?.setAttribute('aria-expanded', 'false');
+    }
+  };
+  on(app, 'click', '[data-act=usermenu]', (e, b) => {
+    const p = $('.user-dropdown', app);
+    closeMenus('.user-dropdown');
+    p.hidden = !p.hidden;
+    b.setAttribute('aria-expanded', String(!p.hidden));
+  });
+  on(app, 'click', '[data-act=notif]', (e, b) => {
+    const p = $('.notif-panel', app);
+    closeMenus('.notif-panel');
+    p.hidden = !p.hidden;
+    b.setAttribute('aria-expanded', String(!p.hidden));
+    if (!p.hidden) loadNotifications(true);
+  });
+  on(app, 'click', '[data-close-menu]', () => closeMenus());
+  // Ouvintes globais só uma vez (o shell é recriado a cada login)
+  if (!window.__crmMenus) {
+    window.__crmMenus = true;
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.usermenu') && !e.target.closest('.notif')) closeMenusGlobal();
+    });
+    document.addEventListener('keydown', (e) => e.key === 'Escape' && closeMenusGlobal());
+  }
+  on(app, 'click', '[data-act=password]', () => {
+    closeMenus();
+    profileView.changePasswordDialog();
+  });
   on(app, 'click', '[data-act=logout]', async () => {
-    await post('/api/logout');
-    showLogin();
+    const url = state.meta?.settings?.logout_url;
+    stopNotifications();
+    await post('/api/logout').catch(() => {});
+    if (url) location.href = url;
+    else showLogin();
   });
   on(app, 'click', '[data-act=menu]', () => $('#sidebar').classList.toggle('open'));
   on(app, 'click', '[data-nav]', () => $('#sidebar').classList.remove('open'));
   on(app, 'click', '[data-act=new-lead]', () => quickCreateContact());
+  on(app, 'click', '[data-act=notif-all]', async () => {
+    await post('/api/notificacoes/lidas', { all: true }).catch(toastError);
+    loadNotifications(true);
+  });
+  on(app, 'click', '[data-notif]', (e, a) => {
+    post('/api/notificacoes/lidas', { ids: [Number(a.dataset.notif)] }).then(() => loadNotifications(false)).catch(() => {});
+    closeMenus();
+  });
   setupSearch();
+  startNotifications();
+}
+
+function closeMenusGlobal() {
+  for (const [btn, panel] of [['[data-act=usermenu]', '.user-dropdown'], ['[data-act=notif]', '.notif-panel']]) {
+    const p = $(panel, app);
+    if (p) p.hidden = true;
+    $(btn, app)?.setAttribute('aria-expanded', 'false');
+  }
+}
+
+/* ---------- Notificações (sino) ---------- */
+let notifTimer = null;
+let notifLast = 0;
+async function loadNotifications(renderPanel) {
+  if (!state.user || !$('.notif-badge', app)) return;
+  notifLast = Date.now();
+  let d;
+  try {
+    d = await get('/api/notificacoes', { limit: 30 });
+  } catch {
+    return;
+  }
+  const badge = $('.notif-badge', app);
+  badge.hidden = !d.unread;
+  badge.textContent = d.unread > 99 ? '99+' : String(d.unread);
+  $('[data-act=notif]', app)?.setAttribute('aria-label', d.unread ? `Notificações: ${d.unread} não lida(s)` : 'Notificações');
+  const panel = $('.notif-panel', app);
+  if (!renderPanel && panel.hidden) return;
+  render(panel, html`<div class="np-head"><strong>Notificações</strong>${d.unread ? html`<button type="button" class="link-btn" data-act="notif-all">Marcar todas como lidas</button>` : ''}</div>
+    <div class="np-list">${d.rows.length
+      ? d.rows.map((n) => html`<a href="${n.link || '#/painel'}" class="np-item lvl-${n.level} ${n.read_at ? '' : 'unread'}" data-notif="${n.id}">
+          <span class="np-dot" aria-hidden="true"></span><span class="np-text"><strong>${n.title}</strong>${n.body ? html`<small>${n.body}</small>` : ''}<small class="muted">${relTime(n.created_at)}</small></span></a>`)
+      : html`<div class="empty small">Nenhuma notificação por enquanto.</div>`}</div>`);
+}
+function startNotifications() {
+  stopNotifications();
+  loadNotifications(false);
+  notifTimer = setInterval(() => loadNotifications(false), 60000);
+}
+function stopNotifications() {
+  if (notifTimer) clearInterval(notifTimer);
+  notifTimer = null;
 }
 
 function setupSearch() {
@@ -243,6 +355,7 @@ async function route() {
     render(view, html`<div class="page"><h1>Acesso não liberado</h1><p class="muted">Seu usuário não tem acesso a esta tela. Fale com o administrador para liberar o módulo em Usuários.</p></div>`);
     return;
   }
+  if (Date.now() - notifLast > 15000) loadNotifications(false);
   const params = Object.fromEntries(new URLSearchParams(qs || ''));
   render(view, html`<div class="page loading">Carregando…</div>`);
   try {
@@ -260,5 +373,8 @@ window.addEventListener('hashchange', route);
 window.CRM_BOOT = boot;
 window.addEventListener('crm:refresh-meta', async () => {
   state.meta = await get('/api/meta');
+  state.user = state.meta.user;
+  const box = document.getElementById('userbox');
+  if (box) render(box, userBox());
 });
 boot();

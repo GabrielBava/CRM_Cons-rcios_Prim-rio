@@ -22,11 +22,11 @@ export async function show(view, { params }) {
   const manager = can.manage();
   render(view, html`<div class="page wide">
     <div class="page-head"><div><h1>Propostas</h1><p class="muted">Cada proposta nasce do cadastro do cliente e segue a esteira de follow-up até o fechamento.</p></div>
-      <div class="actions">${can.write() ? html`<button class="btn primary" data-act="new">+ Nova proposta</button>` : ''}${state.user.role !== 'leitura' ? html`<button class="btn" data-act="export">Exportar CSV</button>` : ''}</div></div>
-    ${subnav([['#/propostas', 'Esteira de follow-up', 'esteira'], ['#/propostas?aba=panorama', 'Panorama geral', 'panorama']], tab)}
+      <div class="actions">${can.write() ? html`<button class="btn primary" data-act="new">+ Nova proposta</button>` : ''}${can.admin() ? html`<button class="btn" data-act="export">Exportar CSV</button>` : ''}</div></div>
+    ${subnav([['#/propostas', 'Esteira de propostas', 'esteira'], ['#/propostas?aba=panorama', 'Panorama geral', 'panorama']], tab)}
     <div id="kpis"></div>
     <form class="filters" data-f>
-      <label>Situação<select name="status">${selectOptions([{ value: 'andamento', label: 'Em andamento' }, { value: 'aprovada', label: 'Aceitas' }, { value: 'recusada', label: 'Recusadas' }, { value: 'expirada', label: 'Expiradas' }], saved.status, { placeholder: 'Todas' })}</select></label>
+      <label ${tab === 'esteira' ? 'hidden' : ''}>Situação<select name="status">${selectOptions([{ value: 'andamento', label: 'Em andamento' }, { value: 'aprovada', label: 'Aceitas' }, { value: 'recusada', label: 'Recusadas' }, { value: 'expirada', label: 'Expiradas' }], saved.status, { placeholder: 'Todas' })}</select></label>
       ${manager ? html`<label>Especialista<select name="owner_id">${selectOptions(userItems(), saved.owner_id, { placeholder: 'Todos' })}</select></label>` : ''}
       <label>Categoria<select name="category">${selectOptions(opts('categoria_credito'), saved.category, { placeholder: 'Todas' })}</select></label>
       <label>Chance de fechamento<select name="level">${selectOptions([{ value: 'alta', label: 'Alta' }, { value: 'media', label: 'Média' }, { value: 'baixa', label: 'Baixa' }], saved.level, { placeholder: 'Todas' })}</select></label>
@@ -39,7 +39,8 @@ export async function show(view, { params }) {
     const f = Object.fromEntries(new FormData(form).entries());
     saved = f;
     try {
-      data = await get('/api/propostas-panorama', { status: f.status, owner_id: f.owner_id, category: f.category });
+      // A esteira mostra todas as situações (em andamento, aceitas e recusadas recentes); o panorama segue o filtro
+      data = await get('/api/propostas-panorama', { status: tab === 'esteira' ? '' : f.status, owner_id: f.owner_id, category: f.category });
     } catch (e) {
       return toastError(e);
     }
@@ -55,7 +56,7 @@ export async function show(view, { params }) {
       <div class="kpi ${s.com_alerta ? 'alert-kpi' : ''}"><div class="kpi-label">Com alerta</div><div class="kpi-value">${s.com_alerta}</div><div class="kpi-sub">follow-up atrasado, validade ou sem decisão</div></div>
       <div class="kpi"><div class="kpi-label">Taxa de aceite</div><div class="kpi-value">${s.taxa_aceite != null ? `${s.taxa_aceite}%` : '—'}</div><div class="kpi-sub">aceitas ÷ decididas</div></div>
     </div>`);
-    render($('#list', view), tab === 'esteira' ? board(rows) : overview(rows));
+    render($('#list', view), tab === 'esteira' ? board(rows, s) : overview(rows));
   };
   form.addEventListener('change', load);
   on(view, 'click', '[data-prop]', (e, a) => {
@@ -97,19 +98,37 @@ function card(p) {
   </article>`;
 }
 
-function board(rows) {
+const RECENT = 60 * 86400000;
+const recent = (d) => d && Date.now() - Date.parse(d) < RECENT;
+
+function board(rows, summary) {
   const active = rows.filter((p) => ['rascunho', 'apresentada', 'em_analise'].includes(p.status));
-  const accepted = rows.filter((p) => p.status === 'aprovada');
+  const accepted = rows.filter((p) => p.status === 'aprovada' && recent(p.accepted_at || p.updated_at));
+  const refused = rows.filter((p) => p.status === 'recusada' && recent(p.refused_at || p.updated_at));
   const col = (key) => active.filter((p) => p.cadence_stage === key);
+  const total = (list) => fmtMoney(list.reduce((t, p) => t + (p.credit_value || 0), 0));
+  const reasons = summary.recusas_por_motivo || [];
   return html`<div class="kanban">${COLS.map(([k, label]) => {
     const cards = col(k);
-    return html`<section class="column"><header><strong>${label}</strong><span class="count">${cards.length}</span>${cards.length ? html`<small>${fmtMoney(cards.reduce((t, p) => t + (p.credit_value || 0), 0))}</small>` : ''}</header>
+    return html`<section class="column"><header><strong>${label}</strong><span class="count">${cards.length}</span>${cards.length ? html`<small>${total(cards)}</small>` : ''}</header>
       <div class="cards">${cards.length ? cards.map(card) : html`<div class="empty small">—</div>`}</div></section>`;
   })}
-    <section class="column kind-ganho"><header><strong>Aceitas</strong><span class="count">${accepted.length}</span><small>seguem para a pré-venda</small></header>
+    <section class="column kind-ganho"><header><strong>Aceitas</strong><span class="count">${accepted.length}</span><small>${accepted.length ? total(accepted) : 'seguem para a pré-venda'}</small></header>
       <div class="cards">${accepted.length ? accepted.map((p) => html`<article class="opp-card"><a href="#" data-prop="${p.id}" class="title">${p.contact_name}</a><div class="small">${fmtMoney(p.credit_value)} · aceita em ${fmtDate(p.accepted_at)}</div><a class="small" href="#/prevenda">ver pré-venda</a></article>`) : html`<div class="empty small">—</div>`}</div></section>
+    <section class="column kind-perdido"><header><strong>Recusadas</strong><span class="count">${refused.length}</span><small>${refused.length ? total(refused) : 'com o motivo da recusa'}</small></header>
+      <div class="cards">${refused.length
+        ? refused.map((p) => html`<article class="opp-card refused"><a href="#" data-prop="${p.id}" class="title">${p.contact_name}</a>
+            <div class="small">${fmtMoney(p.credit_value)} · recusada em ${fmtDate(p.refused_at || p.updated_at)}</div>
+            <div>${badge(optLabel('motivo_recusa_proposta', p.refusal_reason) || 'Motivo não informado', 'danger')}</div>
+            ${p.refusal_notes ? html`<div class="small muted">${p.refusal_notes}</div>` : ''}
+            ${p.retake_at ? html`<div class="small">▸ Retomar em ${fmtDate(p.retake_at)}</div>` : ''}</article>`)
+        : html`<div class="empty small">—</div>`}</div></section>
   </div>
-  <p class="muted small">A coluna indica o último follow-up concluído. Enviada pela manhã, a proposta tem D0 no fim do dia; à tarde, a esteira começa no D+1 (dias úteis). A chance de fechamento considera temperatura do lead, R1, decisor, parcela x capacidade, retorno do cliente, follow-ups em dia, pré-venda e tempo sem decisão.</p>`;
+  ${reasons.length ? html`<section class="card"><h3>Motivos de recusa</h3>
+    <p class="hint">Base para o trabalho de recuperação (closer): os motivos marcados como recuperáveis indicam clientes que podem voltar com uma nova condição ou em outro momento.</p>
+    <div class="reason-bars">${reasons.map((r) => html`<div class="reason-row"><span>${r.label} ${r.recuperavel ? badge('recuperável', 'ok') : ''}</span>
+      <span class="bar"><span style="width:${Math.round((r.count / reasons[0].count) * 100)}%"></span></span><strong>${r.count}</strong><small class="muted">${fmtMoney(r.credit)}</small></div>`)}</div></section>` : ''}
+  <p class="muted small">A coluna indica o último follow-up concluído. Enviada pela manhã, a proposta tem D0 no fim do dia; à tarde, a esteira começa no D+1 (dias úteis). Aceitas e recusadas mostram os últimos 60 dias. Para recusar, abra a proposta e informe o motivo.</p>`;
 }
 
 function overview(rows) {

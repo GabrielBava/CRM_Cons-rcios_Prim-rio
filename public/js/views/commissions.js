@@ -1,4 +1,4 @@
-// 11. Comissões e cancelamentos: comissões do mês por especialista (parcelas conforme a política da administradora),
+// 12. Comissões e cancelamentos: comissões do mês por especialista (parcelas conforme a política da administradora),
 // cancelamentos com motivo concreto e responsável (estorno) e o índice de cancelamento por especialista.
 import { get, post } from '../api.js';
 import { html, render, $, $$, on, fresh, table, badge, selectOptions, userItems, fmtMoney, fmtDate, fmtPct, optLabel, modal, field, toast, toastError, can, subnav, monthLabel } from '../ui.js';

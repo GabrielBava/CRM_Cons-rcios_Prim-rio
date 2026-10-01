@@ -1,5 +1,5 @@
 import { get, download } from '../api.js';
-import { html, render, $, $$, on, fresh, state, selectOptions, userItems, productItems, toItems, table, pager, badge, fmtMoney, fmtDate, fmtDateTime, optLabel, K, toastError, PERIODS, periodRange } from '../ui.js';
+import { html, render, $, $$, on, fresh, state, selectOptions, userItems, productItems, toItems, table, pager, badge, fmtMoney, fmtDate, fmtDateTime, optLabel, K, toastError, PERIODS, periodRange, can } from '../ui.js';
 import { proposalDetail, simulationForm } from '../forms.js';
 
 export async function show(view, { params }) {
@@ -37,7 +37,7 @@ function proposals(box) {
       <label>Responsável<select name="owner_id">${selectOptions(userItems(), '', { placeholder: 'Todos' })}</select></label>
       <label>Produto<select name="product_id">${selectOptions(productItems(), '', { placeholder: 'Todos' })}</select></label>
       <label class="check"><input type="checkbox" name="current" value="1" checked> Ocultar versões substituídas</label>
-      ${state.user.role !== 'leitura' ? html`<button type="button" class="btn" data-act="export">Exportar CSV</button>` : ''}
+      ${can.admin() ? html`<button type="button" class="btn" data-act="export">Exportar CSV</button>` : ''}
     </form><div id="list"></div>`);
   const form = $('[data-f]', box);
   let page = 1;
@@ -81,7 +81,7 @@ function simulations(box) {
       <label>Status<select name="status">${selectOptions(toItems(state.meta.constants.simulation_status), '', { placeholder: 'Todos' })}</select></label>
       <label>Origem<select name="source">${selectOptions([{ value: 'simulador', label: 'Simulador' }, { value: 'manual', label: 'Manual' }], '', { placeholder: 'Todas' })}</select></label>
       <label>Usuário<select name="user_id">${selectOptions(userItems(), '', { placeholder: 'Todos' })}</select></label>
-      ${state.user.role !== 'leitura' ? html`<button type="button" class="btn" data-act="export">Exportar CSV</button>` : ''}
+      ${can.admin() ? html`<button type="button" class="btn" data-act="export">Exportar CSV</button>` : ''}
     </form><div id="list"></div>`);
   const form = $('[data-f]', box);
   let page = 1;

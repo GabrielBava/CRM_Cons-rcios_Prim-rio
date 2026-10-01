@@ -47,7 +47,7 @@ function atividades(box) {
       <label>Resultado<select name="result">${selectOptions(opts('resultado_ligacao'), saved.result, { placeholder: 'Todos' })}</select></label>
       <label>Usuário<select name="user_id">${selectOptions(userItems(), saved.user_id, { placeholder: 'Todos' })}</select></label>
       <label>Registrado via<select name="source">${selectOptions(SOURCES, saved.source, { placeholder: 'Todos' })}</select></label>
-      ${state.user.role !== 'leitura' ? html`<button type="button" class="btn" data-act="export">Exportar CSV</button>` : ''}
+      ${can.admin() ? html`<button type="button" class="btn" data-act="export">Exportar CSV</button>` : ''}
     </form>
     <p class="hint">Ligações podem ser registradas manualmente no cadastro do lead. Eventos da discadora com o mesmo ID de chamada são registrados uma única vez.</p>
     <div id="list"></div>`);

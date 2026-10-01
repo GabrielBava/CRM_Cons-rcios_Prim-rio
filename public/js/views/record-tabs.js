@@ -655,10 +655,10 @@ export async function documentos(box, c, reload) {
 
 /* ------------------------- Pré-venda ------------------------- */
 
-const pageUrl = (path) => `${location.href.split('#')[0]}#/${path}`;
+export const pageUrl = (path) => `${location.href.split('#')[0]}#/${path}`;
 
 /** Mostra um link com botão de copiar (a área de transferência pode estar bloqueada: nesse caso o texto é selecionado). */
-function copyBox(url) {
+export function copyBox(url) {
   // Na versão de teste no navegador, o link é aberto na mesma aba (os dados ficam só neste navegador)
   const test = window.CRM_PREVIEW ? html`<a class="btn small primary" href="${url.slice(url.indexOf('#'))}">Testar como cliente</a>` : '';
   return html`<div class="copy-box"><code class="selectable" data-copy-src>${url}</code><button type="button" class="btn small" data-copy>Copiar</button>${test}<span class="small muted copy-msg"></span></div>`;
@@ -784,17 +784,22 @@ export async function prevenda(box, c, reload) {
 /* ------------------------- Pós-venda ------------------------- */
 
 const NPS_STATUS = { pendente: ['Aguardando resposta', 'warn'], respondida: ['Respondida', 'ok'], expirada: ['Expirada', 'muted'], cancelada: ['Cancelada', 'danger'] };
-const npsCategory = (n) => (n >= 9 ? ['Promotor', 'ok'] : n >= 7 ? ['Neutro', 'warn'] : ['Detrator', 'danger']);
-const NPS_ANSWER_LABELS = { atendimento: 'Atendimento do consultor', clareza: 'Clareza das informações', agilidade: 'Agilidade da contratação', confianca: 'Confiança na empresa' };
+export const npsCategory = (n) => (n >= 9 ? ['Promotor', 'ok'] : n >= 7 ? ['Neutro', 'warn'] : ['Detrator', 'danger']);
+export const NPS_ANSWER_LABELS = { atendimento: 'Atendimento do consultor', clareza: 'Clareza das informações', agilidade: 'Agilidade da contratação', confianca: 'Confiança na empresa' };
 const BID_TYPES = { embutido: 'Embutido', fixo: 'Fixo', livre: 'Livre' };
 
-function bidSummary(b) {
-  if (!b) return html`<span class="muted">Estratégia não cadastrada</span>`;
-  if (!b.will_bid) return html`${badge('Sem lance', 'muted')}`;
-  return html`${badge(`Lance ${BID_TYPES[b.bid_type]}`, 'ok')}${b.bid_type === 'livre' ? html` <strong>${String(b.bid_pct).replace('.', ',')}%</strong> do crédito${b.use_embedded ? ' · usa embutido' : ''}${b.use_fgts ? ' · usa FGTS' : ''}` : ''}`;
+/** Histórico das estratégias de lance de uma carta: o que foi definido, por quem, data e hora. */
+export function bidHistoryList(history) {
+  return html`<details class="bid-history"><summary>Histórico (${history.length})</summary><ol>${history.map((h) => html`<li><strong>${bidSummary(h)}</strong><br><small class="muted">${fmtDateTime(h.created_at)} · ${h.created_by_name || '—'}${h.notes ? ` · ${h.notes}` : ''}</small></li>`)}</ol></details>`;
 }
 
-function bidForm(k, b = {}) {
+export function bidSummary(b) {
+  if (!b) return html`<span class="muted">Estratégia não cadastrada</span>`;
+  if (!b.will_bid) return html`${badge('Sem lance', 'muted')}`;
+  return html`${badge(`Lance ${BID_TYPES[b.bid_type].toLowerCase()}`, 'ok')}${b.bid_type === 'livre' ? html` <strong>${String(b.bid_pct).replace('.', ',')}%</strong> do crédito${b.use_embedded ? ' · usa embutido' : ''}${b.use_fgts ? ' · usa FGTS' : ''}` : ''}`;
+}
+
+export function bidForm(k, b = {}) {
   return modal({
     title: `Estratégia de lance — ${k.code}`,
     body: html`<div class="kv">
@@ -872,6 +877,7 @@ export async function posvenda(box, c, reload) {
         <div class="kv">${kv('Categoria', catLabel(k))}${kv('Administradora', k.administrator)}${kv('Grupo / cota', `${k.group_code || '—'} / ${k.quota_code || '—'}`)}${kv('Crédito', fmtMoney(k.credit_value))}</div>
         <p>${bidSummary(b)}</p>
         ${b ? html`<p class="small muted">Atualizada em ${fmtDateTime(b.updated_at)} · ${b.updated_by_name || '—'}${b.notes ? ` · ${b.notes}` : ''}</p>` : ''}
+        ${b?.history?.length ? bidHistoryList(b.history) : ''}
       </div>`;
     })}</div>` : empty('Nenhum produto contratado. A estratégia de lance é cadastrada para cada produto depois da venda.')}
   </section>

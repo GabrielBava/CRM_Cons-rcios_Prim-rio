@@ -1,5 +1,5 @@
 'use strict';
-const { loadContact, childScope, audit, diff, buildUpdate, paging } = require('../core');
+const { loadContact, childScope, contactScope, audit, diff, buildUpdate, paging } = require('../core');
 const { badRequest, notFound, clean, toNumber, toDateOnly, toIso, nowIso } = require('../util');
 const { tx, nextCode } = require('../db');
 const { insertActivity } = require('./activities');
@@ -170,4 +170,84 @@ function listContracts(db, user, q) {
   return { total, page, limit, rows };
 }
 
-module.exports = { createContract, createContractRow, updateContract, listContracts };
+/**
+ * Lista de clientes (menu Clientes): código, nome, situação, contato, responsável pós-venda, especialista da venda,
+ * quantidade de cartas (produtos), crédito contratado, próxima ação e última atividade.
+ * Filtros: busca, situação, PF/PJ, responsável pós-venda, especialista e categoria (só imóvel, só veículo, só serviço ou mais de uma).
+ */
+function listClients(db, user, q = {}) {
+  const sc = contactScope(db, user, 'c');
+  const where = ["c.relationship = 'cliente'", 'c.merged_into_id IS NULL', 'c.anonymized_at IS NULL', sc.sql];
+  const params = [...sc.params];
+  const ACTIVE_K = "k.status <> 'cancelado'";
+  if (q.q) {
+    const term = String(q.q).trim();
+    const d = term.replace(/\D/g, '');
+    const or = ['c.name LIKE ?', 'c.trade_name LIKE ?', 'c.code = ?', 'c.email_norm LIKE ?'];
+    params.push(`%${term}%`, `%${term}%`, term.toUpperCase(), `%${term.toLowerCase()}%`);
+    if (d.length >= 4) {
+      or.push('c.phone1_norm LIKE ?', 'c.phone2_norm LIKE ?', 'c.whatsapp_norm LIKE ?', 'c.doc = ?');
+      params.push(`%${d}%`, `%${d}%`, `%${d}%`, d);
+    }
+    where.push(`(${or.join(' OR ')})`);
+  }
+  if (q.active === '1' || q.active === '0') {
+    where.push('COALESCE(c.active, 1) = ?');
+    params.push(Number(q.active));
+  }
+  if (q.kind === 'PF' || q.kind === 'PJ') {
+    where.push('c.kind = ?');
+    params.push(q.kind);
+  }
+  if (q.postsale_owner_id) {
+    where.push('COALESCE(c.postsale_owner_id, c.owner_id) = ?');
+    params.push(Number(q.postsale_owner_id));
+  }
+  const SELLER = `COALESCE((SELECT k.seller_id FROM contracts k WHERE k.contact_id = c.id AND k.seller_id IS NOT NULL ORDER BY k.created_at DESC LIMIT 1), c.owner_id)`;
+  if (q.seller_id) {
+    where.push(`${SELLER} = ?`);
+    params.push(Number(q.seller_id));
+  }
+  const CATS = `(SELECT GROUP_CONCAT(DISTINCT COALESCE(k.category, p.category)) FROM contracts k LEFT JOIN products p ON p.id = k.product_id WHERE k.contact_id = c.id AND ${ACTIVE_K})`;
+  if (q.category) {
+    const only = { so_imovel: 'imovel', so_veiculo: 'veiculo', so_servico: 'servico' }[q.category];
+    if (only) {
+      where.push(`${CATS} = ?`);
+      params.push(only);
+    } else if (q.category === 'ambas') where.push(`instr(COALESCE(${CATS}, ''), ',') > 0`);
+  }
+  const base = `FROM contacts c WHERE ${where.join(' AND ')}`;
+  const { limit, offset, page } = paging(q);
+  const total = db.prepare(`SELECT COUNT(*) AS n ${base}`).get(...params).n;
+  const order = { nome: 'c.name COLLATE NOCASE', credito: 'credit_total DESC', recentes: 'c.converted_at DESC' }[q.sort] || 'c.name COLLATE NOCASE';
+  const rows = db
+    .prepare(`SELECT c.id, c.code, c.name, c.kind, COALESCE(c.active, 1) AS active, c.phone1, c.whatsapp, c.email, c.owner_id, c.converted_at,
+      COALESCE(c.postsale_owner_id, c.owner_id) AS postsale_id, ${SELLER} AS seller_id,
+      (SELECT COUNT(*) FROM contracts k WHERE k.contact_id = c.id AND ${ACTIVE_K}) AS cartas,
+      (SELECT COALESCE(SUM(k.credit_value), 0) FROM contracts k WHERE k.contact_id = c.id AND ${ACTIVE_K}) AS credit_total,
+      ${CATS} AS categories,
+      (SELECT t.title || '|' || t.due_at FROM tasks t WHERE t.contact_id = c.id AND t.status = 'pendente' ORDER BY t.due_at LIMIT 1) AS next_task,
+      (SELECT a.type || '|' || COALESCE(a.occurred_at, a.created_at) FROM activities a WHERE a.contact_id = c.id ORDER BY COALESCE(a.occurred_at, a.created_at) DESC LIMIT 1) AS last_act
+      ${base} ORDER BY ${order} LIMIT ? OFFSET ?`)
+    .all(...params, limit, offset);
+  const name = db.prepare('SELECT name FROM users WHERE id = ?');
+  const split = (v) => {
+    if (!v) return null;
+    const i = v.indexOf('|');
+    return [v.slice(0, i), v.slice(i + 1)];
+  };
+  for (const r of rows) {
+    r.postsale_name = r.postsale_id ? name.get(r.postsale_id)?.name || null : null;
+    r.seller_name = r.seller_id ? name.get(r.seller_id)?.name || null : null;
+    r.categories = r.categories ? r.categories.split(',') : [];
+    const t = split(r.next_task);
+    r.next_action = t ? { title: t[0], due_at: t[1] } : null;
+    const a = split(r.last_act);
+    r.last_activity = a ? { type: a[0], at: a[1] } : null;
+    delete r.next_task;
+    delete r.last_act;
+  }
+  return { total, page, limit, rows };
+}
+
+module.exports = { createContract, createContractRow, updateContract, listContracts, listClients };

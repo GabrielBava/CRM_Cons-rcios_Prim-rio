@@ -35,7 +35,7 @@ function currentUser(db, req) {
   if (!token) return null;
   const s = db.prepare('SELECT * FROM sessions WHERE token_hash = ?').get(sha256(token));
   if (!s || Date.parse(s.expires_at) < Date.now()) return null;
-  const u = db.prepare('SELECT id, name, email, role, team_id, active, modules FROM users WHERE id = ?').get(s.user_id);
+  const u = db.prepare('SELECT id, name, email, role, team_id, active, modules, photo, job_title FROM users WHERE id = ?').get(s.user_id);
   if (!u || !u.active) return null;
   // Renovação deslizante da sessão
   const remaining = Date.parse(s.expires_at) - Date.now();
@@ -92,12 +92,55 @@ function logout(db, req, res) {
   return { ok: true };
 }
 
-function changePassword(db, user, body) {
-  const u = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
-  if (!verifyPassword(String(body.current || ''), u.password_hash)) throw badRequest('Senha atual incorreta.');
-  if (!body.password || String(body.password).length < 8) throw badRequest('A nova senha deve ter pelo menos 8 caracteres.');
-  db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').run(hashPassword(body.password), nowIso(), u.id);
-  audit(db, user, 'user', u.id, 'senha_alterada', null);
+const COMMON_PASSWORDS = new Set(['12345678', '123456789', '1234567890', '87654321', '11111111', '00000000', 'password', 'password1', 'senha123',
+  'senha1234', 'senha12345', 'mudar123', 'qwerty123', 'abc12345', 'abcd1234', 'admin123', 'consorcio', 'consorcio1', 'brasil123', 'iloveyou']);
+
+/**
+ * Política de senha (boas práticas de mercado): mínimo de 8 caracteres, letras e números, diferente da atual,
+ * sem conter o nome ou o e-mail e fora da lista de senhas comuns.
+ */
+function passwordProblems(pwd, { name = '', email = '' } = {}) {
+  const p = String(pwd || '');
+  const low = p.toLowerCase();
+  const out = [];
+  if (p.length < 8) out.push('ter pelo menos 8 caracteres');
+  if (p.length > 128) out.push('ter no máximo 128 caracteres');
+  if (!/[a-zA-ZÀ-ÿ]/.test(p) || !/\d/.test(p)) out.push('combinar letras e números');
+  if (COMMON_PASSWORDS.has(low)) out.push('não ser uma senha comum');
+  const local = String(email).split('@')[0].toLowerCase();
+  const first = String(name).trim().split(/\s+/)[0]?.toLowerCase() || '';
+  if ((local.length >= 4 && low.includes(local)) || (first.length >= 3 && low.includes(first))) out.push('não conter seu nome ou e-mail');
+  return out;
 }
 
-module.exports = { currentUser, needsSetup, setup, login, logout, changePassword };
+/**
+ * Troca da própria senha: confere a senha atual (com limite de tentativas), valida a nova e a confirmação,
+ * e encerra as sessões abertas em outros dispositivos.
+ */
+function changePassword(db, req, user, body) {
+  const u = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
+  const key = `senha|${u.id}`;
+  const f = failures.get(key);
+  if (f && f.until && f.until > Date.now()) throw new HttpError(429, 'Muitas tentativas com a senha atual incorreta. Aguarde 15 minutos e tente novamente.');
+  if (!verifyPassword(String(body.current || ''), u.password_hash)) {
+    const count = (f?.count || 0) + 1;
+    failures.set(key, { count, until: count >= 5 ? Date.now() + 15 * 60 * 1000 : null });
+    throw badRequest(count >= 5 ? 'Senha atual incorreta. Por segurança, a troca foi bloqueada por 15 minutos.' : `Senha atual incorreta (${count} de 5 tentativas).`);
+  }
+  failures.delete(key);
+  const pwd = String(body.password || '');
+  if (body.confirm !== undefined && pwd !== String(body.confirm)) throw badRequest('A confirmação não confere com a nova senha.');
+  if (verifyPassword(pwd, u.password_hash)) throw badRequest('A nova senha deve ser diferente da atual.');
+  const problems = passwordProblems(pwd, u);
+  if (problems.length) throw badRequest(`A nova senha precisa ${problems.join(', ')}.`, { problems });
+  const now = nowIso();
+  db.prepare('UPDATE users SET password_hash = ?, password_changed_at = ?, updated_at = ? WHERE id = ?').run(hashPassword(pwd), now, now, u.id);
+  // Mantém só a sessão atual: quem estiver usando a senha antiga em outro aparelho é desconectado
+  const token = req ? parseCookies(req.headers.cookie)[COOKIE] : null;
+  const ended = db.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?').run(u.id, token ? sha256(token) : '').changes;
+  audit(db, user, 'user', u.id, 'senha_alterada', { sessoes_encerradas: ended });
+  require('./services/notifications').notify(db, u.id, { kind: 'seguranca', level: 'warn', title: 'Sua senha foi alterada', body: 'Se não foi você, avise o administrador imediatamente.', link: '#/meu-cadastro' });
+  return { ok: true, sessions_ended: ended };
+}
+
+module.exports = { currentUser, needsSetup, setup, login, logout, changePassword, passwordProblems };

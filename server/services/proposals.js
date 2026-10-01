@@ -237,6 +237,12 @@ function changeStatus(db, user, id, data) {
     extra.refusal_reason = clean(data.refusal_reason);
     if (!extra.refusal_reason) throw badRequest('Informe o motivo da recusa.');
     assertOption(db, 'motivo_recusa_proposta', extra.refusal_reason, 'motivo da recusa');
+    extra.refusal_notes = clean(data.refusal_notes) ?? null;
+    extra.refused_at = now;
+    if (data.retake_at) {
+      extra.retake_at = toDateOnly(data.retake_at);
+      if (!extra.retake_at || extra.retake_at <= now.slice(0, 10)) throw badRequest('A data para retomar o contato deve ser futura.');
+    }
   }
   tx(db, () => {
     db.prepare('UPDATE proposals SET status = ?, presented_at = CASE WHEN ? = \'apresentada\' AND presented_at IS NULL THEN ? ELSE presented_at END, updated_at = ? WHERE id = ?').run(status, status, now, now, p.id);
@@ -251,6 +257,13 @@ function changeStatus(db, user, id, data) {
       startCadence(db, user, { ...p, status }, now);
     }
     if (FINAL.includes(status)) stopCadence(db, p.id, PROPOSAL_STATUS[status]);
+    // Recusa com data de retomada: agenda o novo contato (base para o trabalho de recuperação)
+    if (status === 'recusada' && extra.retake_at) {
+      db.prepare(`INSERT INTO tasks (contact_id, opportunity_id, type, title, notes, due_at, assigned_to, priority, proposal_id, created_by, created_at, updated_at)
+        VALUES (?, ?, 'retorno', ?, ?, ?, ?, 'normal', ?, ?, ?, ?)`)
+        .run(p.contact_id, p.opportunity_id, `Retomar proposta recusada ${p.code}`, `Motivo da recusa: ${optionLabel(db, 'motivo_recusa_proposta', extra.refusal_reason)}.${extra.refusal_notes ? ` ${extra.refusal_notes}` : ''} Verifique se o momento mudou e apresente uma nova condição.`,
+          `${extra.retake_at}T13:00:00.000Z`, p.owner_id ?? user.id, p.id, user.id, now, now);
+    }
     insertActivity(db, {
       contact_id: p.contact_id,
       opportunity_id: p.opportunity_id,
@@ -414,6 +427,25 @@ function startProposal(db, user, data) {
 }
 
 /** Panorama: propostas vigentes com etapa da esteira, próximo follow-up, alertas e probabilidade. */
+/** Recusas agrupadas por motivo (com marca de "recuperável"): base para o trabalho de recuperação (closer). */
+function refusalBreakdown(db, rows) {
+  const opts = db.prepare("SELECT value, label, flags FROM options WHERE list = 'motivo_recusa_proposta'").all();
+  const map = new Map();
+  for (const r of rows) {
+    const k = r.refusal_reason || 'sem_motivo';
+    const cur = map.get(k) || { reason: k, count: 0, credit: 0 };
+    cur.count++;
+    cur.credit += r.credit_value || 0;
+    map.set(k, cur);
+  }
+  return [...map.values()]
+    .map((x) => {
+      const o = opts.find((op) => op.value === x.reason);
+      return { ...x, label: o?.label || 'Sem motivo informado', recuperavel: !!JSON.parse(o?.flags || '{}').recuperavel };
+    })
+    .sort((a, b) => b.count - a.count);
+}
+
 function panorama(db, user, q = {}) {
   const sc = childScope(db, user, 'pr');
   const where = [sc.sql, "pr.status <> 'substituida'"];
@@ -475,7 +507,7 @@ function panorama(db, user, q = {}) {
   const month = new Date().toISOString().slice(0, 7);
   // Geradas no mês e taxa de aceite consideram todas as propostas visíveis (independem do filtro de situação)
   const base = db
-    .prepare(`SELECT pr.status, pr.created_at, pr.presented_at FROM proposals pr JOIN opportunities o ON o.id = pr.opportunity_id
+    .prepare(`SELECT pr.status, pr.created_at, pr.presented_at, pr.refusal_reason, pr.credit_value FROM proposals pr JOIN opportunities o ON o.id = pr.opportunity_id
       WHERE ${sc.sql} AND pr.status <> 'substituida'${q.owner_id ? ' AND pr.owner_id = ?' : ''}`)
     .all(...sc.params, ...(q.owner_id ? [Number(q.owner_id)] : []));
   const monthRows = base.filter((p) => p.created_at.slice(0, 7) === month);
@@ -493,6 +525,7 @@ function panorama(db, user, q = {}) {
       media: active.filter((p) => p.level === 'media').length,
       baixa: active.filter((p) => p.level === 'baixa').length,
       com_alerta: active.filter((p) => p.alerts.length).length,
+      recusas_por_motivo: refusalBreakdown(db, base.filter((p) => p.status === 'recusada')),
       taxa_aceite: decided.length ? Math.round((decided.filter((p) => p.status === 'aprovada').length / decided.length) * 1000) / 10 : null,
     },
   };
