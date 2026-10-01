@@ -195,7 +195,7 @@ export function changePasswordDialog() {
       const failed = checks(d.password, d.confirm, d.current).filter(([, ok]) => !ok);
       if (failed.length) throw new Error(`A nova senha precisa atender: ${failed.map(([l]) => l.toLowerCase()).join('; ')}.`);
       const r = await post('/api/me/senha', d);
-      toast(r.sessions_ended ? `Senha alterada. ${r.sessions_ended} sessão(ões) em outros aparelhos foram encerradas.` : 'Senha alterada com sucesso.');
+      toast(r.sessions_ended ? `Senha alterada. ${r.sessions_ended} sessão(ões) em outros aparelhos ${r.sessions_ended === 1 ? 'foi encerrada' : 'foram encerradas'}.` : 'Senha alterada com sucesso.');
       return true;
     },
   });

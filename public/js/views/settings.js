@@ -64,7 +64,7 @@ export async function show(view, { id }) {
   let tab = tabs.find(([k]) => k === id)?.[0] || tabs[0][0];
   render(view, html`<div class="page">
     <div class="page-head"><h1>Configurações</h1></div>
-    ${can.admin() ? html`<p class="hint">Usuários, equipes e permissões ficam em <a href="#/usuarios">17. Usuários</a>.</p>` : ''}
+    ${can.admin() ? html`<p class="hint">Usuários, equipes e permissões ficam em <a href="#/usuarios">Usuários</a>.</p>` : ''}
     <nav class="tabs">${tabs.map(([k, l]) => html`<a href="#/configuracoes/${k}" data-tab="${k}" class="${tab === k ? 'active' : ''}">${l}</a>`)}</nav>
     <div id="tab"></div></div>`);
   const draw = async () => {

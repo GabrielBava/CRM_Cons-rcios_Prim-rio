@@ -28,26 +28,27 @@ import * as plans from './views/plans.js';
 import * as users from './views/users.js';
 import * as profileView from './views/profile.js';
 import * as postsaleView from './views/postsale.js';
+import { icon } from './icons.js';
 
 // Menu lateral: [rota, rótulo, tela, módulo de permissão, grupo]
 const NAV = [
-  ['painel', '1. Painel inicial', dashboard, 'painel'],
-  ['entrada', '2. Prospects e leads', distribution, 'distribuicao'],
-  ['funil', '3. CRM', pipeline, 'crm'],
-  ['agenda', '4. Agenda e tarefas', agenda, 'agenda'],
-  ['simulador', '5. Simulador', simulator, 'simulador'],
-  ['propostas', '6. Propostas', proposalsView, 'propostas'],
-  ['clientes', '7. Clientes', clients, 'clientes'],
-  ['metas', '8. Metas', goals, 'metas'],
-  ['prevenda', '9. Pré-venda', presales, 'prevenda'],
-  ['vendas', '10. Vendas', salesView, 'vendas'],
-  ['posvenda', '11. Pós-venda', postsaleView, 'posvenda'],
-  ['comissoes', '12. Comissões e cancelamentos', commissions, 'comissoes'],
-  ['treinamentos', '13. Treinamentos', trainings, 'treinamentos'],
-  ['administradoras', '14. Administradoras', administrators, 'administradoras', 'admin'],
-  ['planos', '15. Planos', plans, 'planos', 'admin'],
-  ['relatorios', '16. Relatórios', reports, 'relatorios', 'admin'],
-  ['usuarios', '17. Usuários', users, 'usuarios', 'admin'],
+  ['painel', 'Painel inicial', dashboard, 'painel'],
+  ['entrada', 'Prospects e leads', distribution, 'distribuicao'],
+  ['funil', 'CRM', pipeline, 'crm'],
+  ['agenda', 'Agenda e tarefas', agenda, 'agenda'],
+  ['simulador', 'Simulador', simulator, 'simulador'],
+  ['propostas', 'Propostas', proposalsView, 'propostas'],
+  ['clientes', 'Clientes', clients, 'clientes'],
+  ['metas', 'Metas', goals, 'metas'],
+  ['prevenda', 'Pré-venda', presales, 'prevenda'],
+  ['vendas', 'Vendas', salesView, 'vendas'],
+  ['posvenda', 'Pós-venda', postsaleView, 'posvenda'],
+  ['comissoes', 'Comissões e cancelamentos', commissions, 'comissoes'],
+  ['treinamentos', 'Treinamentos', trainings, 'treinamentos'],
+  ['administradoras', 'Administradoras', administrators, 'administradoras', 'admin'],
+  ['planos', 'Planos', plans, 'planos', 'admin'],
+  ['relatorios', 'Relatórios', reports, 'relatorios', 'admin'],
+  ['usuarios', 'Usuários', users, 'usuarios', 'admin'],
   ['configuracoes', 'Configurações', settings, 'configuracoes', 'admin'],
 ];
 // Rotas secundárias: [tela, módulo, item do menu destacado]
@@ -61,6 +62,9 @@ const EXTRA = {
   produtos: [plans, 'planos', 'planos'],
   'meu-cadastro': [profileView, null, null],
 };
+// Ícone de cada item do menu (manual de identidade, Iconografia)
+const NAV_ICON = { painel: 'painel', entrada: 'leads', funil: 'crm', agenda: 'agenda', simulador: 'simulador', propostas: 'propostas', clientes: 'clientes', metas: 'metas', prevenda: 'prevenda', vendas: 'vendas', posvenda: 'posvenda', comissoes: 'comissoes', treinamentos: 'treinamentos', administradoras: 'administradoras', planos: 'planos', relatorios: 'relatorios', usuarios: 'usuarios', configuracoes: 'configuracoes' };
+const navLink = ([k, label]) => html`<a href="#/${k}" data-nav="${k}">${icon(NAV_ICON[k])}<span>${label}</span></a>`;
 const allowed = (mod) => (state.user?.modules || []).includes(mod);
 
 const app = document.getElementById('app');
@@ -102,7 +106,7 @@ async function boot() {
 
 function showSetup() {
   render(app, html`<div class="auth"><form class="card" id="setup">
-    <h1>CRM de Consórcios</h1><p>Primeiro acesso: crie o usuário administrador.</p>
+    <div class="auth-brand"><span class="monogram">CC</span><span>CRM Consórcios</span></div><h1>Primeiro acesso</h1><p class="muted">Crie o usuário administrador.</p>
     <label>Nome<input name="name" required autocomplete="name"></label>
     <label>E-mail<input name="email" type="email" required autocomplete="email"></label>
     <label>Senha (mín. 8 caracteres)<input name="password" type="password" minlength="8" required autocomplete="new-password"></label>
@@ -126,7 +130,7 @@ function showLogin(msg) {
   stopNotifications();
   state.meta = null;
   render(app, html`<div class="auth"><form class="card" id="login">
-    <h1>CRM de Consórcios</h1>${msg ? html`<p class="warn-text">${msg}</p>` : html`<p>Entre com seu usuário.</p>`}
+    <div class="auth-brand"><span class="monogram">CC</span><span>CRM Consórcios</span></div><h1>Entrar</h1>${msg ? html`<p class="warn-text">${msg}</p>` : html`<p class="muted">Use seu e-mail e senha de acesso.</p>`}
     <label>E-mail<input name="email" type="email" required autocomplete="username"></label>
     <label>Senha<input name="password" type="password" required autocomplete="current-password"></label>
     <div class="modal-error" hidden></div>
@@ -148,34 +152,44 @@ function showLogin(msg) {
 function userBox() {
   const u = state.user;
   return html`<button class="user-btn" data-act="usermenu" aria-haspopup="menu" aria-expanded="false" aria-label="Menu do usuário">
-      ${avatar(u, 34)}<span class="user-id"><strong>${u.name}</strong><small>${u.job_title || u.role_label}</small></span><span class="caret" aria-hidden="true">▾</span></button>
+      ${avatar(u, 32)}<span class="user-id"><strong>${u.name}</strong><small>${u.job_title || u.role_label}</small></span><span class="caret">${icon('abaixo', 16)}</span></button>
     <div class="user-dropdown" role="menu" hidden>
       <div class="ud-head">${avatar(u, 44)}<div><strong>${u.name}</strong><small>${u.email}</small><small>${u.role_label}</small></div></div>
-      <a href="#/meu-cadastro" role="menuitem" data-close-menu>Meu cadastro</a>
-      <button type="button" role="menuitem" data-act="password">Alterar senha</button>
+      <a href="#/meu-cadastro" role="menuitem" data-close-menu>${icon('clientes', 16)}Meu cadastro</a>
+      <button type="button" role="menuitem" data-act="password">${icon('senha', 16)}Alterar senha</button>
       <hr>
-      <button type="button" role="menuitem" data-act="logout" class="danger-text">Sair</button>
+      <button type="button" role="menuitem" data-act="logout" class="danger-text">${icon('sair', 16)}Sair</button>
     </div>`;
 }
 
-const BELL = html`<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 0 0-5.5-6.84V3.5a1.5 1.5 0 0 0-3 0v.66A7 7 0 0 0 5 11v5l-2 2v1h18v-1l-2-2Z"/></svg>`;
+const BELL = icon('sino', 18);
+
+/* ---------- Tema claro/escuro (preferência do usuário neste navegador) ---------- */
+const effectiveTheme = () => document.documentElement.getAttribute('data-theme') || (window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+function themeToggle() {
+  const t = effectiveTheme();
+  return html`<div class="theme-toggle" role="group" aria-label="Tema">
+    <button type="button" data-theme-set="light" aria-pressed="${t === 'light'}">${icon('sol', 14)}<span>Claro</span></button>
+    <button type="button" data-theme-set="dark" aria-pressed="${t === 'dark'}">${icon('lua', 14)}<span>Escuro</span></button></div>`;
+}
 
 function shell() {
   render(app, html`
     <aside class="sidebar" id="sidebar">
-      <div class="brand">CRM Consórcios</div>
-      <nav>${NAV.filter(([, , , m, g]) => allowed(m) && g !== 'admin').map(([k, label]) => html`<a href="#/${k}" data-nav="${k}">${label}</a>`)}
-        ${NAV.some(([, , , m, g]) => g === 'admin' && allowed(m)) ? html`<div class="nav-group">Administração</div>${NAV.filter(([, , , m, g]) => g === 'admin' && allowed(m)).map(([k, label]) => html`<a href="#/${k}" data-nav="${k}">${label}</a>`)}` : ''}</nav>
+      <a class="brand" href="#/painel" aria-label="CRM Consórcios — painel inicial"><span class="monogram">CC</span><span class="brand-name">CRM<br>Consórcios</span></a>
+      <nav>${NAV.filter(([, , , m, g]) => allowed(m) && g !== 'admin').map(navLink)}
+        ${NAV.some(([, , , m, g]) => g === 'admin' && allowed(m)) ? html`<div class="nav-group">Administração</div>${NAV.filter(([, , , m, g]) => g === 'admin' && allowed(m)).map(navLink)}` : ''}</nav>
     </aside>
     <div class="main">
       <header class="topbar">
-        <button class="icon menu-btn" data-act="menu" aria-label="Abrir menu">☰</button>
+        <button class="icon-btn menu-btn" data-act="menu" aria-label="Abrir menu">${icon('menu', 20)}</button>
         <div class="search">
-          <input type="search" id="gsearch" placeholder="Buscar por nome, telefone, e-mail, CPF/CNPJ ou ID (C-000001, OP-…)" autocomplete="off" aria-label="Busca global">
+          ${icon('buscar', 16)}<input type="search" id="gsearch" placeholder="Buscar por nome, telefone, e-mail, CPF/CNPJ ou ID (C-000001, OP-…)" autocomplete="off" aria-label="Busca global" aria-keyshortcuts="Control+K"><kbd class="kbd">Ctrl K</kbd>
           <div class="search-results" hidden></div>
         </div>
-        ${can.write() ? html`<button class="btn primary" data-act="new-lead">+ Novo lead</button>` : ''}
+        ${can.write() ? html`<button class="btn primary" data-act="new-lead">${icon('adicionar', 16)}<span>Novo lead</span></button>` : ''}
         <div class="top-right">
+          ${themeToggle()}
           <div class="notif">
             <button class="icon-btn bell" data-act="notif" aria-haspopup="true" aria-expanded="false" aria-label="Notificações">${BELL}<span class="notif-badge" hidden></span></button>
             <div class="notif-panel" hidden></div>
@@ -210,6 +224,17 @@ function shell() {
   // Ouvintes globais só uma vez (o shell é recriado a cada login)
   if (!window.__crmMenus) {
     window.__crmMenus = true;
+    // Ctrl+K (ou Cmd+K) leva para a busca global
+    document.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        const g = document.getElementById('gsearch');
+        if (g) {
+          e.preventDefault();
+          g.focus();
+          g.select();
+        }
+      }
+    });
     document.addEventListener('click', (e) => {
       if (!e.target.closest('.usermenu') && !e.target.closest('.notif')) closeMenusGlobal();
     });
@@ -226,8 +251,16 @@ function shell() {
     if (url) location.href = url;
     else showLogin();
   });
+  on(app, 'click', '[data-theme-set]', (e, b) => {
+    const t = b.dataset.themeSet;
+    document.documentElement.setAttribute('data-theme', t);
+    try {
+      localStorage.setItem('crm-theme', t);
+    } catch {}
+    $$('[data-theme-set]', app).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+  });
   on(app, 'click', '[data-act=menu]', () => $('#sidebar').classList.toggle('open'));
-  on(app, 'click', '[data-nav]', () => $('#sidebar').classList.remove('open'));
+  on(app, 'click', '[data-nav], .brand', () => $('#sidebar').classList.remove('open'));
   on(app, 'click', '[data-act=new-lead]', () => quickCreateContact());
   on(app, 'click', '[data-act=notif-all]', async () => {
     await post('/api/notificacoes/lidas', { all: true }).catch(toastError);

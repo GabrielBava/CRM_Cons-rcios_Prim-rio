@@ -1,7 +1,7 @@
 // 11. Pós-venda: depois do pagamento confirmado, o acompanhamento do cliente (sempre ligado ao cadastro):
 // checklist, satisfação (NPS) com alertas e motivos, e estratégias de lance com histórico.
 import { get, post } from '../api.js';
-import { html, render, raw, $, $$, on, fresh, state, selectOptions, opts, userItems, table, badge, fmtMoney, fmtDate, fmtDateTime, relTime, optLabel, can, modal, field, toast, toastError, empty, subnav } from '../ui.js';
+import { html, render, raw, $, $$, on, fresh, state, selectOptions, opts, userItems, table, badge, fmtMoney, fmtNum, fmtDate, fmtDateTime, relTime, optLabel, can, modal, field, toast, toastError, empty, subnav } from '../ui.js';
 import { bindDrawerLinks } from '../drawer.js';
 import { npsCategory, NPS_ANSWER_LABELS, bidSummary, bidForm, bidHistoryList, copyBox, pageUrl, bindCopy } from './record-tabs.js';
 
@@ -144,7 +144,7 @@ async function npsTab(box) {
           ? html`<div class="reason-bars">${s.motivos.map((m) => html`<div class="reason-row short"><span>${m.label}</span><span class="bar"><span style="width:${Math.round((m.n / maxReason) * 100)}%"></span></span><strong>${m.n}</strong></div>`)}</div>`
           : empty('Nenhum motivo registrado no período.')}
           <h4>Avaliações complementares (1 a 5)</h4>
-          <dl class="kv-list">${Object.values(s.perguntas).map((q) => html`<div><dt>${q.label}</dt><dd>${q.avg ?? '—'}${q.n ? html` <small class="muted">(${q.n})</small>` : ''}</dd></div>`)}</dl></section>
+          <dl class="kv-list">${Object.values(s.perguntas).map((q) => html`<div><dt>${q.label}</dt><dd>${fmtNum(q.avg)}${q.n ? html` <small class="muted">(${q.n})</small>` : ''}</dd></div>`)}</dl></section>
       </div>
       <form class="filters" data-f>
         <label>Período<select name="months">${selectOptions([{ value: '3', label: 'Últimos 3 meses' }, { value: '6', label: 'Últimos 6 meses' }, { value: '12', label: 'Últimos 12 meses' }, { value: '24', label: 'Últimos 24 meses' }], npsSaved.months, { allowEmpty: false })}</select></label>

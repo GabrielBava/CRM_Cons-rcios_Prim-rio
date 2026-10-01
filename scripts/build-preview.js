@@ -68,9 +68,14 @@ for (const dir of ['js', 'js/views']) {
     if (f.endsWith('.js')) fs.copyFileSync(path.join(ROOT, 'public', dir, f), path.join(OUT, dir, f));
   }
 }
-const css = fs.readFileSync(path.join(ROOT, 'public', 'css', 'app.css'), 'utf8');
+// Identidade visual: tokens + estilos da aplicação + componentes da marca, na mesma ordem do index.html
+const css = ['tokens.css', 'app.css', 'brand.css'].map((f) => fs.readFileSync(path.join(ROOT, 'public', 'css', f), 'utf8')).join('\n');
 const previewCss = fs.readFileSync(path.join(ROOT, 'preview', 'preview.css'), 'utf8');
-const page = `<title>ERP/CRM de Consórcios</title>
+const page = `<title>CRM Consórcios</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Manrope:wght@500;600;700&display=swap">
+<script src="js/theme.js"></script>
 <style>
 ${css}
 ${previewCss}

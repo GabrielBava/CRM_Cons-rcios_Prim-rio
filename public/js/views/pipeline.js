@@ -1,9 +1,10 @@
 import { get, post, download } from '../api.js';
 import {
   html, raw, render, $, $$, on, state, selectOptions, opts, toItems, userItems, stageItems, fmtMoney, fmtDateTime, fmtDate, relTime,
-  badge, optoutBadge, optLabel, K, can, toast, toastError, table, empty, fresh, crmTabs, modal, field,
+  badge, optoutBadge, optLabel, K, can, toast, toastError, table, empty, fresh, crmTabs, modal, field, fixPlurals,
 } from '../ui.js';
 import { bindDrawerLinks } from '../drawer.js';
+import { icon } from '../icons.js';
 import { moveStage, opportunityForm, activityForm, taskForm, simulationForm, proposalForm, proposalDetail, quickSimulation, openProposalSimulator } from '../forms.js';
 import { timeline, tasksTable, bindTasks } from './contact.js';
 
@@ -59,7 +60,7 @@ export async function show(view, { key, id, params }) {
     <div class="board-tools">
       <div class="sort-box"><label>Ordenar por<select data-sort>${selectOptions(SORTS, sortBy, { allowEmpty: false })}</select></label>
         <button type="button" class="btn small sort-dir" data-sortdir aria-label="Inverter a ordem">${sortDir === 'asc' ? '↑ Crescente' : '↓ Decrescente'}</button></div>
-      ${can.write() ? html`<button type="button" class="btn" data-act="bulk" aria-pressed="false">☑ Mover em massa</button>` : ''}
+      ${can.write() ? html`<button type="button" class="btn" data-act="bulk" aria-pressed="false">${icon('selecionar', 16)}Mover em massa</button>` : ''}
     </div>
     <div id="board"></div>
     <div class="bulk-bar" hidden><strong data-bulk-count>0 selecionado(s)</strong>
@@ -79,7 +80,7 @@ export async function show(view, { key, id, params }) {
   const syncBulk = () => {
     const bar = $('.bulk-bar', view);
     bar.hidden = !bulk;
-    $('[data-bulk-count]', view).textContent = `${selected.size} selecionado(s)`;
+    $('[data-bulk-count]', view).textContent = fixPlurals(`${selected.size} selecionado(s)`);
     $$('[data-act=bulk-move], [data-act=bulk-owner]', view).forEach((b) => (b.disabled = !selected.size));
     $('[data-act=bulk]', view)?.setAttribute('aria-pressed', String(bulk));
     $('[data-act=bulk]', view)?.classList.toggle('active', bulk);

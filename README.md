@@ -25,6 +25,17 @@ A ficha do cliente tem 9 blocos, com documentos validados, financeiro, pós-vend
 - **Especificação funcional (telas, funil, permissões e módulo ERP):** [`docs/ESPECIFICACAO.md`](docs/ESPECIFICACAO.md)
 - **Contratos de integração (discadora, simulador, leads, WhatsApp):** [`docs/INTEGRACOES.md`](docs/INTEGRACOES.md)
 
+## Identidade visual
+
+A interface segue o manual da marca v1.0 (aplicações e diretrizes, elementos de interface, paleta de cores e tipografia). A aplicação da marca não mudou nenhuma regra de negócio.
+
+- `public/css/tokens.css`: tokens oficiais (paleta, tipografia, raios, espaçamentos, sombras e os temas escuro e claro).
+- `public/css/brand.css`: componentes (moldura, menu lateral flutuante, pílulas, cards, indicadores, tabelas, funil, janelas e painel lateral).
+- `public/js/icons.js`: ícones de traço no estilo Lucide (24×24, traço 1,7).
+- **Tema:** escuro por padrão. Sem escolha do usuário, segue o sistema operacional; o botão Claro/Escuro no topo guarda a escolha no navegador.
+- **Fontes:** Poppins nos textos e Manrope no lugar da Famels (fonte comercial) até a licença. Com a licença, copie `Famels-Regular.woff2` e `Famels-Italic.woff2` para `public/fonts/` e acrescente `url("/fonts/Famels-Regular.woff2") format("woff2")` (e o equivalente do itálico) ao `src` das regras `@font-face` em `tokens.css`.
+- **Logo:** monograma "CC" provisório na barra lateral, no login e no ícone da aba.
+
 ## Requisitos
 
 - Node.js **22.13 ou superior**. O projeto usa o SQLite embutido no Node (`node:sqlite`).

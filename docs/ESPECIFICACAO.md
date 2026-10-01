@@ -455,3 +455,24 @@ Há também:
   - **Alertas:** detratores sem tratativa, pesquisas sem resposta há mais de 5 dias, pesquisas expiradas e clientes há mais de 30 dias sem pesquisa, com botão para enviar.
   - **Histórico:** todas as pesquisas, com quem enviou, a nota, o comentário e a **tratativa** (o que foi combinado, por quem e quando). Detratores geram tarefa urgente e notificação.
 - **Estratégias de lance:** por carta (grupo e cota), a estratégia atual e o **histórico de cada alteração** com quem cadastrou, data e hora. Filtros por situação (com ou sem estratégia) e tipo de lance.
+
+## 15. Identidade visual
+
+Aplicada a partir do manual da marca v1.0 em todas as telas, inclusive a ficha e a pesquisa abertas pelo cliente. Só a aparência mudou: rotas, campos, regras e permissões continuam iguais.
+
+- **Paleta:** azul-noite #0D1B2A, marinho #1B263B, ardósia #415A77, aço #778DA9, névoa #E0E1DD e aço-claro #A9B8CB. Estados com cor e rótulo escrito: sucesso (oportunidade, concluído), atenção (hoje, prazo) e perigo (urgente, atrasado).
+- **Temas:** escuro (padrão) e claro com os mesmos nomes de tokens. Sem escolha do usuário, vale o tema do sistema operacional; a escolha feita no botão Claro/Escuro fica salva no navegador.
+- **Tipografia:** Famels (substituída pela Manrope até a licença) em títulos e números; Poppins em textos, rótulos e botões. Escala: título 2rem, indicador 1,75rem, texto 0,88rem, rótulos 0,7–0,8rem. Caixa de sentença, sem textos em caixa alta.
+- **Forma:** moldura com raio 28, menu lateral flutuante (230 px, raio 20), cards com raio 18, campos com raio 8 e botões, abas, filtros e etiquetas em pílula. Sombras suaves, vidro na moldura e no topo e luzes ambientes no fundo. Cards clicáveis sobem 2 px ao passar o mouse (desligado com "reduzir movimento").
+- **Ícones:** traço 1,7 no estilo Lucide: 18 px no menu e 14–16 px em botões e indicadores.
+- **Botões:** um botão primário por área (névoa no tema escuro e azul-noite no claro); os demais são pílulas de vidro.
+- **Tom de voz:**
+  - plural correto ("1 tarefa", "2 tarefas");
+  - número em destaque no início das ações sugeridas;
+  - valores curtos nos resumos ("R$ 1,4 mi", "R$ 63,6 mil");
+  - menu sem numeração.
+- **Celular:**
+  - a moldura ocupa a tela e o menu abre por cima;
+  - os indicadores ficam em duas colunas;
+  - tabelas viram cartões ou rolam na horizontal sem estourar a página.
+

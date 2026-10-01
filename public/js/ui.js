@@ -27,8 +27,46 @@ export function html(strings, ...vals) {
   });
   return new Raw(out);
 }
+/**
+ * Plural correto (manual, tom de voz): "1 tarefa", "2 tarefas" em vez de "tarefa(s)".
+ * Usa o número mais próximo antes da palavra, no mesmo bloco de texto; sem número, mantém como está.
+ */
+const PLURAL_RE = /(?<![\wÀ-ÿ])(\d[\d.,]*)|([A-Za-zÀ-ÿ-]+)\((s|es|ões|eis|ns)\)/g;
+const BLOCK_TAG = /^<\/?(li|div|p|td|th|tr|h\d|section|article|ul|ol|button|label|option|header|footer|br|hr|dt|dd)\b/i;
+function pluralWord(base, suf, n) {
+  if (n === 1) return base;
+  if (suf === 'ões') return base.endsWith('ão') ? `${base.slice(0, -2)}ões` : `${base}ões`;
+  if (suf === 'eis') return base.endsWith('il') ? `${base.slice(0, -2)}eis` : `${base}eis`;
+  if (suf === 'ns') return base.endsWith('m') ? `${base.slice(0, -1)}ns` : `${base}ns`;
+  return base + suf;
+}
+export function fixPlurals(str) {
+  if (!str || str.indexOf('(') === -1) return str;
+  let last = null;
+  let skip = false;
+  return String(str)
+    .split(/(<[^>]*>)/)
+    .map((part) => {
+      if (part.startsWith('<')) {
+        if (/^<(textarea|pre|code)\b/i.test(part)) skip = true;
+        else if (/^<\/(textarea|pre|code)>/i.test(part)) skip = false;
+        if (BLOCK_TAG.test(part)) last = null;
+        return part;
+      }
+      if (skip) return part;
+      return part.replace(PLURAL_RE, (m, num, base, suf) => {
+        if (num) {
+          last = Number(num.replace(/\./g, '').replace(',', '.'));
+          return m;
+        }
+        return last == null || Number.isNaN(last) ? m : pluralWord(base, suf, last);
+      });
+    })
+    .join('');
+}
+
 export const render = (el, tpl) => {
-  el.innerHTML = val(tpl);
+  el.innerHTML = fixPlurals(val(tpl));
   return el;
 };
 export const $ = (sel, root = document) => root.querySelector(sel);
@@ -186,7 +224,7 @@ export function toast(msg, kind = 'ok') {
   const t = document.createElement('div');
   t.className = `toast ${kind}`;
   t.setAttribute('role', 'status');
-  t.textContent = msg;
+  t.textContent = fixPlurals(msg);
   box.appendChild(t);
   setTimeout(() => t.classList.add('hide'), kind === 'error' ? 6000 : 3500);
   setTimeout(() => t.remove(), kind === 'error' ? 6600 : 4000);
@@ -202,7 +240,7 @@ export function modal({ title, body, submitLabel = 'Salvar', onSubmit, wide = fa
   return new Promise((resolve) => {
     const wrap = document.createElement('div');
     wrap.className = 'modal-backdrop';
-    wrap.innerHTML = val(html`<div class="modal ${wide ? 'wide' : ''}" role="dialog" aria-modal="true" aria-label="${title}">
+    wrap.innerHTML = fixPlurals(val(html`<div class="modal ${wide ? 'wide' : ''}" role="dialog" aria-modal="true" aria-label="${title}">
       <form novalidate>
         <header><h2>${title}</h2><button type="button" class="icon" data-close aria-label="Fechar">×</button></header>
         <div class="modal-body">${body}</div>
@@ -211,7 +249,7 @@ export function modal({ title, body, submitLabel = 'Salvar', onSubmit, wide = fa
           <button type="button" class="btn ghost" data-close>${onSubmit ? cancelLabel : 'Fechar'}</button>
           ${onSubmit ? html`<button type="submit" class="btn ${danger ? 'danger' : 'primary'}">${submitLabel}</button>` : ''}
         </footer>
-      </form></div>`);
+      </form></div>`));
     document.body.appendChild(wrap);
     const form = wrap.querySelector('form');
     const errBox = wrap.querySelector('.modal-error');
@@ -365,4 +403,14 @@ export function avatar(u, size = 32) {
   const hue = [...String(u?.name || '')].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
   if (u?.photo) return html`<img class="avatar" src="${u.photo}" alt="" width="${size}" height="${size}" style="width:${size}px;height:${size}px">`;
   return html`<span class="avatar initials" aria-hidden="true" style="width:${size}px;height:${size}px;font-size:${Math.round(size * 0.4)}px;background:hsl(${hue} 45% 42%)">${initials}</span>`;
+}
+
+/** Valor curto para espaços pequenos (manual, tom de voz): R$ 1,4 mi · R$ 247,9 mil. */
+export function fmtMoneyShort(v) {
+  if (v == null || v === '') return '—';
+  const n = Number(v);
+  const f = (x) => x.toLocaleString('pt-BR', { maximumFractionDigits: 1 });
+  if (Math.abs(n) >= 1e6) return `R$ ${f(n / 1e6)} mi`;
+  if (Math.abs(n) >= 1e4) return `R$ ${f(n / 1e3)} mil`;
+  return fmtMoney(n);
 }

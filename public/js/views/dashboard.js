@@ -1,12 +1,21 @@
 // 1. Painel inicial: visão do dia do especialista (ou consolidada para líder e administrador) e ações sugeridas.
 import { get } from '../api.js';
-import { html, render, $, on, state, selectOptions, userItems, fmtMoney, fmtDateTime, fmtDate, relTime, badge, empty, toastError, K, monthLabel } from '../ui.js';
+import { html, render, $, on, state, selectOptions, userItems, fmtMoney, fmtMoneyShort, fmtDateTime, fmtDate, relTime, badge, empty, toastError, K, monthLabel } from '../ui.js';
+import { icon } from '../icons.js';
 
 const LEVEL = { alta: ['Alta', 'ok'], media: ['Média', 'warn'], baixa: ['Baixa', 'danger'] };
 export const probBadge = (p) => badge(`${LEVEL[p.level]?.[0] || '—'} · ${p.probability}%`, LEVEL[p.level]?.[1] || '');
 const pctBar = (pct) => html`<div class="progress-bar goal"><span style="width:${Math.min(100, pct || 0)}%"></span></div>`;
 
 let selected = '';
+const kpiIco = (name) => html`<span class="kpi-ico">${icon(name, 15)}</span>`;
+// Etiqueta escrita de cada ação sugerida (o status nunca é comunicado só pela cor)
+const actionTag = (a) => (a.level === 'danger' ? badge('Urgente', 'danger') : a.level === 'warn' ? (/hoje/i.test(a.text) ? badge('Hoje', 'warn') : badge('Atenção', 'warn')) : a.level === 'ok' ? badge('Oportunidade', 'ok') : '');
+// Número primeiro, em destaque: "7 leads ainda sem nenhum contato"
+const actionText = (t) => {
+  const m = String(t).match(/^((?:Faltam\s+)?(?:R\$\s?)?[\d.,]+\s+[^\s:;]+)(.*)$/);
+  return m ? html`<strong>${m[1]}</strong>${m[2]}` : t;
+};
 
 export async function show(view) {
   const manager = ['admin', 'gestor', 'leitura'].includes(state.user.role);
@@ -27,23 +36,29 @@ export async function show(view) {
         ${manager ? html`<label class="inline">Ver<select data-user>${selectOptions(userItems(), selected, { placeholder: state.user.role === 'admin' ? 'Toda a empresa' : 'Minha equipe' })}</select></label>` : ''}</div>
 
       <div class="kpis home-kpis">
-        <a class="kpi" href="#/leads"><div class="kpi-label">Leads recebidos no mês</div><div class="kpi-value">${d.leads.mes}</div><div class="kpi-sub">${d.leads.hoje} hoje${d.no_contact ? html` · <span class="overdue">${d.no_contact} sem contato</span>` : ''}</div></a>
-        <a class="kpi" href="#/propostas"><div class="kpi-label">Propostas em andamento</div><div class="kpi-value">${d.proposals.em_andamento}</div><div class="kpi-sub">${fmtMoney(d.proposals.valor_andamento)} · ponderado ${fmtMoney(d.proposals.potencial_ponderado)}</div></a>
-        <a class="kpi" href="#/vendas"><div class="kpi-label">Vendas no mês</div><div class="kpi-value">${d.sales.mes}</div><div class="kpi-sub">${fmtMoney(d.sales.credito_mes)} em crédito${d.sales.aguardando ? ` · ${d.sales.aguardando} aguardando pagamento` : ''}</div></a>
-        <a class="kpi" href="#/comissoes"><div class="kpi-label">Comissões a receber no mês</div><div class="kpi-value">${fmtMoney(d.commissions.a_receber_mes)}</div><div class="kpi-sub">liberado ${fmtMoney(d.commissions.liberado_mes)} · próximos 3 meses ${fmtMoney(d.commissions.previsto_3_meses)}</div></a>
-        <a class="kpi" href="#/metas"><div class="kpi-label">Meta do mês</div><div class="kpi-value">${g.pct_credit != null ? `${g.pct_credit}%` : '—'}</div>${pctBar(g.pct_credit)}<div class="kpi-sub">${g.target_credit ? `${fmtMoney(g.realized_credit)} de ${fmtMoney(g.target_credit)}` : 'Meta não cadastrada'}</div></a>
-        <a class="kpi ${d.agenda.atrasadas ? 'alert-kpi' : ''}" href="#/agenda"><div class="kpi-label">Agenda de hoje</div><div class="kpi-value">${d.agenda.hoje}</div><div class="kpi-sub">${d.agenda.atrasadas} atrasada(s) · ${d.agenda.urgentes} urgente(s) · ${d.agenda.r1_semana} R1 na semana</div></a>
+        <a class="kpi" href="#/leads">${kpiIco('leads')}<div class="kpi-label">Leads recebidos no mês</div><div class="kpi-value">${d.leads.mes}</div><div class="kpi-sub">${d.leads.hoje} hoje${d.no_contact ? html` · <span class="overdue">${d.no_contact} sem contato</span>` : ''}</div></a>
+        <a class="kpi" href="#/propostas">${kpiIco('propostas')}<div class="kpi-label">Propostas em andamento</div><div class="kpi-value">${d.proposals.em_andamento}</div><div class="kpi-sub">${fmtMoney(d.proposals.valor_andamento)} · ponderado ${fmtMoney(d.proposals.potencial_ponderado)}</div></a>
+        <a class="kpi" href="#/vendas">${kpiIco('vendas')}<div class="kpi-label">Vendas no mês</div><div class="kpi-value">${d.sales.mes}</div><div class="kpi-sub">${fmtMoney(d.sales.credito_mes)} em crédito${d.sales.aguardando ? ` · ${d.sales.aguardando} aguardando pagamento` : ''}</div></a>
+        <a class="kpi" href="#/comissoes">${kpiIco('comissoes')}<div class="kpi-label">Comissões a receber no mês</div><div class="kpi-value">${fmtMoney(d.commissions.a_receber_mes)}</div><div class="kpi-sub">liberado ${fmtMoney(d.commissions.liberado_mes)} · próximos 3 meses ${fmtMoney(d.commissions.previsto_3_meses)}</div></a>
+        <a class="kpi" href="#/metas">${kpiIco('metas')}<div class="kpi-label">Meta do mês</div><div class="kpi-value">${g.pct_credit != null ? `${g.pct_credit}%` : '—'}</div>${pctBar(g.pct_credit)}<div class="kpi-sub">${g.target_credit ? `${fmtMoney(g.realized_credit)} de ${fmtMoney(g.target_credit)}` : 'Meta não cadastrada'}</div></a>
+        <a class="kpi ${d.agenda.atrasadas ? 'alert-kpi' : ''}" href="#/agenda">${kpiIco('agenda')}<div class="kpi-label">Agenda de hoje</div><div class="kpi-value">${d.agenda.hoje}</div><div class="kpi-sub">${d.agenda.atrasadas} atrasada(s) · ${d.agenda.urgentes} urgente(s) · ${d.agenda.r1_semana} R1 na semana</div></a>
       </div>
 
       <div class="cols">
-        <section class="card"><h3>Ações sugeridas para hoje</h3>
-          ${d.actions.length ? html`<ul class="actions-list">${d.actions.map((a) => html`<li class="lvl-${a.level}"><span class="dot"></span>${a.href ? html`<a href="${a.href}">${a.text}</a>` : a.text}</li>`)}</ul>` : empty('Tudo em dia. Aproveite para prospectar e pedir indicações.')}
+        <section class="card"><div class="section-head"><h3>Ações sugeridas para hoje</h3>${d.actions.length ? html`<span class="count">${d.actions.length} ${d.actions.length === 1 ? 'item' : 'itens'}</span>` : ''}</div>
+          ${d.actions.length ? html`<ul class="actions-list">${d.actions.map((a) => html`<li class="lvl-${a.level}"><span class="dot"></span>${a.href ? html`<a href="${a.href}">${actionText(a.text)}</a>` : html`<span class="grow">${actionText(a.text)}</span>`}${actionTag(a)}${a.href ? html`<span class="chev">${icon('avancar', 16)}</span>` : ''}</li>`)}</ul>` : empty('Tudo em dia. Aproveite para prospectar e pedir indicações.')}
         </section>
         <section class="card"><div class="section-head"><h3>Meta de ${monthLabel(d.month)}</h3><a href="#/metas" class="small">detalhes</a></div>
           ${g.target_credit || g.target_sales
-            ? html`<div class="goal-row"><span>Crédito vendido</span><strong>${fmtMoney(g.realized_credit)} / ${fmtMoney(g.target_credit)}</strong></div>${pctBar(g.pct_credit)}
+            ? html`<div class="goal-head"><div class="goal-ring" style="--p:${Math.min(100, g.pct_credit || 0)}"><span>${g.pct_credit ?? 0}%</span></div>
+                <p>${g.realized_sales ? html`<strong>${g.realized_sales} ${g.realized_sales === 1 ? 'venda' : 'vendas'}</strong> no mês.` : 'Nenhuma venda registrada ainda.'}${g.target_sales && g.target_sales > g.realized_sales ? html`<br>Para bater a meta, ${g.target_sales - g.realized_sales === 1 ? 'é necessária' : 'são necessárias'} <strong>${g.target_sales - g.realized_sales} ${g.target_sales - g.realized_sales === 1 ? 'venda' : 'vendas'}</strong> até o fim do mês.` : ''}</p></div>
+              <div class="goal-row"><span>Crédito vendido</span><strong>${fmtMoney(g.realized_credit)} / ${fmtMoney(g.target_credit)}</strong></div>${pctBar(g.pct_credit)}
               <div class="goal-row"><span>Vendas</span><strong>${g.realized_sales} / ${g.target_sales ?? '—'}</strong></div>${pctBar(g.pct_sales)}
-              <div class="kv">${html`<div><span>Falta</span>${g.missing_credit != null ? fmtMoney(g.missing_credit) : '—'}</div><div><span>Ritmo necessário</span>${g.daily_needed ? `${fmtMoney(g.daily_needed)} por dia útil` : '—'}</div><div><span>Dias úteis restantes</span>${g.business_days_left}</div>`}${d.position ? html`<div><span>Ranking do mês</span>${d.position.position}º de ${d.position.of}</div>` : ''}</div>`
+              <div class="goal-tiles">
+                <div><span>Falta</span><strong>${g.missing_credit != null ? fmtMoneyShort(g.missing_credit) : '—'}</strong><small>${g.missing_credit != null ? fmtMoney(g.missing_credit) : ''}</small></div>
+                <div><span>Ritmo necessário</span><strong>${g.daily_needed ? fmtMoneyShort(g.daily_needed) : '—'}</strong><small>por dia útil</small></div>
+                <div><span>Dias úteis restantes</span><strong>${g.business_days_left}</strong><small>até o fim do mês</small></div>
+                ${d.position ? html`<div><span>Ranking do mês</span><strong>${d.position.position}º</strong><small>de ${d.position.of}</small></div>` : ''}</div>`
             : html`<p class="muted">Nenhuma meta cadastrada para este mês. O administrador cadastra as metas em Metas.</p>`}
         </section>
       </div>
