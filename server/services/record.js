@@ -498,25 +498,25 @@ async function publicCep(db, token, cep) {
 /* ------------------------- Pós-venda ------------------------- */
 
 function postSaleItems(db, contactId) {
-  const items = db.prepare("SELECT value, label FROM options WHERE list = 'etapa_pos_venda' AND active = 1 ORDER BY position").all();
-  const done = db.prepare('SELECT p.*, u.name AS done_by_name FROM post_sale_items p LEFT JOIN users u ON u.id = p.done_by WHERE p.contact_id = ? AND p.contract_id IS NULL').all(contactId);
-  return items.map((i) => {
-    const d = done.find((x) => x.item === i.value);
-    return { item: i.value, label: i.label, done_at: d?.done_at || null, done_by_name: d?.done_by_name || null, notes: d?.notes || null };
-  });
+  const c = db.prepare('SELECT COALESCE(postsale_started_at, converted_at) AS started FROM contacts WHERE id = ?').get(contactId);
+  const tl = require('./postsale').timeline(db, contactId, c?.started);
+  const by = db.prepare('SELECT p.item, u.name AS done_by_name FROM post_sale_items p LEFT JOIN users u ON u.id = p.done_by WHERE p.contact_id = ? AND p.contract_id IS NULL').all(contactId);
+  return tl.map((t) => ({ ...t, done_by_name: by.find((x) => x.item === t.item)?.done_by_name || null }));
 }
 
+/** Marca, desmarca ou marca como "não se aplica" (com motivo) uma etapa do pós-venda e avança o funil. */
 function togglePostSale(db, user, contactId, data) {
   const c = loadContact(db, user, contactId, { write: true });
   const item = clean(data.item);
   assertList(db, 'etapa_pos_venda', item, 'etapa de pós-venda');
-  const done = !!data.done;
+  const done = !!data.done || !!data.skip;
+  const skipped = !!data.skip;
+  if (skipped && !clean(data.notes)) throw badRequest('Informe por que esta etapa não se aplica.');
   tx(db, () => {
-    const cur = db.prepare('SELECT id FROM post_sale_items WHERE contact_id = ? AND contract_id IS NULL AND item = ?').get(c.id, item);
-    if (cur) db.prepare('UPDATE post_sale_items SET done_at = ?, done_by = ?, notes = ? WHERE id = ?').run(done ? nowIso() : null, done ? user.id : null, clean(data.notes) ?? null, cur.id);
-    else db.prepare('INSERT INTO post_sale_items (contact_id, item, done_at, done_by, notes) VALUES (?, ?, ?, ?, ?)').run(c.id, item, done ? nowIso() : null, done ? user.id : null, clean(data.notes) ?? null);
-    if (done) insertActivity(db, { contact_id: c.id, type: 'observacao', notes: `Pós-venda: ${optionLabel(db, 'etapa_pos_venda', item)}.${data.notes ? ` ${clean(data.notes)}` : ''}`, user_id: user.id });
-    audit(db, user, 'post_sale', null, done ? 'concluido' : 'reaberto', { item }, c.id);
+    require('./postsale').setItem(db, c.id, item, { done, skipped, userId: user.id, notes: clean(data.notes) ?? null });
+    if (done) insertActivity(db, { contact_id: c.id, type: 'observacao', notes: `Pós-venda: ${optionLabel(db, 'etapa_pos_venda', item)}${skipped ? ' (não se aplica)' : ''}.${data.notes ? ` ${clean(data.notes)}` : ''}`, user_id: user.id });
+    audit(db, user, 'post_sale', null, skipped ? 'nao_se_aplica' : done ? 'concluido' : 'reaberto', { item }, c.id);
+    require('./postsale').syncTimeline(db, c.id, user.id);
   });
 }
 
@@ -524,8 +524,8 @@ function markPostSale(db, userId, contactId, item, notes) {
   if (!db.prepare("SELECT 1 FROM options WHERE list = 'etapa_pos_venda' AND value = ? AND active = 1").get(item)) return;
   const cur = db.prepare('SELECT id, done_at FROM post_sale_items WHERE contact_id = ? AND contract_id IS NULL AND item = ?').get(contactId, item);
   if (cur?.done_at) return;
-  if (cur) db.prepare('UPDATE post_sale_items SET done_at = ?, done_by = ?, notes = ? WHERE id = ?').run(nowIso(), userId, notes, cur.id);
-  else db.prepare('INSERT INTO post_sale_items (contact_id, item, done_at, done_by, notes) VALUES (?, ?, ?, ?, ?)').run(contactId, item, nowIso(), userId, notes);
+  require('./postsale').setItem(db, contactId, item, { done: true, userId, notes });
+  require('./postsale').syncTimeline(db, contactId, userId);
 }
 
 /* ------------------------- Pesquisa de satisfação (NPS) por link ------------------------- */
@@ -668,6 +668,8 @@ function publicNpsSubmit(db, token, body = {}) {
       body: category === 'detrator' ? `Cliente insatisfeito (detrator).${why} Trate em até 24 h.` : category === 'neutro' ? `Cliente neutro.${why}` : 'Cliente promotor: bom momento para pedir indicações.',
       link: '#/posvenda?aba=nps',
     });
+    // Funil de pós-venda: NPS respondido; a nota decide se as indicações serão pedidas
+    require('./postsale').syncTimeline(db, contact.id, null);
     return { ok: true };
   });
 }

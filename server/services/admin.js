@@ -125,7 +125,7 @@ const LIST_LABELS = {
   momento_financeiro: 'Momento financeiro (R1)',
   tipo_contratacao: 'Tipo de contratação',
   possui_fgts: 'Possui FGTS',
-  decisor: 'Quem decide a compra',
+  decisor: 'Fator decisor',
   possui_produto: 'Já possui consórcio ou financiamento',
   tipo_endereco: 'Tipos de endereço',
   tipo_documento: 'Tipos de documento',
@@ -135,9 +135,11 @@ const LIST_LABELS = {
   tipo_lancamento: 'Tipos de lançamento financeiro',
   forma_pagamento: 'Formas de pagamento',
   etapa_pos_venda: 'Etapas do pós-venda',
+  finalidade_credito: 'Finalidade do crédito',
+  divisao_cotas: 'Divisão das cotas (proposta)',
 };
 // Valores usados por regras do sistema não podem ser removidos
-const PROTECTED = { resultado_ligacao: ['nao_informado', 'outro'], origem: ['importacao', 'outra'], tipo_documento: ['outro'] };
+const PROTECTED = { resultado_ligacao: ['nao_informado', 'outro'], origem: ['importacao', 'outra'], tipo_documento: ['outro'], etapa_pos_venda: ['primeira_parcela', 'nps', 'indicacao', 'estrategia_lance', 'preferencias_contato'] };
 
 function saveOption(db, user, data) {
   requireAdmin(user);
@@ -260,6 +262,34 @@ function saveSettings(db, user, data) {
     if (!Number.isInteger(n) || n < 1 || n > 240) throw badRequest('Alerta de pré-venda parada: entre 1 e 240 horas.');
     setSetting(db, 'presale_alert_hours', n);
   }
+  if (data.presale_payment_first !== undefined) setSetting(db, 'presale_payment_first', data.presale_payment_first === true || data.presale_payment_first === 'true' || data.presale_payment_first === 'on');
+  if (data.formalization_bonus_pct !== undefined) {
+    const n = Number(data.formalization_bonus_pct || 0);
+    if (!(n >= 0 && n <= 5)) throw badRequest('Bônus de formalização: entre 0 e 5% do crédito.');
+    setSetting(db, 'formalization_bonus_pct', n);
+  }
+  if (data.formalization_sla_days !== undefined) {
+    const n = Number(data.formalization_sla_days);
+    if (!Number.isInteger(n) || n < 1 || n > 60) throw badRequest('Prazo da formalização: entre 1 e 60 dias.');
+    setSetting(db, 'formalization_sla_days', n);
+  }
+  if (data.postsale_referral_min_nps !== undefined) {
+    const n = Number(data.postsale_referral_min_nps);
+    if (!Number.isInteger(n) || n < 0 || n > 10) throw badRequest('Nota mínima do NPS para pedir indicações: de 0 a 10.');
+    setSetting(db, 'postsale_referral_min_nps', n);
+  }
+  if (data.postsale_days !== undefined) {
+    const pd = data.postsale_days;
+    if (!pd || typeof pd !== 'object') throw badRequest('Linha do tempo do pós-venda inválida.');
+    const out = {};
+    for (const [k, v] of Object.entries(pd)) {
+      const n = Number(v);
+      if (!db.prepare("SELECT 1 FROM options WHERE list = 'etapa_pos_venda' AND value = ?").get(k)) continue;
+      if (!Number.isInteger(n) || n < 0 || n > 365) throw badRequest('Cada etapa do pós-venda deve ter entre 0 e 365 dias.');
+      out[k] = n;
+    }
+    setSetting(db, 'postsale_days', { ...(getSetting(db, 'postsale_days') || {}), ...out });
+  }
   if (data.stage_rules !== undefined) {
     const { RULES } = require('./pipeline');
     const sr = data.stage_rules;
@@ -357,6 +387,11 @@ function meta(db, user) {
       funnel_sequential: getSetting(db, 'funnel_sequential') !== false,
       logout_url: getSetting(db, 'logout_url') || '',
       postsale_user_id: getSetting(db, 'postsale_user_id') || null,
+      presale_payment_first: getSetting(db, 'presale_payment_first') === true,
+      formalization_bonus_pct: Number(getSetting(db, 'formalization_bonus_pct')) || 0,
+      formalization_sla_days: Number(getSetting(db, 'formalization_sla_days')) || 5,
+      postsale_referral_min_nps: getSetting(db, 'postsale_referral_min_nps') ?? 9,
+      postsale_days: require('./postsale').postsaleDays(db),
     },
     simulator: simulatorAvailability(db),
     constants: {

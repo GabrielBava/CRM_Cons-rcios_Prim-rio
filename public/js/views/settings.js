@@ -375,11 +375,35 @@ const RENDER = {
       ${field({ name: 'presale_alert_hours', label: 'Alertar pré-venda sem acesso ou sem preenchimento após (horas)', type: 'number', value: s.presale_alert_hours, min: 1, help: 'Cria a tarefa urgente "Revisar pré-venda" para o especialista.' })}
       ${field({ name: 'require_sale_checklist', label: 'Exigir a ficha de pré-venda completa para concluir a venda', type: 'checkbox', value: s.require_sale_checklist, full: true })}
     </div><button class="btn primary" type="submit">Salvar</button></form>
+    <form class="card" id="flow"><h3>Pré-venda, venda e pós-venda</h3><div class="grid">
+      ${field({ name: 'presale_payment_first', label: 'Ordem depois do termo de adesão', type: 'select', options: [{ value: 'false', label: 'Contrato assinado → pagamento → comprovante (padrão)' }, { value: 'true', label: 'Pagamento → comprovante → contrato assinado' }], value: String(!!s.presale_payment_first), allowEmpty: false, full: true, help: 'Vale para as novas pré-vendas; as que estão em andamento mantêm a ordem em que começaram.' })}
+      ${field({ name: 'formalization_sla_days', label: 'Prazo da formalização pelo especialista (dias após o pagamento)', type: 'number', value: s.formalization_sla_days, min: 1, help: 'Comprovante anexado e alocação da cota informada.' })}
+      ${field({ name: 'formalization_bonus_pct', label: 'Bônus de formalização (% do crédito)', type: 'number', value: s.formalization_bonus_pct, min: 0, step: '0.01', help: '0 = sem bônus. Pago ao especialista que fez a formalização no prazo.' })}
+      ${field({ name: 'postsale_referral_min_nps', label: 'Pedir indicações a partir da nota NPS', type: 'number', value: s.postsale_referral_min_nps, min: 0, help: '9 = só promotores.' })}
+      <h4 class="full">Linha do tempo do pós-venda (dias após a confirmação da venda)</h4>
+      ${(state.meta.options.etapa_pos_venda || []).filter((o) => o.active !== 0).map((o) => field({ name: `pd.${o.value}`, label: `D+ · ${o.label}`, type: 'number', value: s.postsale_days?.[o.value] ?? 0, min: 0 }))}
+    </div><button class="btn primary" type="submit">Salvar fluxo</button></form>
     <form class="card" id="docs"><h3>Documentos obrigatórios para a venda</h3>
       <p class="hint">Marque os tipos de documento exigidos na ficha de pré-venda de cada tipo de pessoa. Os tipos podem ser editados em Listas › Tipos de documento.</p>
       <div class="cols">${['PF', 'PJ'].map((k) => html`<div><h4>${k === 'PF' ? 'Pessoa física' : 'Pessoa jurídica'}</h4>${(state.meta.options.tipo_documento || []).filter((o) => o.active).map((o) => html`<label class="check"><input type="checkbox" name="${k}.${o.value}" ${(s.doc_checklist?.[k] || []).includes(o.value) ? 'checked' : ''}> ${o.label}</label>`)}</div>`)}</div>
       <button class="btn primary" type="submit">Salvar documentos</button></form>
     <section class="card"><h3>Importações recentes</h3><div id="imports"></div><p><a href="#/importar">Nova importação →</a></p></section>`);
+    $('#flow', box).addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const d = formData(e.target);
+      const body = { postsale_days: {} };
+      for (const [k, v] of Object.entries(d)) {
+        if (k.startsWith('pd.')) body.postsale_days[k.slice(3)] = Number(v || 0);
+        else body[k] = k === 'presale_payment_first' ? v === 'true' : v;
+      }
+      try {
+        await patch('/api/configuracoes', body);
+        await refreshMeta();
+        toast('Fluxo de venda e pós-venda salvo.');
+      } catch (ex) {
+        toastError(ex);
+      }
+    });
     $('#docs', box).addEventListener('submit', async (e) => {
       e.preventDefault();
       const dc = { PF: [], PJ: [] };

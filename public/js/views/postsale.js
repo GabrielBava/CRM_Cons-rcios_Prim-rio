@@ -1,17 +1,18 @@
-// 11. Pós-venda: depois do pagamento confirmado, o acompanhamento do cliente (sempre ligado ao cadastro):
-// checklist, satisfação (NPS) com alertas e motivos, e estratégias de lance com histórico.
+// 11. Pós-venda: começa na confirmação da venda (cota alocada). Funil de farm com linha do tempo D+N e alertas,
+// satisfação (NPS) com alertas e motivos, e estratégias de lance com histórico.
 import { get, post } from '../api.js';
 import { html, render, raw, $, $$, on, fresh, state, selectOptions, opts, userItems, table, badge, fmtMoney, fmtNum, fmtDate, fmtDateTime, relTime, optLabel, can, modal, field, toast, toastError, empty, subnav } from '../ui.js';
 import { bindDrawerLinks } from '../drawer.js';
 import { npsCategory, NPS_ANSWER_LABELS, bidSummary, bidForm, bidHistoryList, copyBox, pageUrl, bindCopy } from './record-tabs.js';
+import { timelineList, bindTimeline, psBadge } from '../postsale-timeline.js';
 
 const PREF = { whatsapp: 'WhatsApp', ligacao: 'Ligação', email: 'E-mail', sms: 'SMS', presencial: 'Presencial' };
 
 export async function show(view, { params = {} } = {}) {
   const tab = ['nps', 'lances'].includes(params.aba) ? params.aba : 'checklist';
   render(view, html`<div class="page wide">
-    <div class="page-head"><div><h1>Pós-venda</h1><p class="muted">Começa na confirmação do pagamento. Tudo fica registrado no cadastro do cliente.</p></div></div>
-    ${subnav([['#/posvenda', 'Checklist dos clientes', 'checklist'], ['#/posvenda?aba=nps', 'Satisfação (NPS)', 'nps'], ['#/posvenda?aba=lances', 'Estratégias de lance', 'lances']], tab)}
+    <div class="page-head"><div><h1>Pós-venda</h1><p class="muted">Começa na confirmação da venda (cota alocada). Cada etapa tem um prazo D+N; a tarefa da próxima etapa entra na agenda do responsável.</p></div></div>
+    ${subnav([['#/posvenda', 'Funil de pós-venda', 'checklist'], ['#/posvenda?aba=nps', 'Satisfação (NPS)', 'nps'], ['#/posvenda?aba=lances', 'Estratégias de lance', 'lances']], tab)}
     <div id="tab"></div></div>`);
   const box = fresh($('#tab', view));
   bindDrawerLinks(box);
@@ -22,64 +23,84 @@ export async function show(view, { params = {} } = {}) {
 
 /* ------------------------- Checklist ------------------------- */
 
-let ckSaved = { status: 'incompleto' };
+let ckSaved = { status: 'incompleto', view: 'funil' };
+const salesCell = (c) => html`${c.sales.length ? c.sales.map((v) => html`<div><strong>${v.code}</strong> · ${fmtMoney(v.credit_value)}${v.quotas_count > 1 ? html` <small class="muted">${v.quotas_count} cotas</small>` : ''}</div>`) : html`<span class="muted small">${fmtMoney(c.credit_total)}</span>`}${c.without_strategy ? html`<small class="warn-text">${c.without_strategy} carta(s) sem estratégia de lance</small>` : ''}`;
+
 async function checklistTab(box) {
   const manager = can.manage();
   const w = can.write();
   let data;
   const load = async () => {
     try {
-      data = await get('/api/pos-venda', ckSaved);
+      data = await get('/api/pos-venda', { ...ckSaved, view: undefined });
     } catch (e) {
       return toastError(e);
     }
     const s = data.summary;
+    const cols = [...data.items.map((i) => ({ key: i.value, label: i.label, days: i.days })), { key: 'concluido', label: 'Funil concluído', days: null }];
+    const card = (c) => html`<article class="opp-card ps-card ${c.next_item?.status === 'atrasado' ? 'prio-alta' : ''}">
+        <a class="title" href="#/clientes/${c.id}" data-drawer="${c.id}">${c.name}</a>
+        <div class="small muted">${c.code} · ${c.postsale_name || 'sem responsável'}</div>
+        <div class="small">${salesCell(c)}</div>
+        ${c.next_item ? html`<div class="small">${psBadge(c.next_item.status)} ${c.next_item.due_at ? html`até ${fmtDate(c.next_item.due_at)}` : ''}</div>` : ''}
+        <div class="small muted">${c.done}/${c.total} etapas · cliente há ${c.days_since_sale ?? '—'} dia(s)</div>
+        ${w ? html`<button type="button" class="btn small" data-ck="${c.id}">Linha do tempo</button>` : ''}
+      </article>`;
     render(box, html`
       <div class="kpis small">
-        <div class="kpi"><div class="kpi-label">Clientes em acompanhamento</div><div class="kpi-value">${s.clientes}</div></div>
-        <div class="kpi ${s.incompletos ? 'alert-kpi' : ''}"><div class="kpi-label">Checklist incompleto</div><div class="kpi-value">${s.incompletos}</div></div>
+        <div class="kpi"><div class="kpi-label">Clientes no funil</div><div class="kpi-value">${s.incompletos}</div><div class="kpi-sub">${s.concluidos} com o funil concluído</div></div>
+        <div class="kpi ${s.atrasados ? 'alert-kpi' : ''}"><div class="kpi-label">Com etapa atrasada</div><div class="kpi-value">${s.atrasados}</div><div class="kpi-sub">passaram do prazo D+N</div></div>
         <div class="kpi ${s.sem_estrategia ? 'alert-kpi' : ''}"><div class="kpi-label">Cartas sem estratégia de lance</div><div class="kpi-value">${s.sem_estrategia}</div><div class="kpi-sub"><a href="#/posvenda?aba=lances">ver estratégias</a></div></div>
       </div>
-      <div class="chips">${s.por_item.map((i) => html`<button type="button" class="chip ${ckSaved.item === i.item ? 'active' : ''}" data-item="${i.item}">${i.label} <strong>${i.pendentes}</strong></button>`)}</div>
+      <div class="ps-ruler">${data.items.map((i) => html`<span><strong>D+${i.days}</strong> ${i.label}</span>`)}</div>
       <form class="filters" data-f>
-        <label class="grow">Buscar<input type="search" name="q" value="${ckSaved.q || ''}" placeholder="Nome ou código do cliente"></label>
-        <label>Checklist<select name="status">${selectOptions([{ value: 'incompleto', label: 'Incompleto' }, { value: 'completo', label: 'Completo' }], ckSaved.status, { placeholder: 'Todos' })}</select></label>
-        <label>Item pendente<select name="item">${selectOptions(data.items.map((i) => ({ value: i.value, label: i.label })), ckSaved.item, { placeholder: 'Qualquer' })}</select></label>
+        <label class="grow">Buscar<input type="search" name="q" value="${ckSaved.q || ''}" placeholder="Cliente, código ou venda (VD-…)"></label>
+        <label>Situação<select name="status">${selectOptions([{ value: 'incompleto', label: 'Em andamento' }, { value: 'atrasado', label: 'Com etapa atrasada' }, { value: 'completo', label: 'Funil concluído' }], ckSaved.status, { placeholder: 'Todos' })}</select></label>
+        <label>Etapa atual<select name="item">${selectOptions(data.items.map((i) => ({ value: i.value, label: `D+${i.days} · ${i.label}` })), ckSaved.item, { placeholder: 'Qualquer' })}</select></label>
         ${manager ? html`<label>Responsável pós-venda<select name="postsale_owner_id">${selectOptions(userItems(), ckSaved.postsale_owner_id, { placeholder: 'Todos' })}</select></label>` : ''}
+        <div class="seg small"><button type="button" class="btn small ${ckSaved.view !== 'lista' ? 'active' : ''}" data-view="funil">Funil</button><button type="button" class="btn small ${ckSaved.view === 'lista' ? 'active' : ''}" data-view="lista">Lista</button></div>
       </form>
-      <section class="card">${table(
-        [
-          { label: 'Cliente', render: (c) => html`<a href="#/clientes/${c.id}" data-drawer="${c.id}"><strong>${c.name}</strong></a><br><small>${c.code} · cliente há ${c.days_since_sale ?? '—'} dia(s)</small>` },
-          {
-            label: 'Responsável pós-venda',
-            render: (c) => (manager ? html`<select data-owner="${c.id}" aria-label="Responsável pós-venda de ${c.name}">${selectOptions(userItems(), c.postsale_id, { placeholder: 'Especialista do cliente' })}</select>` : c.postsale_name || '—'),
-          },
-          {
-            label: 'Checklist',
-            render: (c) => html`<div class="ck-dots" title="${c.checklist.map((i) => `${i.done_at ? '✓' : '○'} ${i.label}`).join('\n')}">${c.checklist.map((i) => html`<span class="dot ${i.done_at ? 'ok' : 'muted'}"></span>`)} <strong>${c.done}/${c.total}</strong></div>
-              ${c.next_item ? html`<small>Próximo: ${c.next_item.label}</small>` : html`<small class="ok-text">Completo</small>`}`,
-          },
-          { label: 'Preferências', render: (c) => (c.pref_channel ? html`${PREF[c.pref_channel] || c.pref_channel}${c.pref_time ? html`<br><small>${c.pref_time}</small>` : ''}` : html`<span class="warn-text small">não informadas</span>`) },
-          { label: 'NPS', render: (c) => (c.nps_score != null ? html`${badge(`Nota ${c.nps_score}`, npsCategory(c.nps_score)[1])}<br><small>${fmtDate(c.nps_at)}</small>` : c.nps_pending ? badge('Aguardando resposta', 'warn') : html`<span class="muted small">sem pesquisa</span>`) },
-          { label: 'Cartas', render: (c) => html`${c.cartas} · ${fmtMoney(c.credit_total)}${c.without_strategy ? html`<br><small class="warn-text">${c.without_strategy} sem estratégia de lance</small>` : ''}` },
-          { label: '', render: (c) => html`${w ? html`<button class="btn small primary" data-ck="${c.id}">Checklist</button> ` : ''}<a class="btn small ghost" href="#/clientes/${c.id}/posvenda">Ficha</a>` },
-        ],
-        data.rows,
-        { emptyMsg: 'Nenhum cliente com esses filtros. O pós-venda começa quando o pagamento da venda é confirmado.' },
-      )}</section>
-      <p class="hint">"1ª parcela" é marcada quando o pagamento da 1ª parcela é baixado no financeiro; "Estratégia de lance" ao salvar a estratégia; "Preferências de contato" quando o canal e o horário são informados na confirmação da venda. Os itens são configuráveis em Configurações › Listas.</p>`);
+      ${ckSaved.view === 'lista'
+        ? html`<section class="card">${table(
+            [
+              { label: 'Cliente', render: (c) => html`<a href="#/clientes/${c.id}" data-drawer="${c.id}"><strong>${c.name}</strong></a><br><small>${c.code} · cliente há ${c.days_since_sale ?? '—'} dia(s)</small>` },
+              { label: 'Vendas', render: salesCell },
+              {
+                label: 'Responsável pós-venda',
+                render: (c) => (manager ? html`<select data-owner="${c.id}" aria-label="Responsável pós-venda de ${c.name}">${selectOptions(userItems(), c.postsale_id, { placeholder: 'Especialista do cliente' })}</select>` : c.postsale_name || '—'),
+              },
+              {
+                label: 'Etapa atual',
+                render: (c) => html`<div class="ck-dots" title="${c.checklist.map((i) => `${i.done_at ? '✓' : '○'} D+${i.days} ${i.label}`).join('\n')}">${c.checklist.map((i) => html`<span class="dot ${i.status === 'feito' ? 'ok' : i.status === 'atrasado' ? 'danger' : 'muted'}"></span>`)} <strong>${c.done}/${c.total}</strong></div>
+                  ${c.next_item ? html`<small>${c.next_item.label} · D+${c.next_item.days}</small> ${psBadge(c.next_item.status)}` : html`<small class="ok-text">Funil concluído</small>`}`,
+              },
+              { label: 'NPS', render: (c) => (c.nps_score != null ? html`${badge(`Nota ${c.nps_score}`, npsCategory(c.nps_score)[1])}<br><small>${fmtDate(c.nps_at)}</small>` : c.nps_pending ? badge('Aguardando resposta', 'warn') : html`<span class="muted small">sem pesquisa</span>`) },
+              { label: '', render: (c) => html`${w ? html`<button class="btn small primary" data-ck="${c.id}">Linha do tempo</button> ` : ''}<a class="btn small ghost" href="#/clientes/${c.id}/posvenda">Ficha</a>` },
+            ],
+            data.rows,
+            { emptyMsg: 'Nenhum cliente com esses filtros. O pós-venda começa quando a venda é confirmada.' },
+          )}</section>`
+        : html`<div class="kanban ps-kanban">${cols.filter((col) => col.key !== 'concluido' || ckSaved.status !== 'incompleto').map((col) => {
+            const list = data.rows.filter((r) => r.stage === col.key);
+            const late = list.filter((r) => r.next_item?.status === 'atrasado').length;
+            return html`<section class="column ${col.key === 'concluido' ? 'kind-ganho' : ''}">
+              <header><strong>${col.days != null ? html`<span class="muted">D+${col.days}</span> ` : ''}${col.label}</strong> <span class="count">${list.length}</span>${late ? html`<br><small class="danger-text">${late} atrasado(s)</small>` : ''}</header>
+              <div class="cards">${list.length ? list.map(card) : html`<p class="muted small">Ninguém nesta etapa.</p>`}</div></section>`;
+          })}</div>`}
+      <p class="hint">Linha do tempo a partir da confirmação da venda: ${data.items.map((i) => `D+${i.days} ${i.label.toLowerCase()}`).join(' · ')}. A indicação só é pedida para clientes promotores no NPS; com nota baixa, a etapa é dispensada e a satisfação é tratada antes. Os prazos ficam em Configurações › Geral.</p>`);
     const f = $('[data-f]', box);
     let t;
+    const read = () => ({ ...Object.fromEntries(new FormData(f).entries()), view: ckSaved.view });
     f.addEventListener('input', (e) => {
       if (e.target.name !== 'q') return;
       clearTimeout(t);
-      t = setTimeout(() => ((ckSaved = Object.fromEntries(new FormData(f).entries())), load()), 300);
+      t = setTimeout(() => ((ckSaved = read()), load()), 300);
     });
-    f.addEventListener('change', (e) => e.target.name !== 'q' && ((ckSaved = Object.fromEntries(new FormData(f).entries())), load()));
+    f.addEventListener('change', (e) => e.target.name !== 'q' && ((ckSaved = read()), load()));
     f.addEventListener('submit', (e) => e.preventDefault());
   };
-  on(box, 'click', '[data-item]', (e, b) => {
-    ckSaved = { ...ckSaved, item: ckSaved.item === b.dataset.item ? '' : b.dataset.item, status: '' };
+  on(box, 'click', '[data-view]', (e, b) => {
+    ckSaved = { ...ckSaved, view: b.dataset.view };
     load();
   });
   on(box, 'change', '[data-owner]', async (e, sel) => {
@@ -92,22 +113,23 @@ async function checklistTab(box) {
     }
   });
   on(box, 'click', '[data-ck]', async (e, b) => {
-    const c = data.rows.find((r) => r.id === Number(b.dataset.ck));
-    const ok = await modal({
-      title: `Checklist de pós-venda — ${c.name}`,
-      body: html`<ul class="checklist">${c.checklist.map((i) => html`<li class="${i.done_at ? 'ok' : ''}"><label class="check"><input type="checkbox" data-item-ck="${i.item}" ${i.done_at ? raw('checked') : ''}> ${i.label}</label>${i.done_at ? html` <small class="muted">${fmtDateTime(i.done_at)}</small>` : ''}</li>`)}</ul>
-        ${field({ name: 'notes', label: 'Observação (vai para o histórico do cliente)', type: 'textarea', rows: 2, full: true })}`,
-      submitLabel: 'Salvar checklist',
-      async onSubmit(d, form) {
-        for (const cb of $$('[data-item-ck]', form)) {
-          const was = !!c.checklist.find((i) => i.item === cb.dataset.itemCk).done_at;
-          if (cb.checked !== was) await post(`/api/cadastros/${c.id}/pos-venda`, { item: cb.dataset.itemCk, done: cb.checked, notes: d.notes });
-        }
-        toast('Checklist atualizado.');
-        return true;
+    const id = Number(b.dataset.ck);
+    let c = data.rows.find((r) => r.id === id);
+    let changed = false;
+    await modal({
+      title: `Pós-venda — ${c.name}`,
+      wide: true,
+      body: html`<p class="small muted">${c.sales.map((v) => `${v.code} · ${fmtMoney(v.credit_value)}`).join(' · ')}${c.postsale_name ? ` · responsável: ${c.postsale_name}` : ''}</p><div data-tl>${timelineList(c.checklist, { w })}</div>`,
+      onMount(form) {
+        bindTimeline(form, id, () => c.checklist, async () => {
+          changed = true;
+          const d2 = await get('/api/pos-venda', { q: c.code, status: '' });
+          c = d2.rows.find((r) => r.id === id) || c;
+          render($('[data-tl]', form), timelineList(c.checklist, { w }));
+        });
       },
     });
-    if (ok) load();
+    if (changed) load();
   });
   await load();
 }

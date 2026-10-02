@@ -9,7 +9,17 @@ const { assertOption, loadOpp } = require('./opportunities');
 const COMMERCIAL_FIELDS = [
   'product_id', 'credit_value', 'term_months', 'initial_installment', 'payment_modality', 'admin_fee_pct', 'reserve_fund_pct',
   'insurance_pct', 'other_costs', 'readjustment_index', 'readjustment_assumptions', 'strategy', 'valid_until', 'simulation_id',
+  'has_adhesion', 'adhesion_pct', 'adhesion_months', 'reducer_pct', 'readjustment_rate', 'bid_deduction', 'contemplation_month',
+  'embedded_bid_pct', 'quotas', 'quota_split_strategy', 'quota_values', 'quota_split_notes',
 ];
+/** Lê a divisão das cotas: "250000; 250000" ou [250000, 250000] → [250000, 250000]. */
+function parseQuotaValues(v) {
+  if (v == null || v === '') return null;
+  const list = Array.isArray(v) ? v : String(v).split(/[;\n]+/);
+  const nums = list.map((x) => (typeof x === 'number' ? x : toNumber(String(x).trim()))).filter((x) => x != null);
+  if (nums.some((x) => !(x > 0))) throw badRequest('Os valores das cotas devem ser maiores que zero.');
+  return nums.length ? nums : null;
+}
 const FREE_FIELDS = ['link_url', 'notes'];
 const FINAL = ['aprovada', 'recusada', 'expirada', 'substituida'];
 const ACTIVE = ['rascunho', 'apresentada', 'em_analise'];
@@ -104,8 +114,34 @@ function normalize(db, data, contactId) {
       if (o[f] != null && o[f] < 0) throw badRequest('Valores não podem ser negativos.');
     }
   }
-  for (const f of ['admin_fee_pct', 'reserve_fund_pct', 'insurance_pct']) {
+  for (const f of ['quota_split_notes']) if (data[f] !== undefined) o[f] = clean(data[f]);
+  if (data.has_adhesion !== undefined) o.has_adhesion = data.has_adhesion === true || data.has_adhesion === 'sim' || data.has_adhesion === 1 || data.has_adhesion === '1' ? 1 : data.has_adhesion === '' || data.has_adhesion == null ? null : 0;
+  for (const f of ['adhesion_months', 'contemplation_month', 'quotas']) {
     if (data[f] !== undefined) {
+      const n = toNumber(data[f]);
+      if (n != null && (!Number.isInteger(n) || n <= 0)) throw badRequest(f === 'quotas' ? 'Quantidade de cotas inválida.' : f === 'adhesion_months' ? 'Informe em quantas vezes a adesão é diluída (número inteiro).' : 'Mês de contemplação projetado inválido.');
+      o[f] = n;
+    }
+  }
+  if (data.bid_deduction !== undefined) {
+    o.bid_deduction = clean(data.bid_deduction);
+    if (o.bid_deduction && !['parcela', 'prazo'].includes(o.bid_deduction)) throw badRequest('Abatimento do lance: parcela ou prazo.');
+  }
+  if (data.quota_split_strategy !== undefined) {
+    o.quota_split_strategy = clean(data.quota_split_strategy);
+    assertOption(db, 'divisao_cotas', o.quota_split_strategy, 'divisão das cotas');
+  }
+  if (data.quota_values !== undefined) {
+    const list = parseQuotaValues(data.quota_values);
+    o.quota_values = list ? JSON.stringify(list) : null;
+    if (list && (o.quotas == null || data.quotas === '' || data.quotas === undefined)) o.quotas = list.length;
+  }
+  if (o.has_adhesion === 0) {
+    o.adhesion_pct = null;
+    o.adhesion_months = null;
+  }
+  for (const f of ['admin_fee_pct', 'reserve_fund_pct', 'insurance_pct', 'adhesion_pct', 'reducer_pct', 'readjustment_rate', 'embedded_bid_pct']) {
+    if (data[f] !== undefined && !(f.startsWith('adhesion') && o.has_adhesion === 0)) {
       o[f] = toNumber(data[f]);
       if (o[f] != null && (o[f] < 0 || o[f] > 100)) throw badRequest('Percentuais devem estar entre 0 e 100.');
     }
@@ -163,6 +199,33 @@ function normalize(db, data, contactId) {
   return o;
 }
 
+/** A soma das cotas precisa bater com o crédito da proposta (tolerância de R$ 1). */
+function checkQuotaSplit(m) {
+  if (!m.quota_values) return;
+  const list = JSON.parse(m.quota_values);
+  if (m.quotas != null && m.quotas !== list.length) throw badRequest(`A quantidade de cotas (${m.quotas}) não bate com os valores informados (${list.length}).`);
+  const sum = list.reduce((t, v) => t + v, 0);
+  if (m.credit_value != null && Math.abs(sum - m.credit_value) > 1) {
+    throw badRequest(`A soma das cotas (R$ ${sum.toLocaleString('pt-BR')}) é diferente do crédito da proposta (R$ ${Number(m.credit_value).toLocaleString('pt-BR')}).`);
+  }
+}
+
+/** Condições do plano cadastrado entram na proposta quando o especialista não informou outro valor. */
+function planDefaults(db, o) {
+  const plan = o.product_id ? db.prepare('SELECT * FROM products WHERE id = ?').get(o.product_id) : null;
+  if (!plan) return;
+  const pairs = [['admin_fee_pct', 'admin_fee_pct'], ['reserve_fund_pct', 'reserve_fund_pct'], ['insurance_pct', 'insurance_pct'], ['readjustment_index', 'readjustment_index'], ['term_months', 'term_months']];
+  for (const [pf, plf] of pairs) if (o[pf] == null && plan[plf] != null) o[pf] = plan[plf];
+  if (o.has_adhesion == null) {
+    o.has_adhesion = plan.adhesion ? 1 : 0;
+    if (plan.adhesion) {
+      if (o.adhesion_pct == null) o.adhesion_pct = plan.adhesion_pct ?? null;
+      if (o.adhesion_months == null) o.adhesion_months = plan.adhesion_months ?? null;
+    }
+  }
+  if (o.embedded_bid_pct == null && plan.embedded_bid) o.embedded_bid_pct = plan.embedded_bid_pct ?? null;
+}
+
 function insertProposal(db, user, row) {
   const now = nowIso();
   const full = { status: 'rascunho', version: 1, ...row, code: nextCode(db, 'proposal', 'PR'), owner_id: row.owner_id ?? user.id, created_by: user.id, created_at: now, updated_at: now };
@@ -183,6 +246,9 @@ function createProposal(db, user, data) {
     }
   }
   if (o.product_id == null && opp.product_id) o.product_id = opp.product_id;
+  planDefaults(db, o);
+  if (o.quotas == null && opp.quotas) o.quotas = opp.quotas;
+  checkQuotaSplit(o);
   const status = data.status && ['rascunho', 'apresentada', 'em_analise'].includes(data.status) ? data.status : 'rascunho';
   return tx(db, () => {
     const res = insertProposal(db, user, { ...o, category: o.category ?? opp.credit_category ?? null, contact_id: opp.contact_id, opportunity_id: opp.id, status, owner_id: opp.owner_id });
@@ -207,7 +273,9 @@ function updateProposal(db, user, id, data) {
   if (commercialChanged.length && p.status !== 'rascunho') {
     throw badRequest('Propostas já apresentadas não podem ter condições alteradas. Crie uma nova versão.');
   }
-  if (FINAL.includes(p.status) && Object.keys(o).length) throw badRequest('Propostas encerradas não podem ser alteradas.');
+  // A observação pode ser completada em qualquer status (registro do especialista); o resto fica travado nas encerradas
+  if (FINAL.includes(p.status) && Object.keys(o).some((k) => k !== 'notes')) throw badRequest('Propostas encerradas não podem ser alteradas.');
+  checkQuotaSplit({ ...p, ...o });
   const changes = diff(p, o, [...COMMERCIAL_FIELDS, ...FREE_FIELDS]);
   if (!Object.keys(changes).length) return;
   const keys = Object.keys(o);
@@ -332,8 +400,10 @@ function expireSweep(db) {
 function getProposal(db, user, id) {
   const p = loadProposal(db, user, id, false);
   const row = db
-    .prepare(`SELECT pr.*, c.name AS contact_name, c.code AS contact_code, o.code AS opportunity_code, pd.name AS product_name, s.code AS simulation_code, u.name AS owner_name
+    .prepare(`SELECT pr.*, c.name AS contact_name, c.code AS contact_code, o.code AS opportunity_code, pd.name AS product_name, s.code AS simulation_code, u.name AS owner_name,
+      COALESCE(ad.name, pd.administrator) AS administrator_name, pd.plan_code
       FROM proposals pr JOIN contacts c ON c.id = pr.contact_id JOIN opportunities o ON o.id = pr.opportunity_id LEFT JOIN products pd ON pd.id = pr.product_id
+      LEFT JOIN administrators ad ON ad.id = pd.administrator_id
       LEFT JOIN simulations s ON s.id = pr.simulation_id LEFT JOIN users u ON u.id = pr.owner_id WHERE pr.id = ?`)
     .get(p.id);
   // Cadeia de versões (anteriores e posteriores)

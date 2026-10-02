@@ -85,18 +85,34 @@ async function ensurePlan() {
   testPlan = { administrator_id: a.data.id, id: p.data.id };
   return testPlan;
 }
-/** Fluxo completo de venda: pré-venda → conferência → termo de adesão → contrato → boleto → pagamento confirmado. */
+/**
+ * Fluxo completo de venda: pré-venda → conferência → termo de adesão (cotas) → contrato assinado → pagamento enviado
+ * → comprovante (cria a venda aguardando alocação) → especialista informa a alocação → líder confirma a venda.
+ */
+let quotaSeq = 0;
 async function sellViaFlow(who, oppId, credit = 200000, extra = {}) {
   const plan = await ensurePlan();
   const ps = await call(who, 'POST', '/api/pre-vendas', { opportunity_id: oppId });
   assert.equal(ps.status, 200, JSON.stringify(ps.data));
+  quotaSeq++;
+  const quotas = extra.quotas || [{ credit_value: credit, group_code: extra.group_code || `G${quotaSeq}`, quota_code: extra.quota_code || String(100 + quotaSeq), contract_number: `CTR-${quotaSeq}` }];
   let sale = null;
-  for (const [step, body] of [['conferido', {}], ['termo_adesao', { plan_id: plan.id, credit_value: credit }], ['contrato_enviado', {}], ['contrato_assinado', {}], ['boleto_emitido', { boleto_value: 1500, boleto_due: todayStr() }]]) {
+  for (const [step, body] of [
+    ['conferido', {}],
+    ['termo_adesao', { plan_id: plan.id, credit_value: credit, adhesion_number: `ADE-${quotaSeq}`, quotas }],
+    ['contrato_assinado', {}],
+    ['pagamento_enviado', { payment_method: 'boleto', boleto_value: 1500, boleto_due: todayStr() }],
+    ['pagamento_comprovado', { payment_date: extra.payment_date || todayStr(), filename: 'comprovante.pdf', mime: 'application/pdf', content_base64: PDF }],
+  ]) {
     const r = await call(who, 'POST', `/api/pre-vendas/${ps.data.id}/avancar`, { step, ...body });
     assert.equal(r.status, 200, `${step}: ${JSON.stringify(r.data)}`);
     if (r.data.sale) sale = r.data.sale;
   }
-  const c = await call(who, 'POST', `/api/vendas/${sale.id}/confirmar`, { payment_date: extra.payment_date || todayStr(), filename: 'comprovante.pdf', mime: 'application/pdf', content_base64: PDF, group_code: extra.group_code, quota_code: extra.quota_code, pref_channel: 'whatsapp' });
+  if (extra.stop === 'venda') return { pre_sale: ps.data, sale };
+  const s = (await call(who, 'GET', `/api/vendas/${sale.id}`)).data;
+  const a = await call(who, 'POST', `/api/vendas/${sale.id}/alocacao`, { quotas: s.quotas.map((q) => ({ id: q.id, allocated: true })) });
+  assert.equal(a.status, 200, JSON.stringify(a.data));
+  const c = await call(extra.confirmer || 'gestor', 'POST', `/api/vendas/${sale.id}/confirmar`, { pref_channel: 'whatsapp' });
   assert.equal(c.status, 200, JSON.stringify(c.data));
   return { pre_sale: ps.data, sale, confirm: c.data };
 }
@@ -513,7 +529,7 @@ test('pós-venda: pesquisa NPS por link com histórico, cancelamento justificado
   let d = (await call('c1', 'GET', `/api/cadastros/${id}`)).data;
   await sellViaFlow('c1', d.opportunities[0].id, 200000, { group_code: 'G1', quota_code: '10' });
   d = (await call('c1', 'GET', `/api/cadastros/${id}`)).data;
-  assert.deepEqual(d.post_sale.map((p) => p.item), ['primeira_parcela', 'onboarding', 'estrategia_lance', 'recebimento_boletos', 'preferencias_contato', 'indicacao']);
+  assert.deepEqual(d.post_sale.map((p) => p.item), ['primeira_parcela', 'onboarding', 'acesso_cliente', 'recebimento_boletos', 'estrategia_lance', 'preferencias_contato', 'nps', 'indicacao']);
   const k = d.contracts[0];
   // NPS
   const n1 = await call('c1', 'POST', `/api/cadastros/${id}/nps`, { contract_id: k.id });
@@ -623,8 +639,9 @@ test('venda: comissão em parcelas com carência, cancelamento com motivo concre
   const plan = await ensurePlan();
   const ps = await call('c1', 'POST', '/api/pre-vendas', { opportunity_id: opp.id });
   assert.equal((await call('c1', 'POST', `/api/pre-vendas/${ps.data.id}/avancar`, { step: 'conferido' })).status, 200);
-  assert.equal((await call('c1', 'POST', `/api/pre-vendas/${ps.data.id}/avancar`, { step: 'contrato_enviado' })).status, 400, 'segue a sequência');
-  assert.equal((await call('c1', 'POST', `/api/pre-vendas/${ps.data.id}/avancar`, { step: 'termo_adesao', plan_id: plan.id, credit_value: 205000 })).status, 400);
+  assert.equal((await call('c1', 'POST', `/api/pre-vendas/${ps.data.id}/avancar`, { step: 'contrato_assinado' })).status, 400, 'segue a sequência');
+  assert.equal((await call('c1', 'POST', `/api/pre-vendas/${ps.data.id}/avancar`, { step: 'termo_adesao', plan_id: plan.id, quotas: [{ credit_value: 205000, group_code: 'G9', quota_code: '1', contract_number: 'X1' }] })).status, 400, 'crédito fora do incremento');
+  assert.equal((await call('c1', 'POST', `/api/pre-vendas/${ps.data.id}/avancar`, { step: 'termo_adesao', plan_id: plan.id, quotas: [{ credit_value: 200000 }] })).status, 400, 'grupo, cota e contrato obrigatórios');
   assert.equal((await call('c1', 'POST', `/api/pre-vendas/${ps.data.id}/avancar`, { step: 'cancelar' })).status, 400);
   await call('c1', 'POST', `/api/pre-vendas/${ps.data.id}/cancelar`, { reason: 'refazer no teste' });
   const { sale } = await sellViaFlow('c1', opp.id, 200000);
@@ -932,4 +949,140 @@ test('pós-venda: checklist automático, responsável, NPS com motivo e tratativ
   assert.ok(row.checklist.find((i) => i.item === 'estrategia_lance').done_at);
   assert.equal((await call('c2', 'GET', `/api/pos-venda/lances/${k.id}/historico`)).status, 404, 'fora do escopo');
   assert.ok(sale.id);
+});
+
+test('pré-venda com 4 cotas: termo com grupo/cota/contrato, comprovante leva para Vendas, só o time confirma, 4 produtos no mesmo ID de venda', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Quatro Cotas', phone1: '11 93333-4004' });
+  await completeForSale(c.data.id);
+  const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
+  const quotas = [1, 2, 3, 4].map((i) => ({ credit_value: 250000, group_code: `Q${i}`, quota_code: `${40 + i}`, contract_number: `CT-Q${i}` }));
+  // Soma divergente do crédito informado é recusada
+  const plan = await ensurePlan();
+  const ps0 = await call('c1', 'POST', '/api/pre-vendas', { opportunity_id: opp.id });
+  await call('c1', 'POST', `/api/pre-vendas/${ps0.data.id}/avancar`, { step: 'conferido' });
+  assert.equal((await call('c1', 'POST', `/api/pre-vendas/${ps0.data.id}/avancar`, { step: 'termo_adesao', plan_id: plan.id, credit_value: 900000, quotas })).status, 400);
+  assert.equal((await call('c1', 'POST', `/api/pre-vendas/${ps0.data.id}/avancar`, { step: 'termo_adesao', plan_id: plan.id, credit_value: 1000000, quotas: [...quotas.slice(0, 3), { ...quotas[0] }] })).status, 400, 'cota repetida');
+  await call('c1', 'POST', `/api/pre-vendas/${ps0.data.id}/cancelar`, { reason: 'refazer com as 4 cotas' });
+  const { sale } = await sellViaFlow('c1', opp.id, 1000000, { quotas, stop: 'venda' });
+  let s = (await call('c1', 'GET', `/api/vendas/${sale.id}`)).data;
+  assert.equal(s.status, 'aguardando_alocacao', 'comprovante leva para Vendas, aguardando a alocação');
+  assert.equal(s.quotas.length, 4);
+  assert.equal(s.credit_value, 1000000);
+  assert.ok(s.payment_attachment, 'comprovante anexado');
+  // Especialista não confirma a venda; o time confirma depois da alocação
+  assert.equal((await call('c1', 'POST', `/api/vendas/${sale.id}/confirmar`, {})).status, 403);
+  const part = await call('c1', 'POST', `/api/vendas/${sale.id}/alocacao`, { quotas: s.quotas.slice(0, 2).map((q) => ({ id: q.id, allocated: true })) });
+  assert.equal(part.data.all_allocated, false, 'alocação parcial');
+  const all = await call('c1', 'POST', `/api/vendas/${sale.id}/alocacao`, { quotas: s.quotas.map((q) => ({ id: q.id, allocated: true })) });
+  assert.equal(all.data.all_allocated, true);
+  const conf = await call('gestor', 'POST', `/api/vendas/${sale.id}/confirmar`, {});
+  assert.equal(conf.status, 200, JSON.stringify(conf.data));
+  assert.equal(conf.data.contracts.length, 4);
+  s = (await call('c1', 'GET', `/api/vendas/${sale.id}`)).data;
+  assert.equal(s.status, 'confirmada');
+  assert.deepEqual(s.contracts.map((k) => `${k.group_code}/${k.quota_code}/${k.contract_number}`), quotas.map((q) => `${q.group_code}/${q.quota_code}/${q.contract_number}`));
+  assert.ok(s.formalization.by_seller, 'especialista anexou o comprovante e informou a alocação no prazo');
+  const d = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data;
+  assert.equal(d.contracts.filter((k) => k.status !== 'cancelado').length, 4, 'os 4 produtos ficam no cliente');
+  assert.equal(d.relationship, 'cliente');
+});
+
+test('ordem configurável (pagamento antes do contrato) e bônus de formalização para o especialista no prazo', async () => {
+  assert.equal((await call('admin', 'PATCH', '/api/configuracoes', { presale_payment_first: true, formalization_bonus_pct: 0.05, formalization_sla_days: 5 })).status, 200);
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Paga Antes', phone1: '11 93333-5005' });
+  await completeForSale(c.data.id);
+  const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
+  const plan = await ensurePlan();
+  const ps = await call('c1', 'POST', '/api/pre-vendas', { opportunity_id: opp.id });
+  const pv = (await call('c1', 'GET', `/api/pre-vendas/${ps.data.id}`)).data;
+  assert.deepEqual(pv.steps.slice(5).map(([k]) => k), ['pagamento_enviado', 'pagamento_comprovado', 'contrato_assinado', 'concluida']);
+  const steps = [
+    ['conferido', {}],
+    ['termo_adesao', { plan_id: plan.id, quotas: [{ credit_value: 200000, group_code: 'P1', quota_code: '7', contract_number: 'CP-1' }] }],
+    ['pagamento_enviado', { payment_method: 'pix', boleto_value: 1800 }],
+    ['pagamento_comprovado', { payment_date: todayStr(), filename: 'pix.pdf', mime: 'application/pdf', content_base64: PDF }],
+  ];
+  for (const [step, body] of steps) assert.equal((await call('c1', 'POST', `/api/pre-vendas/${ps.data.id}/avancar`, { step, ...body })).status, 200, step);
+  const last = await call('c1', 'POST', `/api/pre-vendas/${ps.data.id}/avancar`, { step: 'contrato_assinado' });
+  assert.ok(last.data.sale, 'a última etapa (contrato) conclui a pré-venda');
+  const s = (await call('c1', 'GET', `/api/vendas/${last.data.sale.id}`)).data;
+  await call('c1', 'POST', `/api/vendas/${s.id}/alocacao`, { quotas: s.quotas.map((q) => ({ id: q.id, allocated: true })) });
+  const conf = await call('admin', 'POST', `/api/vendas/${s.id}/confirmar`, {});
+  assert.equal(conf.status, 200, JSON.stringify(conf.data));
+  assert.equal(conf.data.bonus, 100, '0,05% de R$ 200 mil');
+  const comm = (await call('c1', 'GET', '/api/comissoes')).data.rows.filter((r) => r.sale_id === s.id);
+  assert.ok(comm.some((r) => r.kind === 'bonus' && r.amount === 100));
+  await call('admin', 'PATCH', '/api/configuracoes', { presale_payment_first: false, formalization_bonus_pct: 0 });
+});
+
+test('pós-venda em funil: linha do tempo D+N, tarefa da próxima etapa e indicação só para promotor', async () => {
+  const mk = async (name, phone) => {
+    const c = await call('c1', 'POST', '/api/cadastros', { name, phone1: phone });
+    await completeForSale(c.data.id);
+    const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
+    await sellViaFlow('c1', opp.id, 200000);
+    return c.data.id;
+  };
+  const a = await mk('Cliente Promotor', '11 93333-6006');
+  let d = (await call('c1', 'GET', `/api/cadastros/${a}`)).data;
+  const byItem = Object.fromEntries(d.post_sale.map((p) => [p.item, p]));
+  assert.equal(byItem.primeira_parcela.status, 'feito', '1ª parcela confirmada pelo comprovante');
+  assert.equal(byItem.onboarding.days, 1);
+  assert.equal(byItem.acesso_cliente.days, 5);
+  assert.equal(byItem.indicacao.status, 'aguardando_nps');
+  assert.ok(d.tasks.some((t) => t.status === 'pendente' && /Pós-venda \(D\+1\): fazer o onboarding/.test(t.title)), 'tarefa da próxima etapa');
+  // Concluir o onboarding cria a tarefa da etapa seguinte
+  assert.equal((await call('c1', 'POST', `/api/cadastros/${a}/pos-venda`, { item: 'onboarding', done: true })).status, 200);
+  d = (await call('c1', 'GET', `/api/cadastros/${a}`)).data;
+  assert.ok(d.tasks.some((t) => t.status === 'pendente' && /D\+5/.test(t.title)));
+  assert.ok(!d.tasks.some((t) => t.status === 'pendente' && /onboarding/.test(t.title)));
+  // "Não se aplica" exige motivo
+  assert.equal((await call('c1', 'POST', `/api/cadastros/${a}/pos-venda`, { item: 'acesso_cliente', skip: true })).status, 400);
+  // NPS promotor libera a indicação; detrator dispensa
+  const n = await call('c1', 'POST', `/api/cadastros/${a}/nps`, {});
+  assert.equal((await call(null, 'POST', '/api/publico/nps', { token: n.data.token, score: 10, answers: { atendimento: 5, clareza: 5, agilidade: 5, confianca: 5 } })).status, 200);
+  d = (await call('c1', 'GET', `/api/cadastros/${a}`)).data;
+  assert.equal(d.post_sale.find((p) => p.item === 'nps').status, 'feito');
+  assert.ok(['pendente', 'atrasado'].includes(d.post_sale.find((p) => p.item === 'indicacao').status));
+  const b = await mk('Cliente Detrator', '11 93333-7007');
+  const n2 = await call('c1', 'POST', `/api/cadastros/${b}/nps`, {});
+  await call(null, 'POST', '/api/publico/nps', { token: n2.data.token, score: 5, reason: 'atendimento', answers: { atendimento: 2, clareza: 3, agilidade: 2, confianca: 2 } });
+  d = (await call('c1', 'GET', `/api/cadastros/${b}`)).data;
+  const ind = d.post_sale.find((p) => p.item === 'indicacao');
+  assert.equal(ind.status, 'nao_se_aplica', 'detrator: indicação não é pedida');
+  const ov = (await call('c1', 'GET', '/api/pos-venda')).data;
+  const row = ov.rows.find((r) => r.id === a);
+  assert.ok(row.sales[0].code.startsWith('VD-'), 'código da venda no pós-venda');
+  assert.ok(ov.summary.por_item.some((i) => i.item === 'indicacao'));
+});
+
+test('qualificação: preenchimento pela R1 completa só os campos vazios; proposta com divisão de cotas e observação sempre editável', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Lead Qualificação', phone1: '11 93333-8008' });
+  const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
+  assert.equal((await call('c1', 'PATCH', `/api/oportunidades/${opp.id}`, { credit_value: 300000, urgency: 'curto', had_consortium: 'sim', existing_consortium_admin: 'Adm X', existing_consortium_value: 80000, installment_min: 3000, installment_max: 2000 })).status, 400, 'parcela ideal acima da máxima');
+  assert.equal((await call('c1', 'PATCH', `/api/oportunidades/${opp.id}`, { credit_value: 300000, urgency: 'curto', had_consortium: 'sim', existing_consortium_admin: 'Adm X' })).status, 200);
+  const r1 = await call('c1', 'POST', `/api/oportunidades/${opp.id}/qualificacao`, { source: 'r1_transcricao', fields: { credit_value: 500000, decision_maker: 'conjuge', installment_min: 2500, installment_max: 3500, credit_purpose_type: 'moradia' } });
+  assert.equal(r1.status, 200, JSON.stringify(r1.data));
+  assert.deepEqual(r1.data.filled.sort(), ['credit_purpose_type', 'decision_maker', 'installment_max', 'installment_min']);
+  assert.ok(r1.data.ignored.includes('credit_value'), 'crédito já preenchido fica como está');
+  const o = (await call('c1', 'GET', `/api/oportunidades/${opp.id}`)).data;
+  assert.equal(o.credit_value, 300000);
+  assert.equal(o.existing_products, 'consorcio');
+  assert.ok(o.qualification.filled >= 7);
+  // Proposta: divisão das cotas precisa somar o crédito
+  const plan = await ensurePlan();
+  const bad = await call('c1', 'POST', '/api/propostas', { opportunity_id: opp.id, product_id: plan.id, credit_value: 300000, quota_split_strategy: 'iguais', quota_values: '150000; 100000' });
+  assert.equal(bad.status, 400);
+  const p = await call('c1', 'POST', '/api/propostas', { opportunity_id: opp.id, product_id: plan.id, credit_value: 300000, quota_split_strategy: 'grupos_diferentes', quota_values: '150000; 150000', quota_split_notes: 'Duas cotas em grupos diferentes' });
+  assert.equal(p.status, 200, JSON.stringify(p.data));
+  let pr = (await call('c1', 'GET', `/api/propostas/${p.data.id}`)).data;
+  assert.equal(pr.quotas, 2);
+  assert.equal(pr.has_adhesion, 1, 'adesão vem do plano');
+  assert.equal(pr.adhesion_pct, 1);
+  assert.equal(pr.adhesion_months, 3);
+  await call('c1', 'POST', `/api/propostas/${p.data.id}/status`, { status: 'recusada', refusal_reason: 'nao_e_momento' });
+  assert.equal((await call('c1', 'PATCH', `/api/propostas/${p.data.id}`, { notes: 'Cliente pediu retorno em março.' })).status, 200, 'observação editável mesmo encerrada');
+  assert.equal((await call('c1', 'PATCH', `/api/propostas/${p.data.id}`, { credit_value: 200000 })).status, 400);
+  pr = (await call('c1', 'GET', `/api/propostas/${p.data.id}`)).data;
+  assert.equal(pr.notes, 'Cliente pediu retorno em março.');
 });

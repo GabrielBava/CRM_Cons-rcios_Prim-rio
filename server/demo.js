@@ -134,6 +134,7 @@ function seedDemo(db, password) {
         opps.updateOpportunity(db, owner, opp.id, {
           objective_type: i % 3 ? 'aquisicao' : 'investimento', urgency: rnd(['curto', 'medio', 'longo'], i), installment_max: 1500 + i * 50, term_months: 200,
           strategy: rnd(['aquisicao', 'planejamento', 'formacao_patrimonial'], i), product_type: 'primario', employment_type: rnd(['clt', 'pj', 'empresario'], i), has_fgts: i % 2 ? 'sim' : 'nao',
+          credit_purpose_type: rnd(['moradia', 'imovel_investimento', 'terreno_construcao'], i), installment_min: 1200 + i * 40, has_bid_resources: rnd(['sim', 'nao', 'nao_sabe'], i), credit_category: 'imovel',
         });
       }
       if (st === 'r1') {
@@ -142,12 +143,14 @@ function seedDemo(db, password) {
       }
       if (st === 'negociacao') {
         tasks.updateTask(db, owner, r1Task, { action: 'concluir', outcome: 'realizada', notes: 'Cliente quer imóvel para morar em até 3 anos; tem FGTS.' });
-        opps.updateOpportunity(db, owner, opp.id, { decision_maker: rnd(['sozinho', 'conjuge'], i), financial_moment: rnd(['organizado_reserva', 'organizado_sem_reserva', 'apertado'], i), existing_products: 'nenhum' });
+        opps.updateOpportunity(db, owner, opp.id, { decision_maker: rnd(['sozinho', 'conjuge'], i), financial_moment: rnd(['organizado_reserva', 'organizado_sem_reserva', 'apertado'], i), had_consortium: i % 4 === 0 ? 'sim' : 'nao', existing_consortium_admin: i % 4 === 0 ? 'Administradora anterior' : null, existing_consortium_value: i % 4 === 0 ? 120000 : null, has_financing: 'nao', decision_notes: i % 2 ? 'Decide com a esposa.' : null });
       }
       let proposal = null;
       if (st === 'follow_up') {
         const s = sims.createManual(db, owner, { contact_id: contactId, opportunity_id: opp.id, credit_value: 200000 + (i % 3) * 50000, term_months: 200, installment: 1400 + i * 10, strategy: 'aquisicao', payment_modality: 'parcela_integral' });
-        proposal = proposals.createProposal(db, owner, { opportunity_id: opp.id, simulation_id: s.id, product_id: plans[i % plans.length], category: 'imovel', admin_fee_pct: 18, reserve_fund_pct: 2, readjustment_index: 'incc', valid_until: new Date(Date.now() + 15 * DAY).toISOString().slice(0, 10), status: 'apresentada' });
+        const credit = 200000 + (i % 3) * 50000;
+        const split = i % 2 === 1 ? { quota_split_strategy: 'grupos_diferentes', quota_values: [credit / 2, credit / 2], quota_split_notes: 'Duas cotas em grupos diferentes para dobrar as chances de contemplação por lance.' } : { quota_split_strategy: 'unica', quota_values: [credit] };
+        proposal = proposals.createProposal(db, owner, { opportunity_id: opp.id, simulation_id: s.id, product_id: plans[i % plans.length], category: 'imovel', admin_fee_pct: 18, reserve_fund_pct: 2, readjustment_index: 'incc', readjustment_rate: 5.5, bid_deduction: 'parcela', contemplation_month: 12, valid_until: new Date(Date.now() + 15 * DAY).toISOString().slice(0, 10), status: 'apresentada', ...split });
       }
       opps.moveStage(db, owner, opp.id, { stage_id: stageId[st] });
       if (proposal) opp.proposal_id = proposal.id;
@@ -161,22 +164,35 @@ function seedDemo(db, password) {
     record.saveAddress(db, admin, contactId, { cep: '01001000', street: 'Praça da Sé', number: `${100 + i}`, district: 'Sé', city: 'São Paulo', state: 'SP', is_primary: true, notes: i === 9 ? 'Portaria 24h: deixar documentos com o zelador.' : null });
   }
 
-  /** Aceite → pré-venda → termo → contrato → boleto (→ pagamento, se paidDaysAgo). */
-  function sell(owner, contactId, opp, i, { paidDaysAgo = null, until = 'boleto_emitido', credit = 200000 } = {}) {
+  /**
+   * Aceite → pré-venda → termo de adesão (cotas) → contrato assinado → pagamento → comprovante (venda aguardando alocação)
+   * → alocação informada pelo especialista → venda confirmada pelo time (se confirm).
+   */
+  function sell(owner, contactId, opp, i, { paidDaysAgo = 3, until = 'pagamento_comprovado', quotas = [200000], confirm = false, allocate = 'all' } = {}) {
     proposals.changeStatus(db, owner, opp.proposal_id, { status: 'aprovada', accepted_channel: 'whatsapp' });
     const ps = db.prepare("SELECT id FROM pre_sales WHERE opportunity_id = ? AND status <> 'cancelada' ORDER BY id DESC").get(opp.id);
-    const steps = [['conferido', {}], ['termo_adesao', { plan_id: pImovel, credit_value: credit, adhesion_number: `ADE-${7000 + i}` }], ['contrato_enviado', {}], ['contrato_assinado', {}], ['boleto_emitido', { boleto_value: 2100 + i * 10, boleto_due: dateAgo(paidDaysAgo != null ? paidDaysAgo : -3) }]];
+    const qs = quotas.map((v, k) => ({ credit_value: v, group_code: `${3000 + i * 7 + k}`, quota_code: `${110 + k * 13 + i}`, contract_number: `${880000 + i * 10 + k}` }));
+    const steps = [
+      ['conferido', {}],
+      ['termo_adesao', { plan_id: pImovel, adhesion_number: `ADE-${7000 + i}`, quotas: qs, installment_value: 1400 + i * 10 }],
+      ['contrato_assinado', { date: dateAgo(paidDaysAgo + 1), signed_via: 'digital' }],
+      ['pagamento_enviado', { payment_method: i % 2 ? 'boleto' : 'pix', boleto_value: 2100 + i * 10, boleto_due: dateAgo(paidDaysAgo) }],
+      ['pagamento_comprovado', { payment_date: dateAgo(paidDaysAgo), filename: 'comprovante-pagamento.pdf', mime: 'application/pdf', content_base64: PDF }],
+    ];
     let sale = null;
     for (const [step, data] of steps) {
       const r = sales.advancePreSale(db, owner, ps.id, { step, ...data });
       if (r.sale) sale = r.sale;
       if (step === until) break;
     }
-    if (sale && paidDaysAgo != null) {
-      const r = sales.confirmSale(db, owner, sale.id, { payment_date: dateAgo(paidDaysAgo), filename: 'comprovante-pagamento.pdf', mime: 'application/pdf', content_base64: PDF, group_code: `G${100 + i}`, quota_code: `${i}`, pref_channel: 'whatsapp', pref_time: 'Manhã, das 9h às 12h' });
-      return { sale, contract: r.contract, pre_sale: ps.id };
-    }
-    return { sale, pre_sale: ps.id };
+    if (!sale) return { pre_sale: ps.id };
+    const sq = sales.quotasOf(db, { sale_id: sale.id });
+    if (allocate) sales.registerAllocation(db, owner, sale.id, { allocated_on: dateAgo(Math.max(0, paidDaysAgo - 2)), quotas: (allocate === 'all' ? sq : sq.slice(0, 1)).map((q) => ({ id: q.id, allocated: true })) });
+    if (!confirm) return { sale, pre_sale: ps.id };
+    const r = sales.confirmSale(db, gestor, sale.id, { allocated_on: dateAgo(Math.max(0, paidDaysAgo - 2)), pref_channel: 'whatsapp', pref_time: 'Manhã, das 9h às 12h' });
+    db.prepare('UPDATE contacts SET postsale_started_at = ? WHERE id = ?').run(`${dateAgo(Math.max(0, paidDaysAgo - 2))}T13:00:00.000Z`, contactId);
+    require('./services/postsale').syncTimeline(db, contactId, owner.id);
+    return { sale, contract: r.contract, contracts: r.contracts, pre_sale: ps.id };
   }
 
   tx(db, () => {
@@ -233,22 +249,22 @@ function seedDemo(db, password) {
           record.publicForm(db, link.token);
           record.publicUpload(db, link.token, { doc_type: 'identificacao', filename: 'documento-identidade.png', mime: 'image/png', content_base64: SAMPLE_DOC });
         } else {
-          // Venda registrada com boleto emitido, aguardando o pagamento
+          // Comprovante anexado: venda em Vendas aguardando a alocação (1 de 2 cotas já alocada)
           completeRecord(id, i);
-          sell(owner, id, opp, i, { until: 'boleto_emitido', credit: 250000 });
+          sell(owner, id, opp, i, { quotas: [130000, 120000], paidDaysAgo: 2, allocate: 'first' });
         }
       }
       if (target === 'venda') {
         completeRecord(id, i);
-        const r = sell(owner, id, opp, i, { paidDaysAgo: i === 9 ? 20 : 5, credit: i === 9 ? 300000 : 200000 });
+        const r = sell(owner, id, opp, i, { paidDaysAgo: i === 9 ? 20 : 5, quotas: i === 9 ? [150000, 150000] : [200000], confirm: true });
         if (r.contract) {
           finance.generateInstallments(db, admin, r.contract.id, { first_due_date: dateAgo(i === 9 ? 20 : 5), count: 12 });
           const first = db.prepare('SELECT id FROM finance_entries WHERE contract_id = ? ORDER BY installment_number LIMIT 1').get(r.contract.id);
           if (first) finance.updateEntry(db, admin, first.id, { action: 'pagar', payment_method: 'boleto' });
-          record.togglePostSale(db, owner, id, { item: 'primeira_parcela', done: true });
         }
         if (i === 9) {
-          record.togglePostSale(db, owner, id, { item: 'onboarding', done: true });
+          record.togglePostSale(db, owner, id, { item: 'onboarding', done: true, notes: 'Boas-vindas por vídeo; explicado o calendário de assembleias.' });
+          record.togglePostSale(db, owner, id, { item: 'acesso_cliente', done: true, notes: 'Cliente acessou o aplicativo e viu as duas cotas.' });
           // Histórico de estratégias: primeiro lance embutido; depois da análise do FGTS, lance livre de 25%
           record.saveBidStrategy(db, owner, r.contract.id, { will_bid: true, bid_type: 'embutido', notes: 'Definido no onboarding.' });
           db.prepare('UPDATE bid_strategy_history SET created_at = ? WHERE contract_id = ?').run(ago(15, 11), r.contract.id);

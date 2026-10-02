@@ -176,11 +176,13 @@ function preVendaCard(c) {
 
 function posVendaCard(c) {
   const done = c.post_sale.filter((p) => p.done_at).length;
+  const next = c.post_sale.find((p) => !p.done_at);
+  const late = c.post_sale.filter((p) => p.status === 'atrasado').length;
   const last = c.nps_surveys.find((n) => n.status === 'respondida');
   const pending = c.nps_surveys.find((n) => n.status === 'pendente');
   return html`<section class="card"><div class="section-head"><h3>Pós-venda</h3><a href="#" data-tab="posvenda" class="small">abrir</a></div>
     <div class="progress-bar"><span style="width:${c.post_sale.length ? (done / c.post_sale.length) * 100 : 0}%"></span></div>
-    <p>${done} de ${c.post_sale.length} etapas concluídas${c.post_sale.find((p) => !p.done_at) ? html`. Próxima: <strong>${c.post_sale.find((p) => !p.done_at).label}</strong>` : '.'}</p>
+    <p>${done} de ${c.post_sale.length} etapas concluídas${next ? html`. Próxima: <strong>${next.label}</strong> (D+${next.days}${next.due_at ? `, até ${fmtDate(next.due_at)}` : ''})` : '.'}${late ? html` <span class="danger-text">${late} atrasada(s)</span>` : ''}</p>
     <p class="small muted">NPS: ${last ? `nota ${last.score} em ${fmtDate(last.answered_at)}` : 'nenhuma resposta'}${pending ? ' · pesquisa aguardando resposta' : ''} · Estratégias de lance: ${c.bid_strategies.length} de ${c.contracts.length} produto(s)</p></section>`;
 }
 
@@ -213,7 +215,7 @@ const TAB_RENDER = {
           ? html`<ul class="opp-list">${open.map((o) => html`<li><a href="#/oportunidades/${o.id}"><strong>${o.code}</strong> ${o.title || ''}</a> — ${badge(o.stage_name, o.status === 'pausada' ? 'muted' : '')}
               <div class="small muted">${o.product_name || 'Produto não definido'} · ${fmtMoney(o.credit_value)} · ${o.owner_name || '—'}${o.next_action ? html` · Próxima: ${o.next_action} (${fmtDateTime(o.next_action_at)})` : ''}</div></li>`)}</ul>`
           : empty('Nenhuma oportunidade em andamento.')}
-        ${c.contracts.length ? html`<h3>Produtos contratados</h3><ul>${c.contracts.map((k) => html`<li>${k.code} — ${k.product_name || optLabel('categoria_credito', k.category)} · ${fmtMoney(k.credit_value)} · ${optLabel('status_contrato', k.status)}</li>`)}</ul>` : ''}
+        ${c.contracts.length ? html`<h3>Produtos contratados</h3><ul>${c.contracts.map((k) => html`<li>${k.sale_code ? html`<strong>${k.sale_code}</strong> · ` : ''}${fmtMoney(k.credit_value)} — ${k.product_name || optLabel('categoria_credito', k.category)}${k.group_code ? ` · grupo ${k.group_code}, cota ${k.quota_code}` : ''} · ${optLabel('status_contrato', k.status)} <small class="muted">${k.code}</small></li>`)}</ul>` : ''}
       </section>
     </div>
     <div class="cols">
@@ -764,7 +766,7 @@ export function bindTasks(box, tasks, reload) {
 export function contractsTable(rows, { showContact = false } = {}) {
   return table(
     [
-      { label: 'Código', render: (k) => html`<a href="#" data-contract="${k.id}">${k.code}</a>${k.contract_number ? html`<br><small>Nº ${k.contract_number}</small>` : ''}` },
+      { label: 'Venda / produto', render: (k) => html`${k.sale_code ? html`<strong>${k.sale_code}</strong><br>` : ''}<a href="#" data-contract="${k.id}">${k.code}</a>${k.contract_number ? html`<br><small>Nº ${k.contract_number}</small>` : ''}` },
       ...(showContact ? [{ label: 'Cliente', render: (k) => html`<a href="#/leads/${k.contact_id}">${k.contact_name}</a>` }] : []),
       { label: 'Categoria', render: (k) => optLabel('categoria_credito', k.category || state.meta.products.find((p) => p.id === k.product_id)?.category) },
       { label: 'Administradora', render: (k) => k.administrator || '—' },

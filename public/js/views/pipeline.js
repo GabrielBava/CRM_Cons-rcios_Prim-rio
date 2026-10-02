@@ -5,6 +5,7 @@ import {
 } from '../ui.js';
 import { bindDrawerLinks } from '../drawer.js';
 import { icon } from '../icons.js';
+import { qualBlocks, qualProgress } from '../qualification.js';
 import { moveStage, opportunityForm, activityForm, taskForm, simulationForm, proposalForm, proposalDetail, quickSimulation, openProposalSimulator } from '../forms.js';
 import { timeline, tasksTable, bindTasks } from './contact.js';
 
@@ -335,18 +336,14 @@ async function showOpp(view, id) {
       ${o.status === 'perdida' ? html`<div class="alert danger">Perdida: ${optLabel('motivo_perda', o.lost_reason)}${o.lost_notes ? ` — ${o.lost_notes}` : ''}</div>` : ''}
       ${o.status === 'pausada' && o.pause_reason ? html`<div class="alert warn">Em nutrição: ${o.pause_reason}</div>` : ''}
       ${o.status === 'aberta' ? html`<section class="card criteria-card" id="criteria"><p class="muted small">Carregando critérios da próxima etapa…</p></section>` : ''}
+      <section class="card"><div class="section-head"><h3>Qualificação do negócio</h3>${can.write() ? html`<button class="btn small" data-act="edit">Editar qualificação</button>` : ''}</div>
+        ${qualProgress(o, contact.kind)}
+        ${qualBlocks(o, contact.kind, { extra: { strategy: o.strategy ? html`${optLabel('estrategia', o.strategy)} ${o.strategy_validated_at ? badge(`validada por ${o.strategy_validated_by_name} em ${fmtDate(o.strategy_validated_at)}`, 'ok') : html`${badge('não validada pelo consultor', 'warn')} ${can.write() ? html`<button class="btn small" data-act="validate">Validar</button>` : ''}`}` : null } })}
+      </section>
       <div class="cols">
-        <section class="card"><h3>Dados comerciais</h3><div class="kv">
-          ${kv('Produto', o.product_name)}${kv('Categoria do crédito', optLabel('categoria_credito', o.credit_category))}
-          ${kv('Crédito desejado', fmtMoney(o.credit_value))}${kv('Prazo de interesse', o.term_months ? `${o.term_months} meses` : null)}
-          ${kv('Faixa de parcela', o.installment_min || o.installment_max ? `${fmtMoney(o.installment_min)} a ${fmtMoney(o.installment_max)}` : null)}
-          ${kv('Cotas', o.quotas)}${kv('Modalidade de pagamento', optLabel('modalidade_pagamento', o.payment_modality))}
-          <div><span>Estratégia</span>${optLabel('estrategia', o.strategy)} ${o.strategy ? (o.strategy_validated_at ? badge(`validada por ${o.strategy_validated_by_name} em ${fmtDate(o.strategy_validated_at)}`, 'ok') : html`${badge('não validada pelo consultor', 'warn')} ${can.write() ? html`<button class="btn small" data-act="validate">Validar</button>` : ''}`) : ''}</div>
-          ${kv('Contemplação de interesse', optLabel('tipo_contemplacao', o.contemplation_type))}
-          ${kv('Recursos próprios p/ lance', fmtMoney(o.bid_own_resources))}${kv('FGTS disponível', fmtMoney(o.fgts_available))}
-          ${kv('Lance embutido', { sim: 'Sim', nao: 'Não', avaliar: 'Avaliar', nao_se_aplica: 'Não se aplica' }[o.embedded_bid_interest])}
-          ${kv('Urgência', optLabel('urgencia', o.urgency))}
-          <div class="full"><span>Objetivo declarado</span>${o.objective || '—'}</div>
+        <section class="card"><h3>Dados de gestão</h3><div class="kv">
+          ${kv('Prioridade no funil', K('priorities', o.priority))}${kv('Responsável', o.owner_name)}
+          <div class="full"><span>Objetivo nas palavras do cliente</span>${o.objective || '—'}</div>
           <div class="full"><span>Critério de qualificação</span>${o.qualification_criteria || '—'}</div>
           ${Object.entries(o.custom || {}).map(([k, v]) => kv(state.meta.custom_fields.find((f) => f.key === k && f.entity === 'opportunity')?.label || k, String(v)))}
         </div></section>

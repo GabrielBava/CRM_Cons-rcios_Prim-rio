@@ -476,3 +476,62 @@ input[type=checkbox], input[type=radio] { padding: 0; min-height: 0; border: 0; 
 /* Caixa de sentença: só a primeira letra maiúscula ("Outubro de 2026") */
 .month-label { text-transform: none; display: inline-block; }
 .month-label::first-letter { text-transform: uppercase; }
+
+/* ---------- Qualificação do negócio em blocos ---------- */
+.qual-blocks { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin-top: 12px; }
+.qual-block { background: var(--bg-card-2); border: 1px solid var(--border-soft); border-radius: var(--radius); padding: 12px 14px; }
+.qual-block h4 { margin: 0 0 8px; font-family: var(--font-display); font-size: var(--fs-sm); font-weight: 600; color: var(--text); }
+.qual-block dl { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.qual-block dl > div { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: var(--fs-sm); }
+.qual-block dt { color: var(--text-muted); }
+.qual-block dd { margin: 0; text-align: right; font-weight: 500; }
+.qual-block dl > div.full { flex-direction: column; gap: 2px; }
+.qual-block dl > div.full dd { text-align: left; font-weight: 400; }
+.qual-progress { margin: 4px 0; }
+.qual-progress-head { display: flex; justify-content: space-between; align-items: baseline; font-size: var(--fs-sm); }
+.qual-progress .progress-bar { margin: 6px 0 4px; }
+.qual-progress.done strong { color: var(--success); }
+.grid > h4.qual-form-title { display: flex; flex-direction: column; gap: 2px; margin-top: 14px; color: var(--text); font-family: var(--font-display); font-size: var(--fs-md); }
+.qual-form-title small { font-family: var(--font); font-weight: 300; font-size: var(--fs-xs); color: var(--text-muted); }
+.cond:not([hidden]) { display: contents; }
+
+/* ---------- Proposta em blocos ---------- */
+.prop-blocks { margin: 0 0 14px; }
+.prop-blocks .qual-block:first-child { grid-column: 1 / -1; }
+.prop-blocks .qual-block:first-child dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px 22px; }
+.quota-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.prop-notes { margin: 6px 0 14px; display: flex; flex-direction: column; gap: 6px; }
+.prop-notes label { font-size: var(--fs-sm); }
+.prop-history { margin-top: 14px; }
+.prop-history summary { cursor: pointer; font-size: var(--fs-sm); color: var(--text-muted); }
+.prop-history h4 { margin: 12px 0 6px; font-size: var(--fs-sm); }
+
+/* ---------- Pré-venda: cotas do termo de adesão ---------- */
+.quota-editor { display: flex; flex-direction: column; gap: 8px; }
+.quota-list, .alloc-list { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 12px; }
+.quota-row { display: grid; grid-template-columns: 34px repeat(4, minmax(0, 1fr)) auto; gap: 8px; align-items: end; padding: 10px 12px; border: 1px solid var(--border-soft); border-radius: var(--radius); background: var(--bg-card-2); }
+.alloc-list .quota-row { grid-template-columns: 34px repeat(4, minmax(0, 1fr)) auto; }
+.quota-row label { display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-xs); color: var(--text-muted); }
+.quota-row label.check { flex-direction: row; align-items: center; color: var(--text); font-size: var(--fs-sm); padding-bottom: 8px; }
+.quota-n { font-family: var(--font-display); font-weight: 600; padding-bottom: 10px; color: var(--text-muted); }
+.chip-sm.ok { background: color-mix(in srgb, var(--success) 15%, transparent); color: var(--success); }
+@media (max-width: 700px) { .quota-row, .alloc-list .quota-row { grid-template-columns: 1fr 1fr; } .quota-n { grid-column: 1 / -1; padding: 0; } }
+
+/* ---------- Pós-venda: linha do tempo D+N e funil ---------- */
+.ps-timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.ps-timeline li { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: var(--radius); border: 1px solid var(--border-soft); background: var(--bg-card-2); border-left: 3px solid var(--border); }
+.ps-timeline li.ps-feito { border-left-color: var(--success); }
+.ps-timeline li.ps-nao_se_aplica { border-left-color: var(--text-faint); opacity: 0.8; }
+.ps-timeline li.ps-atrasado { border-left-color: var(--danger); }
+.ps-timeline li.ps-aguardando_nps { border-left-color: var(--warning); }
+.ps-day { flex: none; width: 46px; text-align: center; font-family: var(--font-display); font-weight: 600; font-size: var(--fs-sm); color: var(--text-muted); }
+.ps-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ps-title { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: var(--fs-sm); }
+.ps-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.ps-ruler { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0 0 var(--gap); font-size: var(--fs-xs); color: var(--text-muted); }
+.ps-ruler strong { color: var(--text); font-family: var(--font-display); }
+.ps-kanban .column { min-width: 230px; }
+.ps-card .btn { align-self: flex-start; margin-top: 4px; }
+@media (max-width: 700px) { .ps-timeline li { flex-wrap: wrap; } .ps-actions { width: 100%; } }
+.prop-blocks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 700px) { .prop-blocks { grid-template-columns: 1fr; } }

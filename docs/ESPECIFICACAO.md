@@ -476,3 +476,77 @@ Aplicada a partir do manual da marca v1.0 em todas as telas, inclusive a ficha e
   - os indicadores ficam em duas colunas;
   - tabelas viram cartões ou rolam na horizontal sem estourar a página.
 
+
+## 16. Qualificação em blocos, propostas, pré-venda com várias cotas, venda e pós-venda em funil
+
+**Negócio: qualificação em 5 blocos.** A tela do negócio, a aba "4. Negócio" da ficha e o formulário seguem os mesmos blocos, com o indicador "Qualificação X de Y" e o que falta perguntar:
+
+- **Necessidade:** objetivo, finalidade do crédito (lista configurável), categoria de interesse, tipo de produto, crédito desejado, plano de interesse e detalhe da finalidade.
+- **Prazo:** prioridade do crédito (curto = até 3 meses, médio = até 12 meses, longo = 24 meses ou mais), contemplação de interesse e prazo do plano.
+- **Capacidade:** parcela ideal (o que o cliente considera confortável), parcela máxima (até onde pode chegar), momento financeiro e fonte de renda.
+- **Estratégia:** recurso próprio para lance (sim, não, não sabe) e valor, FGTS e valor (PF), lance embutido, quantidade de cotas, estratégia e modalidade.
+- **Decisão:** fator decisor (sozinho, cônjuge, sócio, família, outro), quem mais participa e experiência: já teve consórcio (administradora e crédito contratado) e financiamento atual.
+
+Em Lead e Tentativa de contato o especialista busca o máximo dessas respostas. Para o futuro modelo de R1, `POST /api/oportunidades/:id/qualificacao` recebe os dados extraídos da transcrição e **completa só os campos vazios** (ver INTEGRACOES.md).
+
+**Painel lateral do lead.** Blocos **Contato** e **Informações de negócio**: etapa, categoria de interesse, objetivo e finalidade, tipo de produto, crédito desejado, prazo objetivo, capacidade de parcela (ideal e máxima), urgência, se já teve consórcio (administradora e crédito) e próxima ação.
+
+**Proposta (pop-up).**
+
+- **Identificação:** código e versão, status, cliente, negócio, simulação, responsável, datas, validade e link.
+- **Características do plano** (os mesmos campos do simulador de propostas):
+  - plano, administradora, categoria, crédito, prazo, parcela e modalidade com fator redutor;
+  - taxa de administração, fundo de reserva e seguro prestamista;
+  - **adesão: sim ou não, percentual e em quantas vezes é diluída**;
+  - índice de reajuste e taxa estimada, lance embutido, abatimento do lance (parcela ou prazo) e projeção de contemplação.
+
+  Taxas, adesão e prazo vêm do plano quando ficam em branco. O pop-up avisa o que falta em relação ao simulador.
+- **Estratégia e divisão das cotas:** estratégia, quantidade de cotas, lógica da divisão (lista configurável: cota única, cotas iguais, grupos diferentes, valores diferentes, prazos diferentes) e o crédito de cada cota. A soma precisa bater com o crédito.
+- **Observações:** o especialista inclui e salva em qualquer status (inclusive aceita ou recusada); fica no histórico.
+
+**Pré-venda.** Segue o padrão do mercado (como nas administradoras do tipo HS Consórcios: a adesão é a assinatura do contrato e a 1ª parcela precisa ser compensada antes da assembleia):
+
+1. link gerado e enviado;
+2. acessado e concluído pelo cliente;
+3. conferido pela equipe;
+4. **termo de adesão:** plano, nº da proposta de adesão e **grupo, cota e nº do contrato de cada cota**, com o botão "+ Adicionar cota" (ex.: crédito de R$ 1 milhão em 4 cotas de R$ 250 mil = 4 contratos);
+5. contrato assinado (data e se digital ou físico);
+6. pagamento enviado (Pix ou boleto, valor e vencimento);
+7. **comprovante anexado:** conclui a pré-venda e leva a venda para Vendas.
+
+A ordem contrato/pagamento é configurável em Configurações › Geral; cada pré-venda mantém a ordem com que começou.
+
+**Venda.** Nasce com o comprovante, no status **aguardando alocação**. O especialista acompanha no portal da administradora e usa **Informar alocação** (marca cada cota alocada e corrige grupo, cota ou contrato). O **time (líder ou administrador)** usa **Confirmar venda**. Na confirmação:
+
+- cada cota vira um produto contratado do cliente, todos com o **mesmo ID de venda**;
+- o negócio vai para "Venda" e o cadastro vira cliente;
+- as comissões são geradas;
+- começa o pós-venda.
+
+Vendas sem alocação depois do prazo avisam o especialista e o líder.
+
+**Remuneração da formalização.** Quem cuida da pré-venda, anexa o comprovante e confere a alocação é o especialista:
+
+- a comissão só é gerada quando a venda é confirmada (cota alocada);
+- o indicador "Formalização pelo especialista" mostra quantas vendas ele formalizou no prazo (comprovante e alocação em até N dias após o pagamento);
+- o **bônus de formalização** (% do crédito, configurável; 0 = desligado) é pago quando o próprio especialista anexou o comprovante e informou a alocação no prazo. Ele aparece em Comissões e é cancelado ou estornado junto com a venda.
+
+**Pós-venda em funil (farm).** Linha do tempo a partir da confirmação da venda. Os prazos são configuráveis e o fim de semana passa para segunda-feira:
+
+| Etapa | Prazo |
+|---|---|
+| Confirmar a 1ª parcela paga (marcada pelo comprovante) | D+0 |
+| Onboarding | D+1 |
+| Acesso do cliente ao aplicativo e à cota | D+5 |
+| Como vai receber o boleto | D+7 |
+| Cadastro da estratégia de lance | D+10 |
+| Preferências de contato | D+15 |
+| Pesquisa NPS (marcada quando o cliente responde) | D+30 |
+| Pedido de indicações | D+35 |
+
+O pedido de indicações só é feito para promotores (nota mínima configurável). Com nota abaixo, a etapa é dispensada automaticamente para tratar a satisfação primeiro.
+
+- **Tarefas:** a próxima etapa vira tarefa na agenda do responsável pós-venda; ao concluir uma etapa, a seguinte é criada.
+- **Alertas:** etapas atrasadas geram aviso (uma vez) e aparecem em vermelho no funil.
+- **Telas:** o funil mostra os clientes por etapa atual (com a lista como alternativa). Cada etapa pode ser marcada como feita, reaberta ou "não se aplica" (com motivo).
+- **Cartas:** o pós-venda e o resumo do cliente mostram o **código da venda e o valor** no lugar da contagem de cartas.

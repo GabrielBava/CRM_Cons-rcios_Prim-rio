@@ -4,15 +4,15 @@ ERP/CRM para a venda de consórcios contratados do zero, do primeiro contato ao 
 
 1. Painel inicial
 2. Prospects e leads (distribuição com roleta)
-3. CRM (funil em 10 etapas com regras de passagem, ordenação, ações em massa e painel lateral de consulta)
+3. CRM (funil em 10 etapas com regras de passagem, qualificação em 5 blocos, ordenação, ações em massa e painel lateral de consulta)
 4. Agenda e tarefas
 5. Simulador
-6. Propostas (esteira de propostas D0–D10, aceitas e recusadas com motivo, chance de fechamento)
+6. Propostas (esteira de propostas D0–D10, características do plano com adesão, divisão das cotas, aceitas e recusadas com motivo)
 7. Clientes
 8. Metas
-9. Pré-venda (link da ficha cadastral para o cliente, alertas e adesão)
-10. Vendas (confirmação com comprovante)
-11. Pós-venda (checklist, satisfação NPS e estratégias de lance com histórico)
+9. Pré-venda (link da ficha cadastral, termo de adesão com grupo, cota e contrato de cada cota, contrato, pagamento por Pix ou boleto e comprovante)
+10. Vendas (aguardando a alocação da cota; o especialista informa a alocação e o time confirma)
+11. Pós-venda (funil de farm com linha do tempo D+N e alertas, satisfação NPS e estratégias de lance com histórico)
 12. Comissões e cancelamentos
 13. Treinamentos
 14. Administradoras

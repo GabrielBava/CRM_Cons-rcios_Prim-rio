@@ -526,13 +526,36 @@ CREATE TABLE IF NOT EXISTS imports (
 );
 `;
 
+// Prioridade do crédito (quando o lead quer o crédito): curto = 3 meses, médio = 12 meses, longo = 24 meses
+const URGENCIA = [
+  ['curto', 'Curto prazo (até 3 meses)'],
+  ['medio', 'Médio prazo (até 12 meses)'],
+  ['longo', 'Longo prazo (24 meses ou mais)'],
+];
+// Finalidade do crédito (bloco Necessidade da qualificação)
+const FINALIDADES = [
+  ['moradia', 'Casa própria (moradia)'],
+  ['imovel_investimento', 'Imóvel para investimento ou renda'],
+  ['terreno_construcao', 'Terreno ou construção'],
+  ['reforma', 'Reforma'],
+  ['quitar_financiamento', 'Quitar ou trocar um financiamento'],
+  ['veiculo_uso', 'Veículo para uso pessoal'],
+  ['veiculo_trabalho', 'Veículo para trabalho'],
+  ['empresa', 'Bens ou expansão da empresa'],
+  ['servicos', 'Serviços (estudo, viagem, saúde, festa)'],
+  ['patrimonio', 'Formação de patrimônio ou aposentadoria'],
+  ['outra', 'Outra'],
+];
+
 const POS_VENDA_ITEMS = [
-  ['primeira_parcela', '1ª parcela confirmada'],
-  ['onboarding', 'Onboarding'],
-  ['estrategia_lance', 'Cadastro de estratégia de lance'],
-  ['recebimento_boletos', 'Cadastro de recebimento de boletos'],
+  ['primeira_parcela', 'Confirmar a 1ª parcela paga'],
+  ['onboarding', 'Onboarding do cliente'],
+  ['acesso_cliente', 'Acesso do cliente ao aplicativo e à cota'],
+  ['recebimento_boletos', 'Como vai receber o boleto'],
+  ['estrategia_lance', 'Cadastro da estratégia de lance'],
   ['preferencias_contato', 'Preferências de contato'],
-  ['indicacao', 'Pedido de indicação'],
+  ['nps', 'Pesquisa de satisfação (NPS)'],
+  ['indicacao', 'Pedido de indicações'],
 ];
 
 // Motivos de recusa de proposta usados no mercado de consórcio (base para o trabalho de recuperação/closer)
@@ -592,10 +615,15 @@ const DEFAULT_OPTIONS = {
     ['parcela_reduzida', 'Parcela reduzida'],
     ['outra', 'Outra'],
   ],
-  urgencia: [
-    ['curto', 'Curto prazo (até 12 meses)'],
-    ['medio', 'Médio prazo (1 a 3 anos)'],
-    ['longo', 'Longo prazo (acima de 3 anos)'],
+  urgencia: URGENCIA,
+  finalidade_credito: FINALIDADES,
+  divisao_cotas: [
+    ['unica', 'Cota única'],
+    ['iguais', 'Cotas iguais (mesmo valor e grupo)'],
+    ['grupos_diferentes', 'Cotas em grupos diferentes (mais chances de contemplação)'],
+    ['valores_diferentes', 'Cotas de valores diferentes (escalonadas)'],
+    ['prazos_diferentes', 'Cotas com prazos diferentes'],
+    ['outra', 'Outra lógica'],
   ],
   sexo: [
     ['feminino', 'Feminino'],
@@ -914,6 +942,15 @@ const DEFAULT_SETTINGS = {
   funnel_sequential: true,
   stage_rules: null,
   presale_alert_hours: 24,
+  // Ordem da pré-venda depois do termo de adesão: false = contrato assinado antes do pagamento (padrão do mercado)
+  presale_payment_first: false,
+  // Bônus de formalização (% do crédito) para o especialista que anexa o comprovante e confirma a alocação no prazo (0 = desligado)
+  formalization_bonus_pct: 0,
+  formalization_sla_days: 5,
+  // Indicações só são pedidas para clientes com NPS a partir desta nota (promotores = 9)
+  postsale_referral_min_nps: 9,
+  // Linha do tempo do pós-venda: D+N (dias corridos a partir da confirmação da venda) de cada etapa
+  postsale_days: { primeira_parcela: 0, onboarding: 1, acesso_cliente: 5, recebimento_boletos: 7, estrategia_lance: 10, preferencias_contato: 15, nps: 30, indicacao: 35 },
   roleta: { mode: 'sequencial', auto: false, participants: [], last_user_id: null, first_contact_hours: 1 },
   presale_email_subject: 'Seu cadastro para a adesão ao consórcio',
   // Simulador usado para gerar propostas (o CRM envia nome e contato do cliente no endereço)
@@ -967,6 +1004,37 @@ function seedDefaults(db) {
     }
     db.prepare("INSERT INTO settings (key, value) VALUES ('migr_listas_v3', 'true')").run();
   }
+  // Qualificação em blocos: prioridade do crédito em 3/12/24 meses e experiência com consórcio separada de financiamento
+  if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_qualificacao_v4'").get()) {
+    const OLD_URG = { curto: 'Curto prazo (até 12 meses)', medio: 'Médio prazo (1 a 3 anos)', longo: 'Longo prazo (acima de 3 anos)' };
+    for (const [value, label] of URGENCIA) db.prepare("UPDATE options SET label = ? WHERE list = 'urgencia' AND value = ? AND label = ?").run(label, value, OLD_URG[value]);
+    db.exec(`UPDATE opportunities SET had_consortium = CASE WHEN existing_products IN ('consorcio','ambos') THEN 'sim' ELSE 'nao' END,
+      has_financing = CASE WHEN existing_products IN ('financiamento','ambos') THEN 'sim' ELSE 'nao' END
+      WHERE existing_products IS NOT NULL AND had_consortium IS NULL`);
+    db.exec("UPDATE opportunities SET has_bid_resources = 'sim' WHERE has_bid_resources IS NULL AND bid_own_resources > 0");
+    db.prepare("INSERT INTO settings (key, value) VALUES ('migr_qualificacao_v4', 'true')").run();
+  }
+  // Pós-venda em funil (farm): nova ordem, acesso do cliente e NPS como etapas; pré-venda com várias cotas
+  if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_fluxo_venda_v4'").get()) {
+    POS_VENDA_ITEMS.forEach(([value, label], i) => {
+      const cur = db.prepare("SELECT id FROM options WHERE list = 'etapa_pos_venda' AND value = ?").get(value);
+      if (cur) db.prepare('UPDATE options SET label = ?, position = ?, active = 1 WHERE id = ?').run(label, i, cur.id);
+      else ins.run('etapa_pos_venda', value, label, i, '{}');
+    });
+    db.prepare(`UPDATE options SET position = position + 100 WHERE list = 'etapa_pos_venda' AND value NOT IN (${POS_VENDA_ITEMS.map(() => '?').join(',')})`).run(...POS_VENDA_ITEMS.map(([v]) => v));
+    // Etapas antigas da pré-venda: "contrato enviado" fica dentro do termo; "boleto emitido" vira "pagamento enviado"
+    db.exec("UPDATE pre_sales SET status = 'termo_adesao' WHERE status = 'contrato_enviado'");
+    db.exec("UPDATE pre_sales SET status = 'pagamento_enviado', payment_method = 'boleto', payment_sent_at = COALESCE(boleto_issued_at, updated_at) WHERE status = 'boleto_emitido'");
+    // Cada pré-venda com termo de adesão passa a ter a sua cota (a venda antiga tinha uma cota só)
+    const nowTs = now;
+    for (const ps of db.prepare("SELECT ps.*, s.group_code AS s_group, s.quota_code AS s_quota FROM pre_sales ps LEFT JOIN sales s ON s.id = ps.sale_id WHERE ps.status IN ('termo_adesao','contrato_assinado','pagamento_enviado','pagamento_comprovado','concluida') AND ps.credit_value IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pre_sale_quotas q WHERE q.pre_sale_id = ps.id)").all()) {
+      db.prepare('INSERT INTO pre_sale_quotas (pre_sale_id, sale_id, position, credit_value, group_code, quota_code, contract_number, contract_id, created_at, updated_at) VALUES (?, ?, 1, ?, ?, ?, ?, (SELECT contract_id FROM sales WHERE id = ?), ?, ?)')
+        .run(ps.id, ps.sale_id ?? null, ps.credit_value, ps.s_group ?? null, ps.s_quota ?? null, ps.adhesion_number ?? null, ps.sale_id ?? null, nowTs, nowTs);
+    }
+    db.exec('UPDATE contracts SET sale_id = (SELECT s.id FROM sales s WHERE s.contract_id = contracts.id) WHERE sale_id IS NULL');
+    db.exec("UPDATE contacts SET postsale_started_at = (SELECT MIN(s.confirmed_at) FROM sales s WHERE s.contact_id = contacts.id AND s.status = 'confirmada') WHERE postsale_started_at IS NULL");
+    db.prepare("INSERT INTO settings (key, value) VALUES ('migr_fluxo_venda_v4', 'true')").run();
+  }
   if (db.prepare('SELECT COUNT(*) AS n FROM products').get().n === 0) {
     const ins = db.prepare(
       'INSERT INTO products (name, category, administrator, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
@@ -988,7 +1056,7 @@ const ADDED_COLUMNS = {
     ['nps_score', 'INTEGER'], ['nps_comment', 'TEXT'], ['nps_at', 'TEXT'],
     ['active', 'INTEGER NOT NULL DEFAULT 1'], ['inactive_reason', 'TEXT'], ['inactivated_at', 'TEXT'],
     ['assigned_at', 'TEXT'], ['assigned_by', 'INTEGER REFERENCES users(id)'],
-    ['postsale_owner_id', 'INTEGER REFERENCES users(id)'],
+    ['postsale_owner_id', 'INTEGER REFERENCES users(id)'], ['postsale_started_at', 'TEXT'],
   ],
   nps_surveys: [['dissatisfaction_reason', 'TEXT'], ['treated_at', 'TEXT'], ['treated_by', 'INTEGER REFERENCES users(id)'], ['treatment_notes', 'TEXT']],
   addresses: [['notes', 'TEXT']],
@@ -1014,13 +1082,27 @@ const ADDED_COLUMNS = {
     ['employment_type', 'TEXT'], ['has_fgts', 'TEXT'], ['decision_maker', 'TEXT'], ['existing_products', 'TEXT'],
     ['existing_consortium_value', 'REAL'], ['existing_consortium_admin', 'TEXT'], ['existing_financing_balance', 'REAL'],
     ['existing_financing_cet', 'REAL'], ['existing_financing_bank', 'TEXT'],
+    ['credit_purpose_type', 'TEXT'], ['has_bid_resources', 'TEXT'], ['had_consortium', 'TEXT'], ['has_financing', 'TEXT'], ['decision_notes', 'TEXT'],
   ],
   proposals: [
     ['accepted_at', 'TEXT'], ['accepted_channel', 'TEXT'], ['accepted_by', 'INTEGER REFERENCES users(id)'], ['refusal_reason', 'TEXT'],
     ['category', 'TEXT'], ['sent_channel', 'TEXT'], ['last_response_at', 'TEXT'], ['last_response', 'TEXT'],
     ['refusal_notes', 'TEXT'], ['refused_at', 'TEXT'], ['retake_at', 'TEXT'],
+    ['has_adhesion', 'INTEGER'], ['adhesion_pct', 'REAL'], ['adhesion_months', 'INTEGER'], ['reducer_pct', 'REAL'], ['readjustment_rate', 'REAL'],
+    ['bid_deduction', 'TEXT'], ['contemplation_month', 'INTEGER'], ['embedded_bid_pct', 'REAL'], ['quotas', 'INTEGER'],
+    ['quota_split_strategy', 'TEXT'], ['quota_values', 'TEXT'], ['quota_split_notes', 'TEXT'],
   ],
+  pre_sales: [
+    ['payment_method', 'TEXT'], ['payment_sent_at', 'TEXT'], ['payment_date', 'TEXT'], ['payment_attachment_id', 'INTEGER'],
+    ['proof_by', 'INTEGER'], ['proof_at', 'TEXT'], ['signed_via', 'TEXT'], ['step_order', 'TEXT'],
+  ],
+  sales: [
+    ['payment_method', 'TEXT'], ['allocation_checked_at', 'TEXT'], ['allocation_checked_by', 'INTEGER'], ['allocated_on', 'TEXT'],
+    ['formalization_by', 'INTEGER'], ['quotas_count', 'INTEGER'], ['allocation_notes', 'TEXT'], ['alert_sent_at', 'TEXT'],
+  ],
+  post_sale_items: [['skipped', 'INTEGER NOT NULL DEFAULT 0'], ['alerted_at', 'TEXT']],
   contracts: [
+    ['sale_id', 'INTEGER'],
     ['contract_number', 'TEXT'], ['installment_value', 'REAL'], ['due_day', 'INTEGER'], ['first_due_date', 'TEXT'],
     ['contemplated_at', 'TEXT'], ['contemplation_type', 'TEXT'], ['bid_value', 'REAL'], ['acquired_asset', 'TEXT'],
     ['seller_id', 'INTEGER REFERENCES users(id)'], ['sale_value', 'REAL'],
@@ -1222,7 +1304,26 @@ CREATE TABLE IF NOT EXISTS pre_sales (
 );
 CREATE INDEX IF NOT EXISTS idx_presale_contact ON pre_sales(contact_id);
 
--- Vendas: aguardando pagamento → confirmada (comprovante) ou cancelada
+-- Cotas da pré-venda: uma proposta pode virar várias cotas (ex.: 4 × R$ 250 mil), cada uma com grupo, cota e nº de contrato.
+-- Na confirmação da venda cada cota vira um produto contratado do cliente, todos ligados ao mesmo ID de venda.
+CREATE TABLE IF NOT EXISTS pre_sale_quotas (
+  id INTEGER PRIMARY KEY,
+  pre_sale_id INTEGER NOT NULL REFERENCES pre_sales(id),
+  sale_id INTEGER REFERENCES sales(id),
+  position INTEGER NOT NULL DEFAULT 1,
+  credit_value REAL NOT NULL,
+  group_code TEXT,
+  quota_code TEXT,
+  contract_number TEXT,
+  allocated_on TEXT,
+  allocated_by INTEGER REFERENCES users(id),
+  contract_id INTEGER REFERENCES contracts(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_psq_presale ON pre_sale_quotas(pre_sale_id);
+
+-- Vendas: nascem com o comprovante de pagamento (aguardando a alocação da cota) → confirmada pelo time ou cancelada
 CREATE TABLE IF NOT EXISTS sales (
   id INTEGER PRIMARY KEY,
   code TEXT NOT NULL UNIQUE,
@@ -1239,7 +1340,7 @@ CREATE TABLE IF NOT EXISTS sales (
   installment_value REAL,
   group_code TEXT, quota_code TEXT, adhesion_number TEXT, adhesion_date TEXT,
   boleto_value REAL, boleto_due TEXT,
-  status TEXT NOT NULL DEFAULT 'aguardando_pagamento' CHECK (status IN ('aguardando_pagamento','confirmada','cancelada')),
+  status TEXT NOT NULL DEFAULT 'aguardando_alocacao' CHECK (status IN ('aguardando_pagamento','aguardando_alocacao','confirmada','cancelada')),
   payment_date TEXT, payment_attachment_id INTEGER REFERENCES attachments(id),
   confirmed_at TEXT, confirmed_by INTEGER REFERENCES users(id),
   contract_id INTEGER REFERENCES contracts(id),
@@ -1274,7 +1375,7 @@ CREATE TABLE IF NOT EXISTS commission_entries (
   id INTEGER PRIMARY KEY,
   sale_id INTEGER NOT NULL REFERENCES sales(id),
   user_id INTEGER NOT NULL REFERENCES users(id),
-  kind TEXT NOT NULL DEFAULT 'comissao' CHECK (kind IN ('comissao','estorno')),
+  kind TEXT NOT NULL DEFAULT 'comissao' CHECK (kind IN ('comissao','estorno','bonus')),
   installment_no INTEGER,
   competence TEXT NOT NULL,
   base_value REAL,
@@ -1390,8 +1491,37 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(user_id, read_at, created_at);
 `;
 
+/**
+ * Amplia uma restrição CHECK de uma tabela existente (o SQLite não altera CHECK): recria a tabela com a mesma
+ * definição, só trocando o trecho da restrição, e copia os dados.
+ */
+function relaxCheck(db, table, from, to) {
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+  if (!row || !row.sql.includes(from)) return;
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name).join(', ');
+  const indexes = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL").all(table).map((r) => r.sql);
+  db.exec('PRAGMA foreign_keys = OFF;');
+  try {
+    db.exec('BEGIN');
+    db.exec(row.sql.replace(from, to).replace(/CREATE TABLE (IF NOT EXISTS )?"?\w+"?/, `CREATE TABLE ${table}_v2`));
+    db.exec(`INSERT INTO ${table}_v2 (${cols}) SELECT ${cols} FROM ${table}`);
+    db.exec(`DROP TABLE ${table}`);
+    db.exec(`ALTER TABLE ${table}_v2 RENAME TO ${table}`);
+    for (const sql of indexes) db.exec(sql);
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  } finally {
+    db.exec('PRAGMA foreign_keys = ON;');
+  }
+}
+
 function migrate(db) {
   db.exec(EXTRA_SCHEMA);
+  // Venda aguardando a alocação da cota e bônus de formalização (bancos anteriores)
+  relaxCheck(db, 'sales', "CHECK (status IN ('aguardando_pagamento','confirmada','cancelada'))", "CHECK (status IN ('aguardando_pagamento','aguardando_alocacao','confirmada','cancelada'))");
+  relaxCheck(db, 'commission_entries', "CHECK (kind IN ('comissao','estorno'))", "CHECK (kind IN ('comissao','estorno','bonus'))");
   for (const [table, cols] of Object.entries(ADDED_COLUMNS)) {
     const existing = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
     for (const [name, type] of cols) {

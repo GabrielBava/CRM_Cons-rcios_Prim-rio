@@ -54,7 +54,7 @@ function home(db, user, q = {}) {
   // Vendas
   const ss = own('s.seller_id');
   const salesMonth = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(credit_value), 0) AS v FROM sales s WHERE ${ss.sql} AND s.status IN ('confirmada','cancelada') AND substr(s.payment_date, 1, 7) = ?`).get(...ss.params, month);
-  const awaiting = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(credit_value), 0) AS v FROM sales s WHERE ${ss.sql} AND s.status = 'aguardando_pagamento'`).get(...ss.params);
+  const awaiting = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(credit_value), 0) AS v FROM sales s WHERE ${ss.sql} AND s.status IN ('aguardando_pagamento','aguardando_alocacao')`).get(...ss.params);
 
   // Comissões do mês
   const commissions = require('./sales').commissionSummary(db, user, single);
@@ -113,7 +113,7 @@ function home(db, user, q = {}) {
   if (high.length) add('ok', `${high.length} proposta(s) com alta chance de fechamento (${fmt(high.reduce((t, p) => t + (p.credit_value || 0), 0))}): priorize o fechamento`, '#/propostas');
   const stale = presales.rows.filter((r) => r.stale).length;
   if (stale) add('warn', `${stale} pré-venda(s) parada(s) há mais de ${require('../db').getSetting(db, 'presale_alert_hours') || 24}h`, '#/prevenda');
-  if (awaiting.n) add('info', `${awaiting.n} venda(s) aguardando confirmação do pagamento`, '#/vendas');
+  if (awaiting.n) add('info', `${awaiting.n} venda(s) aguardando a alocação da cota e a confirmação do time`, '#/vendas');
   if (goal.missing_credit) {
     const cards = ticket ? Math.ceil(goal.missing_credit / ticket) : null;
     add('info', `Faltam ${fmt(goal.missing_credit)} para a meta${cards ? ` (≈ ${cards} carta(s) do seu ticket médio)` : ''}${goal.daily_needed ? `; ritmo de ${fmt(goal.daily_needed)} por dia útil` : ''}`, '#/metas');

@@ -586,7 +586,7 @@ function getContact(db, user, id) {
     .all(c.id);
   const dataRequests = db.prepare('SELECT * FROM data_requests WHERE contact_id = ? ORDER BY requested_at DESC').all(c.id);
   const contracts = db
-    .prepare('SELECT k.*, p.name AS product_name FROM contracts k LEFT JOIN products p ON p.id = k.product_id WHERE k.contact_id = ? ORDER BY k.created_at DESC')
+    .prepare('SELECT k.*, p.name AS product_name, s.code AS sale_code FROM contracts k LEFT JOIN products p ON p.id = k.product_id LEFT JOIN sales s ON s.id = k.sale_id WHERE k.contact_id = ? ORDER BY k.created_at DESC')
     .all(c.id);
   const simulations = db
     .prepare('SELECT s.*, o.code AS opportunity_code, u.name AS user_name FROM simulations s LEFT JOIN opportunities o ON o.id = s.opportunity_id LEFT JOIN users u ON u.id = s.user_id WHERE s.contact_id = ? ORDER BY s.created_at DESC')

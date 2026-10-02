@@ -4,6 +4,8 @@ import {
   html, raw, render, $, on, state, field, formData, opts, userItems, table, badge, optLabel, K, fmtDate, fmtDateTime, fmtMoney, relTime,
   modal, toast, toastError, can, empty,
 } from '../ui.js';
+import { qualBlocks, qualProgress } from '../qualification.js';
+import { timelineList, bindTimeline } from '../postsale-timeline.js';
 import { opportunityForm, contractForm } from '../forms.js';
 
 const ro = (c) => !can.write() || !!c.anonymized_at;
@@ -172,23 +174,10 @@ export async function endereco(box, c, reload) {
 
 export async function negocio(box, c, reload) {
   const opp = c.opportunities;
-  const r1 = (o) => html`<div class="kv">
-    ${kv('Objetivo', optLabel('objetivo', o.objective_type))}
-    ${kv('Produto', optLabel('tipo_produto', o.product_type))}
-    ${kv('Categoria', optLabel('categoria_credito', o.credit_category))}
-    ${kv('Crédito desejado', html`${fmtMoney(o.credit_value)}${o.credit_purpose ? html`<br><small>${o.credit_purpose}</small>` : ''}`)}
-    ${kv('Prazo objetivo', optLabel('urgencia', o.urgency))}
-    ${kv('Momento financeiro', optLabel('momento_financeiro', o.financial_moment))}
-    ${kv('Capacidade de parcela', o.installment_max ? fmtMoney(o.installment_max) : null)}
-    ${kv('Tipo de contratação', optLabel('tipo_contratacao', o.employment_type))}
-    ${kv('Capital/reserva para lance', o.bid_own_resources != null ? fmtMoney(o.bid_own_resources) : null)}
-    ${c.kind === 'PF' ? kv('FGTS', html`${optLabel('possui_fgts', o.has_fgts)}${o.fgts_available ? ` · ${fmtMoney(o.fgts_available)}` : ''}`) : ''}
-    ${kv('Quem decide a compra', optLabel('decisor', o.decision_maker))}
-    ${kv('Já possui', html`${optLabel('possui_produto', o.existing_products)}${['consorcio', 'ambos'].includes(o.existing_products) ? html`<br><small>Consórcio: ${fmtMoney(o.existing_consortium_value)} · ${o.existing_consortium_admin || 'administradora não informada'}</small>` : ''}${['financiamento', 'ambos'].includes(o.existing_products) ? html`<br><small>Financiamento: saldo ${fmtMoney(o.existing_financing_balance)} · CET ${o.existing_financing_cet != null ? `${o.existing_financing_cet}% a.a.` : '—'} · ${o.existing_financing_bank || 'banco não informado'}</small>` : ''}`)}
-  </div>`;
+  const r1 = (o) => html`${qualProgress(o, c.kind)}${qualBlocks(o, c.kind)}`;
   render(box, html`<section class="card">
     <div class="section-head"><h3>Negócios</h3>${ro(c) ? '' : html`<button class="btn" data-act="opp">+ Novo negócio</button>`}</div>
-    <p class="hint">Preencha a qualificação na primeira reunião (ligação ou WhatsApp). Cada negócio segue o funil com sua própria etapa e próxima ação.</p>
+    <p class="hint">A qualificação fica em cinco blocos: necessidade, prazo, capacidade, estratégia e decisão. Em Lead e Tentativa de contato, busque o máximo de respostas; o que faltar é completado na R1. Cada negócio segue o funil com sua própria etapa e próxima ação.</p>
   </section>
   ${opp.length ? opp.map((o) => html`<section class="card">
       <div class="section-head"><div><h3><a href="#/oportunidades/${o.id}">${o.code}</a> ${o.title || ''}</h3>
@@ -494,6 +483,16 @@ export function uploadForm(c, { doc_type } = {}) {
       return true;
     },
   });
+}
+
+/** Abre um anexo (ex.: comprovante de pagamento) em outra aba. */
+export async function openAttachmentFile(id) {
+  try {
+    const { url } = await fileUrl(id);
+    window.open(url, '_blank', 'noopener');
+  } catch (e) {
+    toastError(e);
+  }
 }
 
 /** Busca o arquivo e devolve uma URL local para exibição (imagem ou PDF) e o próprio arquivo. */
@@ -844,11 +843,10 @@ export async function posvenda(box, c, reload) {
   const last = c.nps_surveys.find((n) => n.status === 'respondida');
   const bidOf = (k) => c.bid_strategies.find((b) => b.contract_id === k.id);
   render(box, html`<div class="cols">
-    <section class="card"><h3>Checklist de pós-venda</h3>
-      ${c.relationship !== 'cliente' ? html`<p class="hint">Aplicável depois da venda concluída.</p>` : ''}
-      <ul class="checklist">${c.post_sale.map((p) => html`<li class="${p.done_at ? 'ok' : ''}"><label class="check"><input type="checkbox" data-ps="${p.item}" ${p.done_at ? raw('checked') : ''} ${w ? '' : raw('disabled')}> ${p.label}</label>
-        ${p.done_at ? html`<small class="muted">${fmtDate(p.done_at)} · ${p.done_by_name || '—'}${p.notes ? ` · ${p.notes}` : ''}</small>` : ''}</li>`)}</ul>
-      <p class="hint">As etapas são configuráveis em Configurações › Listas › Etapas do pós-venda. "Cadastro de estratégia de lance" é marcado automaticamente ao salvar a estratégia de um produto.</p>
+    <section class="card"><h3>Funil de pós-venda</h3>
+      ${c.relationship !== 'cliente' ? html`<p class="hint">Começa na confirmação da venda (cota alocada).</p>` : ''}
+      <div data-tl>${timelineList(c.post_sale, { w: w && c.relationship === 'cliente' })}</div>
+      <p class="hint">Prazos D+N a partir da confirmação da venda. A 1ª parcela é marcada pelo comprovante, a estratégia de lance ao salvá-la e o NPS quando o cliente responde; a indicação só é pedida para promotores.</p>
     </section>
     <section class="card"><div class="section-head"><h3>Pesquisa de satisfação (NPS)</h3>
         ${w && c.active !== 0 && !pending ? html`<button class="btn primary" data-act="nps-new">Gerar link da pesquisa</button>` : ''}</div>
@@ -873,7 +871,7 @@ export async function posvenda(box, c, reload) {
     ${c.contracts.length ? html`<div class="bid-grid">${c.contracts.map((k) => {
       const b = bidOf(k);
       return html`<div class="card inner">
-        <div class="section-head"><strong>${k.code}${k.contract_number ? ` · nº ${k.contract_number}` : ''}</strong>${w ? html`<button class="btn small" data-bid="${k.id}">${b ? 'Editar' : 'Cadastrar'} estratégia</button>` : ''}</div>
+        <div class="section-head"><strong>${k.sale_code ? `${k.sale_code} · ` : ''}${k.code}${k.contract_number ? ` · nº ${k.contract_number}` : ''}</strong>${w ? html`<button class="btn small" data-bid="${k.id}">${b ? 'Editar' : 'Cadastrar'} estratégia</button>` : ''}</div>
         <div class="kv">${kv('Categoria', catLabel(k))}${kv('Administradora', k.administrator)}${kv('Grupo / cota', `${k.group_code || '—'} / ${k.quota_code || '—'}`)}${kv('Crédito', fmtMoney(k.credit_value))}</div>
         <p>${bidSummary(b)}</p>
         ${b ? html`<p class="small muted">Atualizada em ${fmtDateTime(b.updated_at)} · ${b.updated_by_name || '—'}${b.notes ? ` · ${b.notes}` : ''}</p>` : ''}
@@ -885,15 +883,7 @@ export async function posvenda(box, c, reload) {
     ${c.referrals.length ? html`<ul class="opp-list">${c.referrals.map((r) => html`<li><a href="#/leads/${r.id}">${r.code} — ${r.name}</a> <small class="muted">${fmtDate(r.created_at)}</small></li>`)}</ul>` : empty('Este cliente ainda não indicou ninguém. Registre o "Indicado por" no cadastro do novo lead.')}
   </section>`);
   bindCopy(box);
-  on(box, 'change', '[data-ps]', async (e, cb) => {
-    try {
-      await post(`/api/cadastros/${c.id}/pos-venda`, { item: cb.dataset.ps, done: cb.checked });
-      reload();
-    } catch (ex) {
-      cb.checked = !cb.checked;
-      toastError(ex);
-    }
-  });
+  bindTimeline(box, c.id, () => c.post_sale, reload);
   on(box, 'click', '[data-act=nps-new]', async () => {
     let r = null;
     const ok = await modal({

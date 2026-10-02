@@ -4,6 +4,7 @@ import {
   html, raw, esc, modal, field, opts, toItems, userItems, productItems, state, toast, toastError, K, optLabel, fmtMoney, fmtDate,
   fmtDateTime, badge, $, $$, on, confirmDialog, can, stageById, table,
 } from './ui.js';
+import { qualFormFields, bindQualForm } from './qualification.js';
 
 const nav = (hash) => (location.hash = hash);
 
@@ -244,40 +245,17 @@ export function extractCustom(d) {
   return custom;
 }
 
-export function opportunityFields(o = {}, companyContacts = []) {
+export function opportunityFields(o = {}, companyContacts = [], kind = 'PF') {
   const ccItems = companyContacts.filter((c) => c.active !== 0).map((c) => ({ value: c.id, label: c.name }));
   return html`<div class="grid">
     ${field({ name: 'title', label: 'Título (opcional)', value: o.title, placeholder: 'ex.: Imóvel para moradia', full: true })}
-    <h4 class="full">Qualificação</h4>
-    ${field({ name: 'objective_type', label: 'Objetivo', type: 'select', options: opts('objetivo'), value: o.objective_type })}
-    ${field({ name: 'product_type', label: 'Produto', type: 'select', options: opts('tipo_produto'), value: o.product_type })}
-    ${field({ name: 'credit_purpose', label: 'Para que é o crédito', value: o.credit_purpose, placeholder: 'ex.: apartamento para morar', full: true })}
-    ${field({ name: 'financial_moment', label: 'Momento financeiro', type: 'select', options: opts('momento_financeiro'), value: o.financial_moment })}
-    ${field({ name: 'employment_type', label: 'Tipo de contratação', type: 'select', options: opts('tipo_contratacao'), value: o.employment_type })}
-    ${field({ name: 'has_fgts', label: 'Possui FGTS (PF)', type: 'select', options: opts('possui_fgts'), value: o.has_fgts })}
-    ${field({ name: 'decision_maker', label: 'Quem decide a compra', type: 'select', options: opts('decisor'), value: o.decision_maker })}
-    ${field({ name: 'existing_products', label: 'Já possui consórcio ou financiamento', type: 'select', options: opts('possui_produto'), value: o.existing_products })}
-    <div class="grid full existing-cons">${field({ name: 'existing_consortium_value', label: 'Consórcio atual: valor (R$)', type: 'money', value: o.existing_consortium_value })}${field({ name: 'existing_consortium_admin', label: 'Consórcio atual: administradora', value: o.existing_consortium_admin })}</div>
-    <div class="grid full existing-fin">${field({ name: 'existing_financing_balance', label: 'Financiamento: saldo devedor (R$)', type: 'money', value: o.existing_financing_balance })}${field({ name: 'existing_financing_cet', label: 'Financiamento: CET (% a.a.)', type: 'number', value: o.existing_financing_cet, step: '0.01' })}${field({ name: 'existing_financing_bank', label: 'Financiamento: banco', value: o.existing_financing_bank })}</div>
-    <h4 class="full">Condições desejadas</h4>
-    ${field({ name: 'product_id', label: 'Produto', type: 'select', options: productItems(), value: o.product_id })}
-    ${field({ name: 'credit_category', label: 'Categoria do crédito', type: 'select', options: opts('categoria_credito'), value: o.credit_category })}
-    ${field({ name: 'credit_value', label: 'Crédito desejado (R$)', type: 'money', value: o.credit_value, min: 0 })}
-    ${field({ name: 'term_months', label: 'Prazo de interesse (meses)', type: 'number', value: o.term_months, min: 1, step: 1 })}
-    ${field({ name: 'installment_max', label: 'Capacidade de parcela (R$/mês)', type: 'money', value: o.installment_max, min: 0 })}
-    ${field({ name: 'installment_min', label: 'Parcela mínima desejada (R$)', type: 'money', value: o.installment_min, min: 0 })}
-    ${field({ name: 'quotas', label: 'Quantidade de cotas', type: 'number', value: o.quotas, min: 1, step: 1 })}
-    ${field({ name: 'payment_modality', label: 'Modalidade de pagamento pretendida', type: 'select', options: opts('modalidade_pagamento'), value: o.payment_modality })}
-    ${field({ name: 'strategy', label: 'Estratégia', type: 'select', options: opts('estrategia'), value: o.strategy, help: 'A estratégia só é considerada recomendação após validação do consultor.' })}
-    ${field({ name: 'contemplation_type', label: 'Contemplação de interesse', type: 'select', options: opts('tipo_contemplacao'), value: o.contemplation_type })}
-    ${field({ name: 'bid_own_resources', label: 'Capital/reserva para lance (R$)', type: 'money', value: o.bid_own_resources, min: 0 })}
-    ${field({ name: 'fgts_available', label: 'FGTS disponível (R$)', type: 'money', value: o.fgts_available, min: 0, help: 'Somente PF.' })}
-    ${field({ name: 'embedded_bid_interest', label: 'Interesse em lance embutido', type: 'select', options: [{ value: 'sim', label: 'Sim' }, { value: 'nao', label: 'Não' }, { value: 'avaliar', label: 'Avaliar' }, { value: 'nao_se_aplica', label: 'Não se aplica / não permitido' }], value: o.embedded_bid_interest })}
-    ${field({ name: 'urgency', label: 'Prazo objetivo', type: 'select', options: opts('urgencia'), value: o.urgency })}
-    ${field({ name: 'priority', label: 'Prioridade', type: 'select', options: toItems(state.meta.constants.priorities), value: o.priority || 'media', allowEmpty: false })}
-    ${ccItems.length ? field({ name: 'company_contact_id', label: 'Contato da empresa', type: 'select', options: ccItems, value: o.company_contact_id }) : ''}
+    <p class="hint full">Em Lead e Tentativa de contato, busque o máximo destas respostas. O que ficar em branco pode ser completado depois da R1.</p>
+    ${qualFormFields(o, kind)}
+    <h4 class="full qual-form-title">Gestão do negócio<small>Responsável, prioridade interna e próxima ação.</small></h4>
+    ${field({ name: 'priority', label: 'Prioridade no funil', type: 'select', options: toItems(state.meta.constants.priorities), value: o.priority || 'media', allowEmpty: false })}
     ${field({ name: 'owner_id', label: 'Responsável', type: 'select', options: userItems(), value: o.owner_id || state.user.id, allowEmpty: false, disabled: !can.manage() })}
-    ${field({ name: 'objective', label: 'Objetivo declarado pelo lead', type: 'textarea', value: o.objective, full: true })}
+    ${ccItems.length ? field({ name: 'company_contact_id', label: 'Contato da empresa', type: 'select', options: ccItems, value: o.company_contact_id }) : ''}
+    ${field({ name: 'objective', label: 'Objetivo nas palavras do cliente', type: 'textarea', value: o.objective, full: true })}
     ${field({ name: 'qualification_criteria', label: 'Critério de qualificação', type: 'textarea', value: o.qualification_criteria, full: true })}
     ${field({ name: 'next_action', label: 'Próxima ação comercial', value: o.next_action })}
     ${field({ name: 'next_action_at', label: 'Data da próxima ação', type: 'datetime', value: o.next_action_at })}
@@ -289,15 +267,9 @@ export function opportunityForm(contact, opp) {
   return modal({
     title: opp ? `Editar ${opp.code}` : `Nova oportunidade — ${contact.name}`,
     wide: true,
-    body: opportunityFields(opp || { owner_id: contact.owner_id }, contact.company_contacts || []),
+    body: opportunityFields(opp || { owner_id: contact.owner_id }, contact.company_contacts || [], contact.kind),
     onMount(form) {
-      const sync = () => {
-        const v = form.existing_products.value;
-        $('.existing-cons', form).hidden = !['consorcio', 'ambos'].includes(v);
-        $('.existing-fin', form).hidden = !['financiamento', 'ambos'].includes(v);
-      };
-      form.existing_products.addEventListener('change', sync);
-      sync();
+      bindQualForm(form);
     },
     async onSubmit(d) {
       d.custom = extractCustom(d);
@@ -484,25 +456,112 @@ export function simulationForm(contact, { opportunity_id, simulation } = {}) {
 
 /* ------------------------- Propostas ------------------------- */
 
+const quotaList = (p) => {
+  try {
+    return p.quota_values ? JSON.parse(p.quota_values) : [];
+  } catch {
+    return [];
+  }
+};
+const pctTxt = (v, dec = 2) => (v == null || v === '' ? null : `${Number(v).toLocaleString('pt-BR', { maximumFractionDigits: dec })}%`);
+const ADHESION_OPTS = [{ value: 'sim', label: 'Sim' }, { value: 'nao', label: 'Não' }];
+const DEDUCTION_OPTS = [{ value: 'parcela', label: 'Reduz a parcela' }, { value: 'prazo', label: 'Reduz o prazo' }];
+
+/** Campos que o simulador de propostas usa nas características do plano: avisa o que falta na proposta. */
+export function proposalPlanGaps(p) {
+  const gaps = [];
+  if (p.admin_fee_pct == null) gaps.push('taxa de administração');
+  if (p.reserve_fund_pct == null) gaps.push('fundo de reserva');
+  if (!p.readjustment_index) gaps.push('índice de reajuste');
+  if (p.has_adhesion == null) gaps.push('adesão (sim ou não)');
+  if (p.has_adhesion === 1 && (p.adhesion_pct == null || !p.adhesion_months)) gaps.push('percentual e diluição da adesão');
+  if (p.payment_modality === 'parcela_reduzida' && p.reducer_pct == null) gaps.push('% do fator redutor');
+  if (!p.bid_deduction) gaps.push('abatimento do lance (parcela ou prazo)');
+  if (!p.contemplation_month) gaps.push('projeção de contemplação (mês)');
+  if (!p.quota_split_strategy) gaps.push('divisão das cotas');
+  return gaps;
+}
+
 function proposalFields(p = {}, simulations = []) {
+  const quotas = quotaList(p);
   return html`<div class="grid">
+    <h4 class="full qual-form-title">Identificação<small>Plano, crédito e simulação de origem.</small></h4>
     ${simulations.length ? field({ name: 'simulation_id', label: 'Baseada na simulação', type: 'select', options: simulations.map((s) => ({ value: s.id, label: `${s.code} v${s.version} — ${fmtMoney(s.credit_value)}` })), value: p.simulation_id, placeholder: 'Nenhuma', help: 'Campos vazios são preenchidos com os dados da simulação.' }) : ''}
-    ${field({ name: 'product_id', label: 'Plano', type: 'select', options: productItems(), value: p.product_id, help: 'O crédito precisa respeitar a faixa e o incremento do plano.' })}
+    ${field({ name: 'product_id', label: 'Plano', type: 'select', options: productItems(), value: p.product_id, help: 'Taxas, adesão e prazo do plano entram automaticamente quando ficam em branco.' })}
     ${field({ name: 'category', label: 'Categoria', type: 'select', options: opts('categoria_credito'), value: p.category })}
-    ${field({ name: 'credit_value', label: 'Crédito (R$)', type: 'money', value: p.credit_value })}
+    ${field({ name: 'credit_value', label: 'Crédito total (R$)', type: 'money', value: p.credit_value })}
+    ${field({ name: 'valid_until', label: 'Validade', type: 'date', value: p.valid_until })}
+    ${field({ name: 'link_url', label: 'Link ou arquivo da proposta (URL)', type: 'url', value: p.link_url, full: true })}
+    <h4 class="full qual-form-title">Características do plano<small>Os mesmos campos do simulador de propostas.</small></h4>
     ${field({ name: 'term_months', label: 'Prazo (meses)', type: 'number', value: p.term_months })}
     ${field({ name: 'initial_installment', label: 'Parcela inicial estimada (R$)', type: 'money', value: p.initial_installment })}
     ${field({ name: 'payment_modality', label: 'Modalidade de pagamento', type: 'select', options: opts('modalidade_pagamento'), value: p.payment_modality })}
-    ${field({ name: 'strategy', label: 'Estratégia apresentada', type: 'select', options: opts('estrategia'), value: p.strategy })}
+    ${field({ name: 'reducer_pct', label: 'Fator redutor (% de redução)', type: 'number', value: p.reducer_pct, step: '0.01', help: 'Só para parcela reduzida.' })}
     ${field({ name: 'admin_fee_pct', label: 'Taxa de administração (%)', type: 'number', value: p.admin_fee_pct, step: '0.01' })}
     ${field({ name: 'reserve_fund_pct', label: 'Fundo de reserva (%)', type: 'number', value: p.reserve_fund_pct, step: '0.01' })}
-    ${field({ name: 'insurance_pct', label: 'Seguro (%)', type: 'number', value: p.insurance_pct, step: '0.0001' })}
+    ${field({ name: 'insurance_pct', label: 'Seguro prestamista (% a.m.)', type: 'number', value: p.insurance_pct, step: '0.0001' })}
+    ${field({ name: 'has_adhesion', label: 'Tem adesão?', type: 'select', options: ADHESION_OPTS, value: p.has_adhesion === 1 ? 'sim' : p.has_adhesion === 0 ? 'nao' : '' })}
+    <div class="cond" data-if="has_adhesion=sim">${field({ name: 'adhesion_pct', label: 'Adesão (% do crédito)', type: 'number', value: p.adhesion_pct, step: '0.01' })}${field({ name: 'adhesion_months', label: 'Adesão diluída em (vezes)', type: 'number', value: p.adhesion_months, min: 1, step: 1 })}</div>
     ${field({ name: 'readjustment_index', label: 'Índice de reajuste', type: 'select', options: opts('indice_reajuste'), value: p.readjustment_index })}
-    ${field({ name: 'valid_until', label: 'Validade', type: 'date', value: p.valid_until })}
+    ${field({ name: 'readjustment_rate', label: 'Taxa estimada do índice (% a.a.)', type: 'number', value: p.readjustment_rate, step: '0.01' })}
+    ${field({ name: 'embedded_bid_pct', label: 'Lance embutido (% do crédito)', type: 'number', value: p.embedded_bid_pct, step: '0.01' })}
+    ${field({ name: 'bid_deduction', label: 'Abatimento do lance', type: 'select', options: DEDUCTION_OPTS, value: p.bid_deduction })}
+    ${field({ name: 'contemplation_month', label: 'Projeção de contemplação (mês)', type: 'number', value: p.contemplation_month, min: 1, step: 1 })}
     ${field({ name: 'other_costs', label: 'Outros custos considerados', type: 'textarea', value: p.other_costs, full: true })}
     ${field({ name: 'readjustment_assumptions', label: 'Premissas de reajuste', type: 'textarea', value: p.readjustment_assumptions, full: true })}
-    ${field({ name: 'link_url', label: 'Link ou arquivo da proposta (URL)', type: 'url', value: p.link_url, full: true })}
+    <h4 class="full qual-form-title">Estratégia e divisão das cotas<small>Como o crédito foi dividido e por quê.</small></h4>
+    ${field({ name: 'strategy', label: 'Estratégia apresentada', type: 'select', options: opts('estrategia'), value: p.strategy })}
+    ${field({ name: 'quota_split_strategy', label: 'Divisão das cotas', type: 'select', options: opts('divisao_cotas'), value: p.quota_split_strategy })}
+    ${field({ name: 'quotas', label: 'Quantidade de cotas', type: 'number', value: p.quotas, min: 1, step: 1 })}
+    ${field({ name: 'quota_values', label: 'Crédito de cada cota (R$, separados por ;)', value: quotas.join('; '), placeholder: 'ex.: 250000; 250000; 250000; 250000', help: 'A soma precisa ser igual ao crédito total.' })}
+    ${field({ name: 'quota_split_notes', label: 'Lógica da divisão', type: 'textarea', value: p.quota_split_notes, full: true, placeholder: 'ex.: 4 cotas de R$ 250 mil em grupos diferentes para aumentar as chances de contemplação por lance.' })}
     ${field({ name: 'notes', label: 'Observações', type: 'textarea', value: p.notes, full: true })}
+  </div>`;
+}
+
+/** Visão da proposta em blocos (somente leitura). */
+function proposalBlocks(p) {
+  const row = (label, v, full) => html`<div class="${full ? 'full' : ''}"><dt>${label}</dt><dd>${v == null || v === '' ? html`<span class="muted">—</span>` : v}</dd></div>`;
+  const quotas = quotaList(p);
+  return html`<div class="qual-blocks prop-blocks">
+    <div class="qual-block"><h4>Identificação</h4><dl>
+      ${row('Proposta', html`<strong>${p.code}</strong> · versão ${p.version}`)}
+      ${row('Status', badge(K('proposal_status', p.status), `st-${p.status}`))}
+      ${row('Cliente', html`<a href="#/leads/${p.contact_id}">${p.contact_code} — ${p.contact_name}</a>`)}
+      ${row('Negócio', html`<a href="#/oportunidades/${p.opportunity_id}">${p.opportunity_code}</a>`)}
+      ${row('Simulação', p.simulation_code)}
+      ${row('Responsável', p.owner_name)}
+      ${row('Criada em', fmtDateTime(p.created_at))}
+      ${row('Apresentada em', p.presented_at ? fmtDateTime(p.presented_at) : null)}
+      ${row('Validade', p.valid_until ? fmtDate(p.valid_until) : null)}
+      ${row('Link', p.link_url ? html`<a href="${p.link_url}" target="_blank" rel="noopener noreferrer">abrir a proposta</a>` : null)}
+    </dl></div>
+    <div class="qual-block"><h4>Características do plano</h4><dl>
+      ${row('Plano', p.product_name ? html`${p.product_name}${p.plan_code ? html` <small class="muted">${p.plan_code}</small>` : ''}` : null)}
+      ${row('Administradora', p.administrator_name)}
+      ${row('Categoria', optLabel('categoria_credito', p.category))}
+      ${row('Crédito total', fmtMoney(p.credit_value))}
+      ${row('Prazo', p.term_months ? `${p.term_months} meses` : null)}
+      ${row('Parcela inicial', p.initial_installment != null ? fmtMoney(p.initial_installment) : null)}
+      ${row('Modalidade', p.payment_modality ? html`${optLabel('modalidade_pagamento', p.payment_modality)}${p.reducer_pct != null ? ` · redutor de ${pctTxt(p.reducer_pct)}` : ''}` : null)}
+      ${row('Taxa de administração', pctTxt(p.admin_fee_pct))}
+      ${row('Fundo de reserva', pctTxt(p.reserve_fund_pct))}
+      ${row('Seguro prestamista', p.insurance_pct != null ? `${pctTxt(p.insurance_pct, 4)} a.m.` : null)}
+      ${row('Adesão', p.has_adhesion === 1 ? `Sim · ${pctTxt(p.adhesion_pct) || '% não informado'} em ${p.adhesion_months ? `${p.adhesion_months} vez(es)` : '— vezes'}` : p.has_adhesion === 0 ? 'Não' : null)}
+      ${row('Índice de reajuste', p.readjustment_index ? html`${optLabel('indice_reajuste', p.readjustment_index)}${p.readjustment_rate != null ? ` (${pctTxt(p.readjustment_rate)} a.a.)` : ''}` : null)}
+      ${row('Lance embutido', pctTxt(p.embedded_bid_pct))}
+      ${row('Abatimento do lance', p.bid_deduction ? DEDUCTION_OPTS.find((o) => o.value === p.bid_deduction)?.label : null)}
+      ${row('Projeção de contemplação', p.contemplation_month ? `mês ${p.contemplation_month}` : null)}
+      ${p.other_costs ? row('Outros custos', p.other_costs, true) : ''}
+      ${p.readjustment_assumptions ? row('Premissas de reajuste', p.readjustment_assumptions, true) : ''}
+    </dl></div>
+    <div class="qual-block"><h4>Estratégia e divisão das cotas</h4><dl>
+      ${row('Estratégia', optLabel('estrategia', p.strategy))}
+      ${row('Quantidade de cotas', p.quotas)}
+      ${row('Divisão', optLabel('divisao_cotas', p.quota_split_strategy))}
+      ${quotas.length ? row('Cotas', html`<span class="quota-chips">${quotas.map((v, i) => html`<span class="chip-sm">${i + 1}ª ${fmtMoney(v)}</span>`)}</span>`, true) : ''}
+      ${row('Lógica da divisão', p.quota_split_notes, true)}
+    </dl></div>
   </div>`;
 }
 
@@ -510,8 +569,11 @@ export function proposalForm(opp, simulations = [], { simulation_id } = {}) {
   return modal({
     title: `Nova proposta — ${opp.code}`,
     wide: true,
-    body: html`${proposalFields({ simulation_id, product_id: opp.product_id }, simulations)}
+    body: html`${proposalFields({ simulation_id, product_id: opp.product_id, quotas: opp.quotas, strategy: opp.strategy, credit_value: opp.credit_value, payment_modality: opp.payment_modality }, simulations)}
       ${field({ name: 'status', label: 'Salvar como', type: 'select', options: [{ value: 'rascunho', label: 'Rascunho' }, { value: 'apresentada', label: 'Apresentada ao cliente' }], value: 'rascunho', allowEmpty: false })}`,
+    onMount(form) {
+      bindQualForm(form);
+    },
     async onSubmit(d) {
       const r = await post('/api/propostas', { ...d, opportunity_id: opp.id });
       toast(`Proposta ${r.code} criada.`);
@@ -525,34 +587,14 @@ export async function proposalDetail(id, onChange) {
   const editable = p.status === 'rascunho' && can.write();
   const final = ['aprovada', 'recusada', 'expirada', 'substituida'].includes(p.status);
   const nextStatuses = ['rascunho', 'apresentada', 'em_analise', 'aprovada', 'recusada', 'expirada'].filter((s) => s !== p.status);
+  const gaps = proposalPlanGaps(p);
   const body = html`
-    <div class="kv">
-      <div><span>Proposta</span><strong>${p.code} · versão ${p.version}</strong></div>
-      <div><span>Status</span>${badge(K('proposal_status', p.status), `st-${p.status}`)}</div>
-      <div><span>Cliente</span><a href="#/leads/${p.contact_id}">${p.contact_code} — ${p.contact_name}</a></div>
-      <div><span>Oportunidade</span><a href="#/oportunidades/${p.opportunity_id}">${p.opportunity_code}</a></div>
-      <div><span>Simulação</span>${p.simulation_code || '—'}</div>
-      <div><span>Responsável</span>${p.owner_name || '—'}</div>
-      <div><span>Criada em</span>${fmtDateTime(p.created_at)}</div>
-      <div><span>Apresentada em</span>${fmtDateTime(p.presented_at)}</div>
-    </div>
-    ${editable ? proposalFields(p) : html`<div class="kv">
-      <div><span>Produto</span>${p.product_name || '—'}</div>
-      <div><span>Crédito</span>${fmtMoney(p.credit_value)}</div>
-      <div><span>Prazo</span>${p.term_months ? `${p.term_months} meses` : '—'}</div>
-      <div><span>Parcela inicial</span>${fmtMoney(p.initial_installment)}</div>
-      <div><span>Modalidade</span>${optLabel('modalidade_pagamento', p.payment_modality)}</div>
-      <div><span>Estratégia</span>${optLabel('estrategia', p.strategy)}</div>
-      <div><span>Taxa de administração</span>${p.admin_fee_pct != null ? `${p.admin_fee_pct}%` : '—'}</div>
-      <div><span>Fundo de reserva</span>${p.reserve_fund_pct != null ? `${p.reserve_fund_pct}%` : '—'}</div>
-      <div><span>Seguro</span>${p.insurance_pct != null ? `${p.insurance_pct}%` : '—'}</div>
-      <div><span>Reajuste</span>${optLabel('indice_reajuste', p.readjustment_index)}</div>
-      <div><span>Validade</span>${fmtDate(p.valid_until)}</div>
-      <div><span>Link</span>${p.link_url ? html`<a href="${p.link_url}" target="_blank" rel="noopener noreferrer">abrir</a>` : '—'}</div>
-      <div class="full"><span>Outros custos</span>${p.other_costs || '—'}</div>
-      <div class="full"><span>Premissas de reajuste</span>${p.readjustment_assumptions || '—'}</div>
-      <div class="full"><span>Observações</span>${p.notes || '—'}</div>
-    </div>`}
+    ${editable ? proposalFields(p) : proposalBlocks(p)}
+    ${!editable && gaps.length && !final ? html`<div class="alert warn small">Conferência com o simulador: falta informar ${gaps.join(', ')}. Para completar, crie uma nova versão.</div>` : ''}
+    ${!editable && can.write() ? html`<div class="prop-notes"><label for="prop-notes"><strong>Observações</strong> <small class="muted">ficam salvas na proposta e no histórico</small></label>
+      <textarea id="prop-notes" name="notes_edit" rows="3" placeholder="Inclua uma informação sobre esta proposta">${p.notes || ''}</textarea>
+      <div class="inline-actions"><button type="button" class="btn small" data-act="save-notes">Salvar observação</button></div></div>`
+      : !editable && p.notes ? html`<p class="small"><strong>Observações:</strong> ${p.notes}</p>` : ''}
     ${p.accepted_at ? html`<div class="alert">Aceite em ${fmtDate(p.accepted_at)} via ${optLabel('canal_aceite', p.accepted_channel)}. Próxima etapa: <a href="#/prevenda">pré-venda</a>.</div>` : ''}
     ${['apresentada', 'em_analise'].includes(p.status) && can.write() ? html`<div class="inline-actions"><label>Retorno do cliente <select name="response"><option value="">—</option>${opts('resposta_proposta').map((o) => html`<option value="${o.value}" ${p.last_response === o.value ? raw('selected') : ''}>${o.label}</option>`)}</select></label><button type="button" class="btn small" data-act="response">Registrar retorno</button>${p.last_response_at ? html`<small class="muted">último: ${fmtDateTime(p.last_response_at)}</small>` : ''}</div>` : ''}
     ${p.refusal_reason ? html`<div class="alert warn">Recusada${p.refused_at ? ` em ${fmtDate(p.refused_at)}` : ''}: <strong>${optLabel('motivo_recusa_proposta', p.refusal_reason)}</strong>.${p.refusal_notes ? ` ${p.refusal_notes}` : ''}${p.retake_at ? html`<br>Retomar contato em ${fmtDate(p.retake_at)}.` : ''}</div>` : ''}
@@ -565,10 +607,11 @@ export async function proposalDetail(id, onChange) {
       <label class="st-extra st-recusada" hidden>Retomar contato em <input type="date" name="retake_at"></label>
       <button type="button" class="btn small" data-act="apply-status">Aplicar</button></div>` : ''}
     ${p.status !== 'substituida' && can.write() ? html`<p><button type="button" class="btn small" data-act="new-version">Criar nova versão</button> <small class="muted">A versão atual será marcada como substituída (se ainda estiver em aberto) e preservada no histórico.</small></p>` : ''}
-    <h3>Versões</h3>
+    <details class="prop-history"><summary>Versões e histórico de alterações</summary>
+    <h4>Versões</h4>
     <ul class="versions">${p.versions.map((v) => html`<li class="${v.current ? 'current' : ''}"><a href="#" data-proposal="${v.id}">${v.code} · v${v.version}</a> — ${K('proposal_status', v.status)} · ${fmtDateTime(v.created_at)}</li>`)}</ul>
-    <h3>Histórico de alterações</h3>
-    <ul class="audit">${p.history.map((h) => html`<li>${fmtDateTime(h.created_at)} · ${h.user_name || 'Sistema'} · ${h.action}${h.changes ? html` <code>${JSON.stringify(h.changes)}</code>` : ''}</li>`)}</ul>`;
+    <h4>Histórico de alterações</h4>
+    <ul class="audit">${p.history.map((h) => html`<li>${fmtDateTime(h.created_at)} · ${h.user_name || 'Sistema'} · ${h.action}${h.changes ? html` <code>${JSON.stringify(h.changes)}</code>` : ''}</li>`)}</ul></details>`;
   return modal({
     title: `Proposta ${p.code}`,
     wide: true,
@@ -584,6 +627,16 @@ export async function proposalDetail(id, onChange) {
         }
       : undefined,
     onMount(form, close) {
+      if (editable) bindQualForm(form);
+      on(form, 'click', '[data-act=save-notes]', async () => {
+        try {
+          await patch(`/api/propostas/${p.id}`, { notes: form.notes_edit.value });
+          toast('Observação salva.');
+          onChange?.();
+        } catch (e) {
+          toastError(e);
+        }
+      });
       form.new_status?.addEventListener('change', () => {
         $$('.st-extra', form).forEach((el) => (el.hidden = !el.classList.contains(`st-${form.new_status.value}`)));
       });

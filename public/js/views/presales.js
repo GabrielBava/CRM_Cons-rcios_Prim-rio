@@ -1,6 +1,10 @@
-// 9. Pré-venda: do aceite da proposta ao boleto. Link de cadastro para o cliente, conferência, termo de adesão, contrato e boleto.
+// 9. Pré-venda: do aceite da proposta ao comprovante de pagamento. Link de cadastro, conferência, termo de adesão com as cotas
+// (grupo, cota e contrato), contrato assinado, pagamento (Pix ou boleto) e comprovante, que leva a venda para Vendas.
 import { get, post } from '../api.js';
-import { html, raw, render, $, on, state, selectOptions, userItems, table, badge, fmtMoney, fmtDate, fmtDateTime, relTime, modal, field, toast, toastError, empty, can, opts } from '../ui.js';
+import { html, raw, render, $, $$, on, state, selectOptions, userItems, table, badge, fmtMoney, fmtDate, fmtDateTime, relTime, modal, field, toast, toastError, empty, can, opts } from '../ui.js';
+import { fileToBase64 } from './record-tabs.js';
+
+const PAY = { pix: 'Pix', boleto: 'Boleto' };
 
 let saved = { status: 'ativas' };
 const base = () => location.href.split('#')[0];
@@ -32,7 +36,7 @@ export async function show(view) {
         <div class="kpi"><div class="kpi-label">Enviadas ao cliente</div><div class="kpi-value">${s.enviadas}</div></div>
         <div class="kpi"><div class="kpi-label">Acessadas pelo cliente</div><div class="kpi-value">${s.acessadas}</div></div>
         <div class="kpi"><div class="kpi-label">Concluídas pelo cliente</div><div class="kpi-value">${s.concluidas_cliente}</div></div>
-        <div class="kpi"><div class="kpi-label">Em adesão (termo → boleto)</div><div class="kpi-value">${s.em_andamento}</div></div>
+        <div class="kpi"><div class="kpi-label">Em adesão (conferência → comprovante)</div><div class="kpi-value">${s.em_andamento}</div><div class="kpi-sub">${s.aguardando_pagamento} aguardando pagamento</div></div>
         <div class="kpi ${s.paradas ? 'alert-kpi' : ''}"><div class="kpi-label">Paradas</div><div class="kpi-value">${s.paradas}</div><div class="kpi-sub">sem avanço há mais de ${state.meta.settings.presale_alert_hours} h</div></div>
       </div>
       <form class="filters" data-f>
@@ -45,16 +49,16 @@ export async function show(view) {
           { label: 'Pré-venda', render: (r) => html`<a href="#" data-open="${r.id}"><strong>${r.code}</strong></a>${r.first_sale ? '' : html`<br><small class="muted">cliente já cadastrado</small>`}` },
           { label: 'Cliente', render: (r) => html`<a href="#/leads/${r.contact_id}/prevenda">${r.contact_name}</a><br><small>${r.contact_code}${r.proposal_code ? ` · ${r.proposal_code}` : ''}</small>` },
           { label: 'Crédito', render: (r) => html`${fmtMoney(r.credit_value)}${r.plan_name ? html`<br><small>${r.plan_name}</small>` : ''}`, cls: 'num' },
-          { label: 'Andamento', render: (r) => html`${miniSteps(d.steps, r)}<small>${r.status_label}</small>${r.stale ? html` ${badge('Parada', 'danger')}` : ''}` },
+          { label: 'Andamento', render: (r) => html`${miniSteps(r.steps || d.steps, r)}<small>${r.status_label}</small>${r.stale ? html` ${badge('Parada', 'danger')}` : ''}` },
           { label: 'Link do cliente', render: (r) => html`${r.sent_at ? html`enviado ${relTime(r.sent_at)}<br>` : r.first_sale ? html`<span class="warn-text">não enviado</span><br>` : ''}<small>${r.accessed_at ? `acessado ${fmtDateTime(r.accessed_at)}` : r.first_sale ? 'não acessado' : '—'}${r.completed_at && r.first_sale ? ` · concluído ${fmtDate(r.completed_at)}` : ''}</small>` },
           { label: 'Especialista', render: (r) => r.owner_name || '—' },
-          { label: 'Venda', render: (r) => (r.sale_code ? html`<a href="#/vendas">${r.sale_code}</a><br><small>${r.sale_status === 'confirmada' ? 'confirmada' : r.sale_status === 'cancelada' ? 'cancelada' : 'aguardando pagamento'}</small>` : '—') },
+          { label: 'Venda', render: (r) => (r.sale_code ? html`<a href="#/vendas">${r.sale_code}</a><br><small>${r.sale_status === 'confirmada' ? 'confirmada' : r.sale_status === 'cancelada' ? 'cancelada' : r.sale_status === 'aguardando_pagamento' ? 'aguardando pagamento' : 'aguardando alocação'}</small>` : '—') },
           { label: '', render: (r) => html`<button class="btn small ${r.stale ? 'primary' : ''}" data-open="${r.id}">Abrir</button>` },
         ],
         d.rows,
         { emptyMsg: 'Nenhuma pré-venda com esses filtros.' },
       )}</section>
-      <p class="hint">Se o cliente não acessar o link ou não concluir o cadastro em ${state.meta.settings.presale_alert_hours} horas, o CRM cria uma tarefa urgente "Revisar pré-venda" para o especialista.</p>
+      <p class="hint">Fluxo: link → acesso → ficha concluída → conferência da equipe → termo de adesão (grupo, cota e contrato de cada cota) → ${state.meta.settings.presale_payment_first ? 'pagamento (Pix ou boleto) → comprovante → contrato assinado' : 'contrato assinado → pagamento (Pix ou boleto) → comprovante'}. Concluída a pré-venda, a venda vai para <a href="#/vendas">Vendas</a> e aguarda a alocação da cota pela administradora. Se o cliente não acessar o link ou não concluir o cadastro em ${state.meta.settings.presale_alert_hours} horas, o CRM cria uma tarefa urgente "Revisar pré-venda".</p>
     </div>`);
     const f = $('[data-f]', view);
     f.addEventListener('change', () => ((saved = Object.fromEntries(new FormData(f).entries())), load()));
@@ -104,42 +108,94 @@ async function newPreSale() {
   });
 }
 
-/** Formulário da próxima etapa, conforme a situação atual. */
+/** Editor das cotas do termo de adesão: crédito, grupo, cota e nº do contrato; botão para adicionar cotas. */
+const quotaRow = (q = {}, i = 0) => html`<div class="quota-row" data-quota>
+  <span class="quota-n">${i + 1}ª</span>
+  <label>Crédito (R$)<input type="number" step="0.01" min="0" data-q="credit_value" value="${q.credit_value ?? ''}" required></label>
+  <label>Grupo<input data-q="group_code" value="${q.group_code ?? ''}" required></label>
+  <label>Cota<input data-q="quota_code" value="${q.quota_code ?? ''}" required></label>
+  <label>Nº do contrato<input data-q="contract_number" value="${q.contract_number ?? ''}" required></label>
+  <button type="button" class="icon" data-q-del aria-label="Remover esta cota">×</button></div>`;
+export const quotaEditor = (quotas) => html`<div class="quota-editor full">
+  <div class="quota-list">${(quotas.length ? quotas : [{}]).map((q, i) => quotaRow(q, i))}</div>
+  <div class="inline-actions"><button type="button" class="btn small" data-q-add>+ Adicionar cota</button><span class="small muted" data-q-total></span></div></div>`;
+export function bindQuotaEditor(form) {
+  const list = $('.quota-list', form);
+  if (!list) return;
+  const renumber = () => {
+    $$('[data-quota]', list).forEach((r, i) => ($('.quota-n', r).textContent = `${i + 1}ª`));
+    const vals = $$('[data-q=credit_value]', list).map((x) => Number(x.value) || 0);
+    $('[data-q-total]', form).textContent = `${vals.length} cota(s) · total ${fmtMoney(vals.reduce((t, v) => t + v, 0))}`;
+  };
+  on(form, 'click', '[data-q-add]', () => {
+    const last = $$('[data-quota]', list).pop();
+    const tmp = document.createElement('div');
+    tmp.innerHTML = String(quotaRow({ credit_value: last ? $('[data-q=credit_value]', last).value : '', group_code: last ? $('[data-q=group_code]', last).value : '' }, 0));
+    list.appendChild(tmp.firstElementChild);
+    renumber();
+  });
+  on(form, 'click', '[data-q-del]', (e, b) => {
+    if ($$('[data-quota]', list).length > 1) b.closest('[data-quota]').remove();
+    renumber();
+  });
+  list.addEventListener('input', renumber);
+  renumber();
+}
+export const readQuotas = (form) => $$('[data-quota]', form).map((r) => Object.fromEntries($$('[data-q]', r).map((x) => [x.dataset.q, x.value])));
+
+/** Formulário da próxima etapa, conforme a situação atual e a ordem da pré-venda. */
 function nextStepForm(ps) {
   const plans = state.meta.products.filter((p) => p.active);
-  switch (ps.status) {
-    case 'link_gerado':
-    case 'acessado':
-    case 'preenchido':
+  const steps = ps.steps || [];
+  const idx = Math.max(ps.step, 2);
+  const nextKey = ['cancelada', 'concluida'].includes(ps.status) ? null : steps[idx + 1]?.[0];
+  const today = new Date().toISOString().slice(0, 10);
+  switch (nextKey) {
+    case 'conferido':
       return {
         step: 'conferido',
         label: 'Marcar como conferido',
         body: html`<p class="small">${ps.status === 'preenchido' ? 'O cliente concluiu o cadastro.' : 'O cliente ainda não concluiu o cadastro pelo link.'} Confira dados e documentos (aprovar os anexos em Documentos) antes de seguir para o termo de adesão.</p>`,
       };
-    case 'conferido':
+    case 'termo_adesao':
       return {
         step: 'termo_adesao',
-        label: 'Registrar termo de adesão',
-        body: html`<p class="small">Com os dados conferidos, preencha o termo de adesão no portal da administradora e registre aqui.</p><div class="grid">
+        label: 'Registrar o termo de adesão',
+        body: html`<p class="small">Gere o termo de adesão no portal da administradora e informe aqui o grupo, a cota e o nº do contrato de cada cota. Se a proposta tem mais de uma cota (ex.: 4 cotas de R$ 250 mil), cadastre todas: cada uma vira um produto do cliente, com o mesmo ID de venda.</p><div class="grid">
           ${field({ name: 'plan_id', label: 'Plano', type: 'select', options: plans.map((p) => ({ value: p.id, label: `${p.name}${p.administrator ? ` · ${p.administrator}` : ''}` })), value: ps.plan_id, required: true, full: true })}
-          ${field({ name: 'credit_value', label: 'Crédito (R$)', type: 'money', value: ps.credit_value, required: true })}
+          ${field({ name: 'adhesion_number', label: 'Nº da proposta de adesão', value: ps.adhesion_number })}
+          ${field({ name: 'adhesion_at', label: 'Data da adesão', type: 'date', value: today })}
           ${field({ name: 'term_months', label: 'Prazo (meses)', type: 'number', value: ps.term_months })}
-          ${field({ name: 'installment_value', label: 'Parcela (R$)', type: 'money', value: ps.installment_value })}
-          ${field({ name: 'adhesion_number', label: 'Nº da proposta/adesão na administradora', value: ps.adhesion_number })}
-          ${field({ name: 'adhesion_at', label: 'Data da adesão', type: 'date', value: new Date().toISOString().slice(0, 10) })}
+          ${field({ name: 'installment_value', label: 'Parcela total (R$)', type: 'money', value: ps.installment_value })}
+          <h4 class="full">Cotas</h4>
+          ${quotaEditor(ps.quotas?.length ? ps.quotas : ps.suggested_quotas?.length ? ps.suggested_quotas : [{ credit_value: ps.credit_value }])}
           <p class="small muted full credit-hint"></p></div>`,
       };
-    case 'termo_adesao':
-      return { step: 'contrato_enviado', label: 'Contrato enviado ao cliente', body: field({ name: 'date', label: 'Data do envio', type: 'date', value: new Date().toISOString().slice(0, 10) }) };
-    case 'contrato_enviado':
-      return { step: 'contrato_assinado', label: 'Contrato assinado', body: field({ name: 'date', label: 'Data da assinatura', type: 'date', value: new Date().toISOString().slice(0, 10) }) };
     case 'contrato_assinado':
       return {
-        step: 'boleto_emitido',
-        label: 'Registrar boleto e criar a venda',
-        body: html`<p class="small">Com o boleto emitido, a venda é registrada em Vendas com o status "aguardando pagamento".</p><div class="grid">
-          ${field({ name: 'boleto_value', label: 'Valor do boleto (R$)', type: 'money', value: ps.installment_value, required: true })}
-          ${field({ name: 'boleto_due', label: 'Vencimento', type: 'date', required: true })}</div>`,
+        step: 'contrato_assinado',
+        label: 'Contrato assinado',
+        body: html`<p class="small">O cliente assinou ${ps.quotas?.length > 1 ? `os ${ps.quotas.length} contratos` : 'o contrato'} da administradora.</p><div class="grid">
+          ${field({ name: 'date', label: 'Data da assinatura', type: 'date', value: today, required: true })}
+          ${field({ name: 'signed_via', label: 'Assinatura', type: 'select', options: [{ value: 'digital', label: 'Digital' }, { value: 'fisica', label: 'Física' }], value: 'digital', allowEmpty: false })}</div>`,
+      };
+    case 'pagamento_enviado':
+      return {
+        step: 'pagamento_enviado',
+        label: 'Registrar o pagamento enviado',
+        body: html`<p class="small">Envie ao cliente o Pix ou o boleto da 1ª parcela.</p><div class="grid">
+          ${field({ name: 'payment_method', label: 'Forma de pagamento', type: 'select', options: [{ value: 'boleto', label: 'Boleto' }, { value: 'pix', label: 'Pix' }], value: 'boleto', allowEmpty: false })}
+          ${field({ name: 'boleto_value', label: 'Valor (R$)', type: 'money', value: ps.installment_value, required: true })}
+          ${field({ name: 'boleto_due', label: 'Vencimento', type: 'date', value: today })}</div>`,
+      };
+    case 'pagamento_comprovado':
+      return {
+        step: 'pagamento_comprovado',
+        file: true,
+        label: 'Anexar o comprovante',
+        body: html`<p class="small">${PAY[ps.payment_method] || 'Pagamento'} de ${fmtMoney(ps.boleto_value)}${ps.boleto_due ? ` com vencimento em ${fmtDate(ps.boleto_due)}` : ''}. ${steps[steps.length - 2]?.[0] === 'pagamento_comprovado' ? 'Com o comprovante, a pré-venda é concluída e a venda vai para Vendas, aguardando a alocação da cota.' : ''}</p><div class="grid">
+          ${field({ name: 'payment_date', label: 'Data do pagamento', type: 'date', value: today, required: true })}
+          <div class="field"><label>Comprovante de pagamento <span class="req">*</span></label><input type="file" name="file" required accept=".pdf,.jpg,.jpeg,.png,.webp,.heic"></div></div>`,
       };
     default:
       return null;
@@ -164,7 +220,8 @@ async function openPreSale(id, reload) {
         <div><span>Plano</span>${ps.plan_name ? `${ps.plan_name}${ps.administrator_name ? ` · ${ps.administrator_name}` : ''}` : '—'}</div>
         <div><span>Crédito</span>${fmtMoney(ps.credit_value)}</div>
         ${ps.adhesion_number ? html`<div><span>Nº da adesão</span>${ps.adhesion_number}</div>` : ''}
-        ${ps.boleto_due ? html`<div><span>Boleto</span>${fmtMoney(ps.boleto_value)} · vence ${fmtDate(ps.boleto_due)}</div>` : ''}
+        ${ps.boleto_value ? html`<div><span>Pagamento</span>${PAY[ps.payment_method] || 'Boleto'} · ${fmtMoney(ps.boleto_value)}${ps.boleto_due ? ` · vence ${fmtDate(ps.boleto_due)}` : ''}${ps.payment_date ? html`<br><small>pago em ${fmtDate(ps.payment_date)}${ps.proof_by_name ? ` · comprovante anexado por ${ps.proof_by_name}` : ''}</small>` : ''}</div>` : ''}
+        ${ps.contract_signed_at ? html`<div><span>Contrato assinado</span>${fmtDate(ps.contract_signed_at)}${ps.signed_via ? ` · ${ps.signed_via === 'fisica' ? 'física' : 'digital'}` : ''}</div>` : ''}
         ${ps.sale_code ? html`<div><span>Venda</span><a href="#/vendas">${ps.sale_code}</a></div>` : ''}
       </div>
       ${ps.link_url && ps.first_sale && ['link_gerado', 'acessado', 'preenchido'].includes(ps.status) ? html`<section class="card inner"><h4>Link do cadastro para o cliente</h4>
@@ -177,19 +234,44 @@ async function openPreSale(id, reload) {
         </div>
         <pre class="code msg-preview">${msg?.text || ''}</pre>
         <p class="hint">O envio automático por e-mail (sem abrir o seu programa de e-mail) é uma integração pendente: depende de configurar um serviço de envio (SMTP).</p></section>` : ''}
-      ${missing.length && !['concluida', 'cancelada', 'boleto_emitido'].includes(ps.status) ? html`<div class="alert warn"><strong>Pendências da ficha (${missing.length}):</strong> ${missing.slice(0, 8).map((m) => m.label).join('; ')}${missing.length > 8 ? '…' : ''}</div>` : ''}
+      ${ps.quotas?.length ? html`<section class="card inner"><div class="section-head"><h4>Cotas do termo de adesão (${ps.quotas.length})</h4>${can.write() && ps.step >= 4 && !['concluida', 'cancelada'].includes(ps.status) ? html`<button type="button" class="btn small" data-edit-quotas>Editar cotas</button>` : ''}</div>
+        ${table([{ label: '', render: (q) => `${q.position}ª` }, { label: 'Grupo', render: (q) => q.group_code || '—' }, { label: 'Cota', render: (q) => q.quota_code || '—' }, { label: 'Nº do contrato', render: (q) => q.contract_number || '—' }, { label: 'Crédito', render: (q) => fmtMoney(q.credit_value), cls: 'num' }], ps.quotas)}</section>` : ''}
+      ${missing.length && !['concluida', 'cancelada', 'pagamento_comprovado'].includes(ps.status) ? html`<div class="alert warn"><strong>Pendências da ficha (${missing.length}):</strong> ${missing.slice(0, 8).map((m) => m.label).join('; ')}${missing.length > 8 ? '…' : ''}</div>` : ''}
       ${next ? html`<section class="card inner next-step"><h4>Próxima etapa: ${next.label}</h4>${next.body}</section>` : ''}
       <details><summary>Histórico</summary><ul class="audit">${ps.history.map((h) => html`<li>${fmtDateTime(h.created_at)} · ${h.user_name || 'Cliente/sistema'} · ${h.action}</li>`)}</ul></details>
       ${can.write() && !['concluida', 'cancelada'].includes(ps.status) ? html`<p><button type="button" class="btn small ghost" data-cancel>Cancelar pré-venda</button></p>` : ''}`,
     submitLabel: next?.label || 'Fechar',
     onSubmit: next
-      ? async (d) => {
-          const res = await post(`/api/pre-vendas/${ps.id}/avancar`, { step: next.step, ...d });
-          toast(res.sale ? `Venda ${res.sale.code} registrada, aguardando pagamento.` : 'Etapa registrada.');
+      ? async (d, form) => {
+          const body = { step: next.step, ...d };
+          if (next.step === 'termo_adesao') body.quotas = readQuotas(form);
+          if (next.file) {
+            const file = form.file.files[0];
+            if (!file) throw new Error('Anexe o comprovante de pagamento.');
+            if (file.size > 8 * 1024 * 1024) throw new Error('Arquivo maior que 8 MB.');
+            Object.assign(body, { file: undefined, filename: file.name, mime: file.type, content_base64: await fileToBase64(file) });
+          }
+          const res = await post(`/api/pre-vendas/${ps.id}/avancar`, body);
+          toast(res.sale ? `Pré-venda concluída: venda ${res.sale.code} em Vendas, aguardando a alocação da cota.` : 'Etapa registrada.');
           return 'changed';
         }
       : undefined,
     onMount(form, close) {
+      bindQuotaEditor(form);
+      on(form, 'click', '[data-edit-quotas]', async () => {
+        const ok = await modal({
+          title: `Cotas da pré-venda ${ps.code}`,
+          wide: true,
+          body: html`<div class="grid">${quotaEditor(ps.quotas)}</div>`,
+          onMount: bindQuotaEditor,
+          submitLabel: 'Salvar cotas',
+          onSubmit: async (d2, f2) => (await post(`/api/pre-vendas/${ps.id}/cotas`, { quotas: readQuotas(f2) }), true),
+        });
+        if (ok) {
+          toast('Cotas atualizadas.');
+          close('changed');
+        }
+      });
       on(form, 'click', '[data-sent]', (e, a) => post(`/api/pre-vendas/${ps.id}/enviado`, { via: a.dataset.sent }).catch(() => {}));
       on(form, 'click', '[data-copy-msg]', async () => {
         try {
@@ -215,13 +297,18 @@ async function openPreSale(id, reload) {
       const hint = form.querySelector('.credit-hint');
       if (hint && form.plan_id) {
         const check = async () => {
-          if (!form.plan_id.value || !form.credit_value.value) return (hint.textContent = '');
-          const r2 = await get(`/api/planos/${form.plan_id.value}/verificar-credito`, { valor: form.credit_value.value });
-          hint.textContent = r2.error || 'Crédito dentro da faixa do plano.';
-          hint.className = `small full credit-hint ${r2.error ? 'warn-text' : 'ok-text'}`;
+          const vals = $$('[data-q=credit_value]', form).map((x) => x.value).filter(Boolean);
+          if (!form.plan_id.value || !vals.length) return (hint.textContent = '');
+          const errs = [];
+          for (const v of [...new Set(vals)]) {
+            const r2 = await get(`/api/planos/${form.plan_id.value}/verificar-credito`, { valor: v });
+            if (r2.error) errs.push(`${fmtMoney(Number(v))}: ${r2.error}`);
+          }
+          hint.textContent = errs.length ? errs.join(' ') : 'Crédito de cada cota dentro da faixa do plano.';
+          hint.className = `small full credit-hint ${errs.length ? 'warn-text' : 'ok-text'}`;
         };
         form.plan_id.addEventListener('change', check);
-        form.credit_value.addEventListener('change', check);
+        form.addEventListener('change', (e) => e.target.dataset?.q === 'credit_value' && check());
         check();
       }
     },

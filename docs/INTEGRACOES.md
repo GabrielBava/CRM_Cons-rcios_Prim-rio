@@ -21,6 +21,7 @@ Situação nesta versão:
 | Meta Ads (Lead Ads) | **Conector direto não implementado.** Leads podem chegar pela API de entrada de leads por meio de uma ferramenta intermediária. |
 | WhatsApp | Endpoint de recebimento de eventos implementado, **somente para registro no histórico (não envia mensagens). Provedor não definido.** |
 | API de entrada de leads | Implementada (endpoint próprio do CRM). |
+| Qualificação pela R1 (transcrição) | Endpoint implementado no CRM. **O modelo que lê a transcrição da reunião ainda não existe: integração futura.** |
 
 ## Autenticação
 
@@ -152,6 +153,34 @@ O texto só é guardado se a opção "Armazenar o texto das mensagens" estiver a
 ## 5. Meta Ads
 
 O conector direto (webhooks da Graph API, verificação do app e busca do lead) **não foi implementado** e não pode ser marcado como "em teste" ou "ativo". Os campos para os IDs de lead, campanha, conjunto de anúncios e anúncio, e para as UTMs, já existem no cadastro (aba **Origens**), na importação CSV e na API de entrada de leads.
+
+## 6. Qualificação pela R1: `POST /api/oportunidades/:id/qualificacao`
+
+Base para o futuro modelo de R1: depois da reunião, um processo lê a transcrição, extrai as respostas da qualificação e envia ao CRM. **Só os campos vazios são preenchidos**; o que o especialista já preencheu fica como está. A chamada usa a sessão de um usuário com acesso ao negócio.
+
+```json
+{
+  "source": "r1_transcricao",
+  "fields": {
+    "objective_type": "aquisicao",
+    "credit_purpose_type": "moradia",
+    "credit_value": 400000,
+    "urgency": "medio",
+    "installment_min": 2500,
+    "installment_max": 3200,
+    "has_bid_resources": "sim",
+    "bid_own_resources": 50000,
+    "has_fgts": "sim",
+    "decision_maker": "conjuge",
+    "decision_notes": "Decide com a esposa, Ana.",
+    "had_consortium": "sim",
+    "existing_consortium_admin": "Administradora X",
+    "existing_consortium_value": 120000
+  }
+}
+```
+
+Resposta: `filled` (campos preenchidos agora), `ignored` (já tinham valor ou não são aceitos) e `qualification` (`filled` de `total` campos essenciais e o que ainda falta). Os valores das listas seguem os códigos de Configurações › Listas (objetivo, finalidade do crédito, urgência, decisor etc.). O preenchimento fica no histórico do negócio e na auditoria.
 
 ## Exportação para discadora
 

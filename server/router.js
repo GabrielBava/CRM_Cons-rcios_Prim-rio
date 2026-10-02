@@ -113,10 +113,12 @@ function createRouter(db) {
     return { ...ps, link_url: url, message: url ? sales.presaleMessage(db, ps, url) : null };
   });
   add('POST', '/api/pre-vendas/:id/enviado', ({ user, params, body }) => (sales.markSent(db, user, params.id, body), { ok: true }));
-  add('POST', '/api/pre-vendas/:id/avancar', ({ user, params, body }) => sales.advancePreSale(db, user, params.id, body));
+  add('POST', '/api/pre-vendas/:id/avancar', ({ user, params, body }) => sales.advancePreSale(db, user, params.id, body), { bodyLimit: 12e6 });
+  add('POST', '/api/pre-vendas/:id/cotas', ({ user, params, body }) => sales.savePreSaleQuotas(db, user, params.id, body));
   add('POST', '/api/pre-vendas/:id/cancelar', ({ user, params, body }) => (sales.cancelPreSale(db, user, params.id, body), { ok: true }));
   add('GET', '/api/vendas', ({ user, query }) => (perms.requireModule(user, 'vendas'), sales.listSales(db, user, query)));
   add('GET', '/api/vendas/:id', ({ user, params }) => sales.getSale(db, user, params.id));
+  add('POST', '/api/vendas/:id/alocacao', ({ user, params, body }) => sales.registerAllocation(db, user, params.id, body));
   add('POST', '/api/vendas/:id/confirmar', ({ user, params, body }) => sales.confirmSale(db, user, params.id, body), { bodyLimit: 12e6 });
   add('POST', '/api/vendas/:id/cancelar', ({ user, params, body }) => (sales.cancelPendingSale(db, user, params.id, body), { ok: true }));
   add('POST', '/api/vendas/:id/cancelamento', ({ user, params, body }) => sales.registerCancellation(db, user, params.id, body));
@@ -227,6 +229,8 @@ function createRouter(db) {
   add('POST', '/api/oportunidades/lote', ({ user, body }) => opps.bulkAction(db, user, body));
   add('POST', '/api/oportunidades/:id/etapa', ({ user, params, body }) => opps.moveStage(db, user, params.id, body));
   add('POST', '/api/oportunidades/:id/validar-estrategia', ({ user, params }) => (opps.validateStrategy(db, user, params.id), { ok: true }));
+  // Qualificação vinda de fora (ex.: transcrição da R1): completa só os campos vazios
+  add('POST', '/api/oportunidades/:id/qualificacao', ({ user, params, body }) => opps.fillQualification(db, user, params.id, body));
 
   /* ---------- Atividades e tarefas ---------- */
   add('GET', '/api/atividades', ({ user, query }) => activities.listActivities(db, user, query));
@@ -395,7 +399,9 @@ function createRouter(db) {
     }
     try {
       sales.presaleSweep(db);
+      sales.allocationSweep(db);
       sales.commissionSweep(db);
+      require('./services/postsale').timelineSweep(db);
     } catch (e) {
       console.error('Falha na rotina de pré-venda/comissões:', e.message);
     }

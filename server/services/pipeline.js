@@ -37,7 +37,7 @@ const RULES = {
     },
   },
   qualificacao: {
-    label: 'Qualificação: objetivo, crédito desejado, parcela possível e prazo',
+    label: 'Qualificação: objetivo, crédito desejado, parcela máxima e prioridade do crédito',
     hint: 'Preencha a qualificação em "4. Negócio".',
     check: (db, o) => !!(o.objective_type && o.credit_value && o.installment_max && o.urgency),
   },
@@ -54,9 +54,9 @@ const RULES = {
         db.prepare("SELECT 1 FROM activities WHERE contact_id = ? AND type = 'reuniao_realizada' LIMIT 1").get(c.id)),
   },
   dados_r1: {
-    label: 'Dados da R1: quem decide, momento financeiro e produtos que já possui',
-    hint: 'Complete em "4. Negócio" › Editar qualificação.',
-    check: (db, o) => !!(o.decision_maker && o.financial_moment && o.existing_products),
+    label: 'Dados da R1: fator decisor, momento financeiro e experiência com consórcio',
+    hint: 'Complete os blocos Capacidade e Decisão em "4. Negócio" › Editar qualificação.',
+    check: (db, o) => !!(o.decision_maker && o.financial_moment && (o.had_consortium || o.existing_products)),
   },
   proposta_apresentada: {
     label: 'Proposta registrada e enviada ao cliente',

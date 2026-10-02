@@ -22,8 +22,33 @@ const OPP_FIELDS = [
   'embedded_bid_interest', 'urgency', 'objective', 'qualification_criteria', 'next_action', 'next_action_at', 'owner_id', 'custom',
   'pause_reason', 'objective_type', 'product_type', 'credit_purpose', 'financial_moment', 'employment_type', 'has_fgts', 'decision_maker',
   'existing_products', 'existing_consortium_value', 'existing_consortium_admin', 'existing_financing_balance', 'existing_financing_cet',
-  'existing_financing_bank',
+  'existing_financing_bank', 'credit_purpose_type', 'has_bid_resources', 'had_consortium', 'has_financing', 'decision_notes',
 ];
+const YES_NO = ['sim', 'nao', 'nao_sabe'];
+/**
+ * Campos essenciais da qualificação (blocos necessidade, prazo, capacidade, estratégia e decisão).
+ * Base do indicador "qualificação X de Y" e do preenchimento automático pela transcrição da R1.
+ */
+const QUALIFICATION_FIELDS = [
+  ['objective_type', 'Objetivo'], ['credit_purpose_type', 'Finalidade do crédito'], ['credit_category', 'Categoria de interesse'],
+  ['credit_value', 'Crédito desejado'], ['urgency', 'Prioridade (quando quer o crédito)'], ['installment_min', 'Parcela ideal'],
+  ['installment_max', 'Parcela máxima'], ['financial_moment', 'Momento financeiro'], ['has_bid_resources', 'Recurso próprio para lance'],
+  ['has_fgts', 'Possui FGTS', 'PF'], ['decision_maker', 'Fator decisor'], ['had_consortium', 'Já teve consórcio'],
+];
+/** Campos que a R1 (transcrição da reunião) pode preencher; só os vazios são preenchidos. */
+const R1_FILLABLE = [
+  'objective_type', 'credit_purpose_type', 'credit_purpose', 'credit_category', 'product_type', 'credit_value', 'urgency', 'term_months',
+  'contemplation_type', 'installment_min', 'installment_max', 'financial_moment', 'employment_type', 'has_bid_resources', 'bid_own_resources',
+  'has_fgts', 'fgts_available', 'embedded_bid_interest', 'quotas', 'decision_maker', 'decision_notes', 'had_consortium',
+  'existing_consortium_admin', 'existing_consortium_value', 'has_financing', 'existing_financing_balance', 'existing_financing_cet',
+  'existing_financing_bank', 'objective',
+];
+const isEmpty = (v) => v == null || v === '';
+function qualificationStatus(o, kind = 'PF') {
+  const fields = QUALIFICATION_FIELDS.filter(([, , only]) => !only || only === kind);
+  const missing = fields.filter(([f]) => isEmpty(o[f])).map(([key, label]) => ({ key, label }));
+  return { total: fields.length, filled: fields.length - missing.length, missing };
+}
 const OPTION_FIELDS = {
   credit_category: 'categoria_credito',
   payment_modality: 'modalidade_pagamento',
@@ -37,6 +62,7 @@ const OPTION_FIELDS = {
   has_fgts: 'possui_fgts',
   decision_maker: 'decisor',
   existing_products: 'possui_produto',
+  credit_purpose_type: 'finalidade_credito',
 };
 
 function assertOption(db, list, value, label) {
@@ -48,11 +74,23 @@ function assertOption(db, list, value, label) {
 function normalizeOpp(db, data, contactId) {
   const o = {};
   for (const f of ['title', 'objective', 'qualification_criteria', 'next_action', 'pause_reason', 'embedded_bid_interest', 'credit_purpose',
-    'existing_consortium_admin', 'existing_financing_bank']) {
+    'existing_consortium_admin', 'existing_financing_bank', 'decision_notes']) {
     if (data[f] !== undefined) o[f] = clean(data[f]);
   }
   if (o.embedded_bid_interest && !['sim', 'nao', 'avaliar', 'nao_se_aplica'].includes(o.embedded_bid_interest)) {
     throw badRequest('Interesse em lance embutido inválido.');
+  }
+  for (const f of ['has_bid_resources', 'had_consortium', 'has_financing']) {
+    if (data[f] !== undefined) {
+      o[f] = clean(data[f]);
+      if (o[f] && !YES_NO.includes(o[f])) throw badRequest('Resposta inválida: use sim, não ou não sabe.');
+    }
+  }
+  // Experiência (já teve consórcio / possui financiamento) mantém o campo resumido "já possui" usado em relatórios
+  if ((o.had_consortium !== undefined || o.has_financing !== undefined) && data.existing_products === undefined) {
+    const cons = o.had_consortium === 'sim';
+    const fin = o.has_financing === 'sim';
+    o.existing_products = cons && fin ? 'ambos' : cons ? 'consorcio' : fin ? 'financiamento' : o.had_consortium || o.has_financing ? 'nenhum' : null;
   }
   for (const [f, list] of Object.entries(OPTION_FIELDS)) {
     if (data[f] !== undefined) {
@@ -78,7 +116,7 @@ function normalizeOpp(db, data, contactId) {
     }
   }
   if (o.installment_min != null && o.installment_max != null && o.installment_min > o.installment_max) {
-    throw badRequest('A parcela mínima não pode ser maior que a máxima.');
+    throw badRequest('A parcela ideal não pode ser maior que a parcela máxima.');
   }
   if (data.priority !== undefined) {
     if (!PRIORITIES[data.priority]) throw badRequest('Prioridade inválida.');
@@ -202,6 +240,35 @@ function updateOpportunity(db, user, id, data) {
   });
   return { changed: true };
 }
+
+/**
+ * Preenche a qualificação a partir de uma fonte externa (ex.: transcrição da R1 processada por IA).
+ * Regra: só completa os campos vazios; o que o especialista já preencheu fica como está.
+ */
+function fillQualification(db, user, id, data) {
+  const before = loadOpp(db, user, id, { write: true });
+  const source = clean(data.source) || 'r1_transcricao';
+  const incoming = data.fields && typeof data.fields === 'object' ? data.fields : {};
+  const candidate = {};
+  for (const f of R1_FILLABLE) if (!isEmpty(incoming[f]) && isEmpty(before[f])) candidate[f] = incoming[f];
+  const ignored = Object.keys(incoming).filter((f) => !(f in candidate));
+  if (!Object.keys(candidate).length) return { filled: [], ignored, qualification: qualificationStatus(before, loadContactKind(db, before.contact_id)) };
+  const o = normalizeOpp(db, candidate, before.contact_id);
+  delete o.existing_products;
+  for (const k of Object.keys(o)) if (!(k in candidate)) delete o[k];
+  o.updated_at = nowIso();
+  o.updated_by = user.id;
+  tx(db, () => {
+    const u = buildUpdate('opportunities', before.id, o, [...OPP_FIELDS, 'updated_at', 'updated_by']);
+    db.prepare(u.sql).run(...u.params);
+    const filled = Object.keys(candidate);
+    audit(db, user, 'opportunity', before.id, 'qualificacao_preenchida', { fonte: source, campos: filled }, before.contact_id);
+    insertActivity(db, { contact_id: before.contact_id, opportunity_id: before.id, type: 'observacao', notes: `Qualificação completada automaticamente (${source === 'r1_transcricao' ? 'transcrição da R1' : source}): ${filled.length} campo(s) que estavam vazios.`, user_id: user.id });
+  });
+  const after = db.prepare('SELECT * FROM opportunities WHERE id = ?').get(before.id);
+  return { filled: Object.keys(candidate), ignored, qualification: qualificationStatus(after, loadContactKind(db, before.contact_id)) };
+}
+const loadContactKind = (db, contactId) => db.prepare('SELECT kind FROM contacts WHERE id = ?').get(contactId)?.kind || 'PF';
 
 function validateStrategy(db, user, id) {
   const o = loadOpp(db, user, id, { write: true });
@@ -503,6 +570,7 @@ function getOpportunity(db, user, id) {
   row.activities = listActivities(db, user, { opportunity_id: o.id, limit: 200 }).rows;
   row.company_contacts = db.prepare('SELECT id, name, role FROM company_contacts WHERE company_id = ? AND active = 1').all(o.contact_id);
   row.strategy_validated_by_name = o.strategy_validated_by ? db.prepare('SELECT name FROM users WHERE id = ?').get(o.strategy_validated_by)?.name : null;
+  row.qualification = qualificationStatus(row, loadContactKind(db, o.contact_id));
   return row;
 }
 
@@ -557,6 +625,10 @@ function reorderStages(db, user, ids) {
 }
 
 module.exports = {
+  QUALIFICATION_FIELDS,
+  R1_FILLABLE,
+  qualificationStatus,
+  fillQualification,
   createOpportunity,
   createOpportunityRow,
   updateOpportunity,

@@ -2,6 +2,7 @@
 import { get } from './api.js';
 import { html, render, $, on, state, badge, relBadge, optLabel, K, fmtMoney, fmtDate, fmtDateTime, relTime, can, empty, optoutBadge } from './ui.js';
 import { activityForm, taskForm, moveStage } from './forms.js';
+import { qualProgress } from './qualification.js';
 
 let current = null;
 
@@ -75,10 +76,18 @@ export async function openLeadDrawer(contactId, { oppId = null, onChange = null 
         <div><dt>Origem</dt><dd>${optLabel('origem', c.origin) || '—'}${c.campaign ? html`<br><small>${c.campaign}</small>` : ''}</dd></div>
         <div><dt>Responsável</dt><dd>${c.owner_name || '—'}</dd></div>
       </dl></section>
-      ${opp ? html`<section><h4>Negócio ${opp.code}</h4><dl class="kv-list">
+      ${opp ? html`<section><h4>Informações de negócio · ${opp.code}</h4>
+      ${qualProgress(opp, c.kind, { compact: true })}
+      <dl class="kv-list">
         <div><dt>Etapa</dt><dd>${badge(opp.stage_name, `kind-${opp.stage_kind}`)}</dd></div>
-        <div><dt>Categoria</dt><dd>${optLabel('categoria_credito', opp.credit_category) || '—'}</dd></div>
+        <div><dt>Categoria de interesse</dt><dd>${optLabel('categoria_credito', opp.credit_category) || '—'}</dd></div>
+        <div><dt>Objetivo</dt><dd>${optLabel('objetivo', opp.objective_type) || '—'}${opp.credit_purpose_type ? html`<br><small>${optLabel('finalidade_credito', opp.credit_purpose_type)}</small>` : ''}</dd></div>
+        <div><dt>Tipo de produto</dt><dd>${optLabel('tipo_produto', opp.product_type) || '—'}</dd></div>
         <div><dt>Crédito desejado</dt><dd>${fmtMoney(opp.credit_value)}</dd></div>
+        <div><dt>Prazo objetivo</dt><dd>${opp.term_months ? `${opp.term_months} meses` : '—'}</dd></div>
+        <div><dt>Capacidade de parcela</dt><dd>${opp.installment_min || opp.installment_max ? html`${opp.installment_min ? `ideal ${fmtMoney(opp.installment_min)}` : ''}${opp.installment_min && opp.installment_max ? html`<br>` : ''}${opp.installment_max ? `máxima ${fmtMoney(opp.installment_max)}` : ''}` : '—'}</dd></div>
+        <div><dt>Urgência</dt><dd>${optLabel('urgencia', opp.urgency) || '—'}</dd></div>
+        <div><dt>Já teve consórcio</dt><dd>${opp.had_consortium === 'sim' ? html`Sim<br><small>${opp.existing_consortium_admin || 'administradora não informada'} · ${opp.existing_consortium_value ? fmtMoney(opp.existing_consortium_value) : 'crédito não informado'}</small>` : opp.had_consortium === 'nao' ? 'Não' : '—'}</dd></div>
         <div><dt>Próxima ação</dt><dd>${c.next_action?.title ? html`${c.next_action.title}<br><small>${fmtDateTime(c.next_action.due_at)}</small>` : html`<span class="warn-text">sem próxima ação</span>`}</dd></div>
       </dl>
       ${w && opp.status !== 'ganha' ? html`<label class="inline-move">Mover etapa <select data-dmove><option value="">—</option>${state.meta.stages.filter((s) => s.id !== opp.stage_id && s.kind !== 'ganho').map((s) => html`<option value="${s.id}">${s.name}</option>`)}</select></label>` : ''}
