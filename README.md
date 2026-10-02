@@ -1,4 +1,4 @@
-# ERP/CRM de Consórcios Primários
+# Vero Consórcios: ERP/CRM de consórcios primários
 
 ERP/CRM para a venda de consórcios contratados do zero, do primeiro contato ao pós-venda. No topo à direita ficam o sino de notificações e o menu do usuário (foto, Meu cadastro, Alterar senha e Sair). O menu lateral tem 17 itens:
 
@@ -34,7 +34,7 @@ A interface segue o manual da marca v1.0 (aplicações e diretrizes, elementos d
 - `public/js/icons.js`: ícones de traço no estilo Lucide (24×24, traço 1,7).
 - **Tema:** escuro por padrão. Sem escolha do usuário, segue o sistema operacional; o botão Claro/Escuro no topo guarda a escolha no navegador.
 - **Fontes:** Poppins nos textos e Manrope no lugar da Famels (fonte comercial) até a licença. Com a licença, copie `Famels-Regular.woff2` e `Famels-Italic.woff2` para `public/fonts/` e acrescente `url("/fonts/Famels-Regular.woff2") format("woff2")` (e o equivalente do itálico) ao `src` das regras `@font-face` em `tokens.css`.
-- **Logo:** monograma "CC" provisório na barra lateral, no login e no ícone da aba.
+- **Logo:** Vero Consórcios (`public/img`): versão com texto claro no tema escuro e versão com texto escuro no tema claro, trocadas automaticamente com o tema. Aparece no menu lateral, no login, na ficha e na pesquisa abertas pelo cliente; o "V" é o ícone da aba. O nome da empresa (Configurações › Geral) vem como "Vero Consórcios".
 
 ## Requisitos
 

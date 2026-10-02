@@ -106,7 +106,7 @@ async function boot() {
 
 function showSetup() {
   render(app, html`<div class="auth"><form class="card" id="setup">
-    <div class="auth-brand"><span class="monogram">CC</span><span>CRM Consórcios</span></div><h1>Primeiro acesso</h1><p class="muted">Crie o usuário administrador.</p>
+    <div class="auth-brand"><span class="brand-logo" role="img" aria-label="Vero Consórcios"></span></div><h1>Primeiro acesso</h1><p class="muted">Crie o usuário administrador.</p>
     <label>Nome<input name="name" required autocomplete="name"></label>
     <label>E-mail<input name="email" type="email" required autocomplete="email"></label>
     <label>Senha (mín. 8 caracteres)<input name="password" type="password" minlength="8" required autocomplete="new-password"></label>
@@ -130,7 +130,7 @@ function showLogin(msg) {
   stopNotifications();
   state.meta = null;
   render(app, html`<div class="auth"><form class="card" id="login">
-    <div class="auth-brand"><span class="monogram">CC</span><span>CRM Consórcios</span></div><h1>Entrar</h1>${msg ? html`<p class="warn-text">${msg}</p>` : html`<p class="muted">Use seu e-mail e senha de acesso.</p>`}
+    <div class="auth-brand"><span class="brand-logo" role="img" aria-label="Vero Consórcios"></span></div><h1>Entrar</h1>${msg ? html`<p class="warn-text">${msg}</p>` : html`<p class="muted">Use seu e-mail e senha de acesso.</p>`}
     <label>E-mail<input name="email" type="email" required autocomplete="username"></label>
     <label>Senha<input name="password" type="password" required autocomplete="current-password"></label>
     <div class="modal-error" hidden></div>
@@ -176,7 +176,7 @@ function themeToggle() {
 function shell() {
   render(app, html`
     <aside class="sidebar" id="sidebar">
-      <a class="brand" href="#/painel" aria-label="CRM Consórcios — painel inicial"><span class="monogram">CC</span><span class="brand-name">CRM<br>Consórcios</span></a>
+      <a class="brand" href="#/painel" aria-label="Vero Consórcios — painel inicial"><span class="brand-logo" role="img" aria-label="Vero Consórcios"></span></a>
       <nav>${NAV.filter(([, , , m, g]) => allowed(m) && g !== 'admin').map(navLink)}
         ${NAV.some(([, , , m, g]) => g === 'admin' && allowed(m)) ? html`<div class="nav-group">Administração</div>${NAV.filter(([, , , m, g]) => g === 'admin' && allowed(m)).map(navLink)}` : ''}</nav>
     </aside>

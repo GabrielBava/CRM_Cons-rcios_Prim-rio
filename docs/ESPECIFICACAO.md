@@ -1,4 +1,4 @@
-# Especificação funcional: ERP/CRM de Consórcios Primários
+# Especificação funcional: Vero Consórcios, ERP/CRM de consórcios primários
 
 Este documento descreve o que está **implementado** nesta versão e o que ainda depende de definição. Os itens seguem a lista de entrega pedida.
 
@@ -465,6 +465,7 @@ Aplicada a partir do manual da marca v1.0 em todas as telas, inclusive a ficha e
 - **Tipografia:** Famels (substituída pela Manrope até a licença) em títulos e números; Poppins em textos, rótulos e botões. Escala: título 2rem, indicador 1,75rem, texto 0,88rem, rótulos 0,7–0,8rem. Caixa de sentença, sem textos em caixa alta.
 - **Forma:** moldura com raio 28, menu lateral flutuante (230 px, raio 20), cards com raio 18, campos com raio 8 e botões, abas, filtros e etiquetas em pílula. Sombras suaves, vidro na moldura e no topo e luzes ambientes no fundo. Cards clicáveis sobem 2 px ao passar o mouse (desligado com "reduzir movimento").
 - **Ícones:** traço 1,7 no estilo Lucide: 18 px no menu e 14–16 px em botões e indicadores.
+- **Logo:** Vero Consórcios, com a versão de texto claro no tema escuro e a de texto escuro no tema claro (troca automática). O "V" é o ícone da aba.
 - **Botões:** um botão primário por área (névoa no tema escuro e azul-noite no claro); os demais são pílulas de vidro.
 - **Tom de voz:**
   - plural correto ("1 tarefa", "2 tarefas");

@@ -34,7 +34,7 @@ export async function show(app, token) {
   const filled = () => ['name', 'doc', 'email'].filter((f) => f in d.values).every((f) => d.values[f]);
   const draw = () => {
     render(app, html`<div class="public-page">
-      <header><h1>Ficha Cadastral do Participante</h1>
+      <header><span class="brand-logo" role="img" aria-label="Vero Consórcios"></span><h1>Ficha Cadastral do Participante</h1>
         <p class="muted">${d.company ? `${d.company} · ` : ''}Cadastro para a sua adesão ao consórcio${d.consultant ? `, com ${d.consultant} como seu especialista` : ''}. Este link é pessoal e vale até ${fmtDateTime(d.expires_at)}.</p></header>
       ${d.completed ? html`<div class="alert ok-alert"><strong>Cadastro enviado. Obrigado!</strong> Seu especialista vai conferir os dados e os documentos e seguir com o termo de adesão. Se precisar corrigir algo, ainda é possível editar abaixo.</div>` : ''}
       <section class="card howto"><h2>Como preencher</h2>
@@ -158,12 +158,12 @@ export async function showNps(app, token) {
   const company = d.company || 'nossa empresa';
   if (d.status !== 'pendente') {
     const msg = { respondida: 'Esta pesquisa já foi respondida. Muito obrigado pela sua avaliação!', expirada: 'Esta pesquisa expirou. Se quiser nos avaliar, fale com seu especialista.', cancelada: 'Esta pesquisa foi cancelada.' }[d.status];
-    render(app, html`<div class="public-page"><div class="card"><h1>Pesquisa de satisfação</h1><p>${msg}</p></div></div>`);
+    render(app, html`<div class="public-page"><header><span class="brand-logo" role="img" aria-label="Vero Consórcios"></span></header><div class="card"><h1>Pesquisa de satisfação</h1><p>${msg}</p></div></div>`);
     return;
   }
   const scale = (name, from, to) => html`<div class="scale" role="radiogroup">${Array.from({ length: to - from + 1 }, (_, i) => from + i).map((n) => html`<label class="scale-opt"><input type="radio" name="${name}" value="${n}"><span>${n}</span></label>`)}</div>`;
   render(app, html`<div class="public-page">
-    <header><h1>Pesquisa de satisfação</h1><p class="muted">Olá, ${d.first_name}! Sua opinião nos ajuda a melhorar. Leva menos de 1 minuto.</p></header>
+    <header><span class="brand-logo" role="img" aria-label="Vero Consórcios"></span><h1>Pesquisa de satisfação</h1><p class="muted">Olá, ${d.first_name}! Sua opinião nos ajuda a melhorar. Leva menos de 1 minuto.</p></header>
     <form class="card nps-form" id="nps" novalidate>
       <div class="q"><h2>De 0 a 10, quanto você recomendaria ${company} a um amigo ou familiar? <span class="req">*</span></h2>
         ${scale('score', 0, 10)}<div class="scale-legend"><span>Nada provável</span><span>Muito provável</span></div></div>

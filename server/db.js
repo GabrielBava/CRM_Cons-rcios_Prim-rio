@@ -936,7 +936,7 @@ const DEFAULT_SETTINGS = {
   require_sale_checklist: true,
   client_link_days: 7,
   finance_user_id: null,
-  company_name: '',
+  company_name: 'Vero Consórcios',
   nps_link_days: 15,
   // Regras do funil: passagem sequencial e critérios de entrada por etapa (ver server/services/pipeline.js)
   funnel_sequential: true,
@@ -1034,6 +1034,11 @@ function seedDefaults(db) {
     db.exec('UPDATE contracts SET sale_id = (SELECT s.id FROM sales s WHERE s.contract_id = contracts.id) WHERE sale_id IS NULL');
     db.exec("UPDATE contacts SET postsale_started_at = (SELECT MIN(s.confirmed_at) FROM sales s WHERE s.contact_id = contacts.id AND s.status = 'confirmada') WHERE postsale_started_at IS NULL");
     db.prepare("INSERT INTO settings (key, value) VALUES ('migr_fluxo_venda_v4', 'true')").run();
+  }
+  // Nome oficial da empresa: Vero Consórcios (só preenche quando ainda não foi definido)
+  if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_marca_vero'").get()) {
+    db.prepare("UPDATE settings SET value = ? WHERE key = 'company_name' AND value IN (?, 'null')").run(JSON.stringify('Vero Consórcios'), JSON.stringify(''));
+    db.prepare("INSERT INTO settings (key, value) VALUES ('migr_marca_vero', 'true')").run();
   }
   if (db.prepare('SELECT COUNT(*) AS n FROM products').get().n === 0) {
     const ins = db.prepare(

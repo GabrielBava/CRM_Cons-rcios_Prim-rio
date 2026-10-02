@@ -1,5 +1,5 @@
 /* ==========================================================
-   CRM Consórcios — identidade visual v1.0 aplicada à interface
+   Vero Consórcios — identidade visual v1.0 aplicada à interface
    Manual: Paleta de cores · Tipografia · Elementos de interface · Aplicações e diretrizes.
    Só aparência: nenhum comportamento depende deste arquivo.
    ========================================================== */
@@ -70,12 +70,8 @@ th, .kv > div > span:first-child, .id-card > span, .link-stats span, .modal-body
   box-shadow: var(--shadow-md);
   padding: 8px 0 12px;
 }
-.brand { display: flex; align-items: center; gap: 12px; padding: 16px 18px 18px; color: var(--text); font-family: var(--font-display); font-weight: 600; font-size: 0.95rem; line-height: 1.15; letter-spacing: -0.01em; }
+.brand { display: flex; align-items: center; gap: 12px; padding: 18px 18px 16px; color: var(--text); font-family: var(--font-display); font-weight: 600; font-size: 0.95rem; line-height: 1.15; letter-spacing: -0.01em; }
 .brand:hover { color: var(--text); }
-.monogram {
-  flex: none; display: inline-grid; place-items: center; width: 36px; height: 36px; border-radius: 50%;
-  border: 1.5px solid var(--text-muted); color: var(--text); font-family: var(--font-display); font-weight: 600; font-size: 0.8rem; letter-spacing: 0.02em;
-}
 .sidebar nav { padding: 2px 12px; gap: 3px; }
 .sidebar nav a {
   display: flex; align-items: center; gap: 11px; padding: 8px 12px; border-radius: var(--radius);
@@ -417,7 +413,8 @@ td small { color: var(--text-muted); font-size: var(--fs-xs); }
 .auth { min-height: calc(100vh - 28px); }
 .auth .card { max-width: 400px; padding: 30px 30px 26px; border-radius: var(--radius-panel); box-shadow: var(--shadow-float); }
 .auth h1 { font-size: 1.6rem; margin: 6px 0 0; }
-.auth-brand { display: flex; align-items: center; gap: 10px; font-family: var(--font-display); font-weight: 600; font-size: var(--fs-md); margin-bottom: 8px; }
+.auth-brand { display: flex; align-items: center; margin: 2px 0 14px; }
+.auth-brand .brand-logo { max-width: 210px; }
 .auth .btn.primary { justify-content: center; margin-top: 6px; min-height: 42px; }
 .public-page header h1 { font-size: var(--fs-h1); }
 
@@ -535,3 +532,13 @@ input[type=checkbox], input[type=radio] { padding: 0; min-height: 0; border: 0; 
 @media (max-width: 700px) { .ps-timeline li { flex-wrap: wrap; } .ps-actions { width: 100%; } }
 .prop-blocks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 @media (max-width: 700px) { .prop-blocks { grid-template-columns: 1fr; } }
+
+/* ---------- Logo Vero Consórcios (versão clara no tema escuro, versão escura no tema claro) ---------- */
+.brand-logo {
+  display: block; width: 100%; max-width: 176px; aspect-ratio: 640 / 184; flex: none;
+  background: url('../img/vero-logo-dark.webp') left center / contain no-repeat;
+}
+:root[data-theme="light"] .brand-logo { background-image: url('../img/vero-logo-light.webp'); }
+@media (prefers-color-scheme: light) { :root:not([data-theme]) .brand-logo { background-image: url('../img/vero-logo-light.webp'); } }
+.public-page header .brand-logo { max-width: 200px; margin-bottom: 18px; }
+@media (max-width: 900px) { .sidebar .brand-logo { max-width: 160px; } }

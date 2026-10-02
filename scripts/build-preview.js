@@ -69,9 +69,13 @@ for (const dir of ['js', 'js/views']) {
   }
 }
 // Identidade visual: tokens + estilos da aplicação + componentes da marca, na mesma ordem do index.html
-const css = ['tokens.css', 'app.css', 'brand.css'].map((f) => fs.readFileSync(path.join(ROOT, 'public', 'css', f), 'utf8')).join('\n');
+const css = ['tokens.css', 'app.css', 'brand.css'].map((f) => fs.readFileSync(path.join(ROOT, 'public', 'css', f), 'utf8')).join('\n').replaceAll("url('../img/", "url('img/");
+// Logos e ícones da marca
+fs.mkdirSync(path.join(OUT, 'img'), { recursive: true });
+for (const f of fs.readdirSync(path.join(ROOT, 'public', 'img'))) if (/\.(webp|png)$/.test(f) && !/^vero-logo-.*\.png$/.test(f)) fs.copyFileSync(path.join(ROOT, 'public', 'img', f), path.join(OUT, 'img', f));
 const previewCss = fs.readFileSync(path.join(ROOT, 'preview', 'preview.css'), 'utf8');
-const page = `<title>CRM Consórcios</title>
+const page = `<title>Vero Consórcios</title>
+<link rel="icon" type="image/png" href="img/favicon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Manrope:wght@500;600;700&display=swap">
@@ -80,7 +84,7 @@ const page = `<title>CRM Consórcios</title>
 ${css}
 ${previewCss}
 </style>
-<div id="app"><div class="auth"><div class="card">Carregando o CRM…</div></div></div>
+<div id="app"><div class="auth"><div class="card">Carregando…</div></div></div>
 <script src="vendor/sql-asm.js"></script>
 <script src="js/backend.js"></script>
 <script src="js/preview-boot.js"></script>

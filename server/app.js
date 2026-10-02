@@ -7,7 +7,7 @@ const { HttpError } = require('./util');
 const { createRouter } = require('./router');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.json': 'application/json', '.woff2': 'font/woff2', '.woff': 'font/woff' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.json': 'application/json', '.woff2': 'font/woff2', '.woff': 'font/woff', '.png': 'image/png', '.webp': 'image/webp' };
 const MAX_BODY = 15e6;
 
 function createApp({ dbFile = process.env.CRM_DB || path.join(__dirname, '..', 'data', 'crm.db') } = {}) {
