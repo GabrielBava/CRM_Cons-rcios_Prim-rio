@@ -233,6 +233,8 @@ As permissões são verificadas **no servidor** em todas as consultas e alteraç
 | Especialista | Só os próprios leads, clientes, propostas, vendas e comissões | Painel, CRM, Agenda, Simulador, Propostas, Clientes, Metas, Pré-venda, Vendas, Pós-venda, Comissões, Treinamentos |
 | Somente leitura | Consulta os registros da equipe, sem editar nem exportar dados pessoais | Painel, CRM, Clientes, Propostas, Pós-venda, Treinamentos |
 
+O módulo **Financeiro** (caixa da empresa, seção 17) vem liberado só para o administrador; a Visão geral é sempre exclusiva dele. Quem não tem o módulo, mas é responsável por algum lançamento, vê no menu apenas Contas a pagar e Contas a receber, com os próprios lançamentos.
+
 **Exportação em CSV** é exclusiva do administrador (verificada no servidor). A lista para a discadora continua disponível para líderes e especialistas. Transferir negócios entre responsáveis é permitido ao administrador e ao líder (dentro da equipe).
 
 A aba **Perfis e permissões** (Usuários) mostra essa matriz. Um líder sem equipe vê apenas os próprios registros. Quando um especialista tenta cadastrar alguém que já pertence a outro responsável, ele recebe o alerta de duplicidade **sem ver os dados** do cadastro.
@@ -316,7 +318,7 @@ Implementa a ficha aprovada na página de proposta (`docs/proposta-ficha/index.h
 
 **Link para o cliente.** Só existe um link ativo por cadastro: enquanto ele vale, o botão "Link cadastro" mostra o link para copiar (sem gerar outro). Depois de revogado, com o cadastro ativo, é possível gerar um novo. A ficha mostra quando o link foi gerado e por quem, o primeiro e o último acesso do cliente, a quantidade de acessos e de envios, e o histórico de links. Na ficha, o botão "Link cadastro" gera um endereço (`#/ficha/<token>`) que o cliente abre sem login para conferir e atualizar cadastro, endereço (com busca por CEP) e documentos. Cada envio fica no histórico com a origem "cliente" e cria a tarefa "Conferir dados atualizados pelo cliente" para o responsável. O link expira no prazo configurado (1 a 60 dias) e pode ser revogado.
 
-**Financeiro.** Quem paga é sempre o cliente, e a empresa acompanha para avisar. Parcelas vencidas e não pagas aparecem em atraso na ficha, no menu Financeiro e no painel ("Parcelas em atraso"). Cada atraso gera uma tarefa do tipo financeiro para o **responsável financeiro** definido em Configurações › Geral (ou para o responsável pelo cliente). A tarefa é concluída automaticamente quando a parcela é paga, negociada ou cancelada. Relatórios: **Financeiro** (previsto, recebido, em atraso e adimplência por mês de vencimento) e **Vendas por vendedor**.
+**Financeiro.** Quem paga é sempre o cliente, e a empresa acompanha para avisar. Parcelas vencidas e não pagas aparecem em atraso na ficha, na tela Parcelas dos clientes (`#/parcelas-clientes`) e no painel ("Parcelas em atraso"). Cada atraso gera uma tarefa do tipo financeiro para o **responsável financeiro** definido em Configurações › Geral (ou para o responsável pelo cliente). A tarefa é concluída automaticamente quando a parcela é paga, negociada ou cancelada. Relatórios: **Financeiro** (previsto, recebido, em atraso e adimplência por mês de vencimento) e **Vendas por vendedor**.
 
 **Pós-venda.** Checklist por cliente com etapas configuráveis: 1ª parcela confirmada, onboarding, cadastro de estratégia de lance (marcado automaticamente ao salvar a estratégia), cadastro de recebimento de boletos e pedido de indicação.
 
@@ -551,3 +553,54 @@ O pedido de indicações só é feito para promotores (nota mínima configuráve
 - **Alertas:** etapas atrasadas geram aviso (uma vez) e aparecem em vermelho no funil.
 - **Telas:** o funil mostra os clientes por etapa atual (com a lista como alternativa). Cada etapa pode ser marcada como feita, reaberta ou "não se aplica" (com motivo).
 - **Cartas:** o pós-venda e o resumo do cliente mostram o **código da venda e o valor** no lugar da contagem de cartas.
+
+## 17. Financeiro da empresa: visão geral, contas a pagar, contas a receber e cadastros
+
+Controle financeiro das atividades da empresa (não confundir com as parcelas que o cliente paga à administradora, que ficam na ficha e em Parcelas dos clientes). O menu lateral tem o grupo **Financeiro** com quatro itens.
+
+**Modelo.** Cada lançamento é um **título** (despesa ou receita, com código CP-000001 ou CR-000001) com uma ou mais **ocorrências**:
+
+| Tipo | Como gera as ocorrências |
+|---|---|
+| Pontual (spot) | Uma ocorrência. |
+| Parcelada | N parcelas mensais: valor total dividido em partes iguais (a última ajusta os centavos) ou o valor de cada parcela (ex.: "1500; 1500; 1200"). |
+| Recorrente | Mensal ou anual, com data de fim opcional. Sem fim, as ocorrências ficam geradas 12 meses à frente e a rotina diária completa o horizonte. |
+| Assinatura | Mensal ou anual, com **data de renovação** (padrão: 12 meses após o 1º vencimento) e renovação automática sim/não. Aviso 15 dias antes; com renovação automática o ciclo avança, sem ela as cobranças param na data. |
+
+Situação de cada ocorrência: **em aberto**, **pago/recebido**, **atrasado** (em aberto com vencimento passado, calculado) ou cancelado.
+
+**1. Visão geral (só o administrador).**
+
+- Indicadores: saldo atual (soma das contas bancárias), resultado do mês (entradas − saídas realizadas), a pagar e a receber até o fim do mês (com o atrasado), saldo projetado em 30 dias.
+- Alertas: atrasos (com o responsável e o motivo informado ou "ainda não informado"), vencimentos do dia, assinaturas que renovam ou terminam em 30 dias, pagamentos sem comprovante e saldo projetado negativo.
+- Contas bancárias com saldo, entradas e saídas; últimos 6 meses realizados; despesas do mês por categoria.
+- Bloco **Contas a pagar** e depois bloco **Contas a receber**: em aberto até o fim do mês, atrasado, próximos 30 dias, realizado no mês, próximos vencimentos e últimas operações. Cada item abre o detalhe; os botões abrem a tela específica.
+
+**2. Contas a pagar.** Lista com filtros (situação, categoria, centro de custo, fornecedor, responsável, tipo, mês e busca) e indicadores clicáveis. O padrão mostra **atrasados e o que vence nos próximos 30 dias**. Cada despesa tem: descrição, fornecedor ou parceiro, categoria, centro de custo, responsável, forma de pagamento (boleto, TED ou dinheiro; Pix, cartão e débito automático podem ser ativados), conta de saída, valor, periodicidade, vencimento, fim ou renovação, nº do documento e observação.
+
+- **Pagar (baixa):** data, valor (juros, multa ou desconto), conta, forma e **comprovante** (PDF ou imagem, até 8 MB). O comprovante também pode ser anexado depois; a tela aponta os pagos sem comprovante.
+- **Atraso:** no dia seguinte ao vencimento, o responsável e o administrador recebem a notificação (uma vez por ocorrência). O responsável usa **Motivo do atraso**; o motivo fica no histórico e vai para o administrador.
+- **Alterar ocorrência:** vencimento ou valor de uma ocorrência em aberto, sempre com o motivo (ex.: "novo boleto emitido em virtude de erro na data").
+- **Observações:** cada lançamento tem o histórico de observações, baixas, estornos, alterações e arquivos (boleto, nota fiscal, contrato, comprovante).
+- **Estornar** uma baixa (com motivo) e **encerrar/cancelar** o lançamento (as ocorrências em aberto são canceladas; as pagas ficam no histórico).
+- Lembrete ao responsável 3 dias antes do vencimento.
+
+**3. Contas a receber.** Mesma estrutura, com **instituição pagadora** (normalmente a administradora), **motivo** (comissão de venda, comissão recorrente, bonificação ou campanha, prêmio por meta, intermediação, venda de carta contemplada, consultoria, outros), responsável e **conta de entrada** (várias contas bancárias).
+
+- **Rateio por competência:** uma nota pontual ou parcelada pode ser distribuída pelos meses a que se refere. Exemplo: nota de R$ 100.000,00 recebida em outubro = outubro R$ 40.000, setembro R$ 30.000, agosto R$ 20.000 e julho R$ 10.000. A soma precisa fechar o total e cada mês aparece uma vez.
+- O rateio **não altera o caixa nem os meses já fechados**: entradas e saídas continuam na data do recebimento. Ele alimenta a visão **Por competência**, que mostra as receitas dos últimos 12 meses pelo mês de referência. Sem rateio, a nota entra no mês de emissão (ou do 1º vencimento); recorrentes, no mês de cada vencimento.
+
+**4. Cadastros** (vinculados uma vez e escolhidos nos lançamentos):
+
+- **Categorias de despesa** já cadastradas: Pessoal (salários e pró-labore, comissões de especialistas e parceiros, encargos, profissionais PJ), Estrutura (aluguel e condomínio, energia/água/internet, telefonia, material de escritório, limpeza), Tecnologia (software e assinaturas: CRM, discadora, simulador; equipamentos), Marketing e vendas (tráfego pago Meta e Google Ads, marketing e conteúdo, compra de leads, eventos e brindes), Impostos e financeiro (Simples/ISS, tarifas bancárias, contabilidade, juros e multas), Jurídico e regulatório, Outros.
+- **Categorias de receita** já cadastradas: Administradoras (comissão de venda, comissão recorrente, bonificação ou campanha, prêmio por meta), Serviços (intermediação, venda de carta contemplada, consultoria), Outros (reembolsos, rendimentos, outras receitas).
+- **Centros de custo:** Comercial, Marketing, Administrativo, Operação e pós-venda, Tecnologia e Diretoria.
+- **Parceiros:** fornecedores (pagamos), pagadores (recebemos) ou ambos, com CNPJ/CPF, contato e vínculo opcional com a administradora.
+- **Contas bancárias:** banco, agência, conta, Pix, tipo (corrente, poupança, pagamento, investimento, caixa) e saldo inicial com a data. O saldo atual soma as entradas e desconta as saídas registradas a partir dessa data.
+- **Formas de pagamento.**
+
+Cadastros são desativados, não apagados, para manter o histórico.
+
+**Permissões.** O módulo é do administrador por padrão e pode ser liberado a outro usuário em Usuários. Quem não tem o módulo, mas é responsável por um lançamento, vê só os próprios lançamentos em Contas a pagar e Contas a receber: dá baixa, anexa comprovante, informa o motivo do atraso e registra observações. Não cria lançamentos nem acessa cadastros ou a visão geral.
+
+**API.** `GET /api/financeiro/visao-geral`, `GET|POST /api/financeiro/cadastros[/:tipo]`, `GET /api/financeiro/lancamentos`, `GET /api/financeiro/competencia`, `POST /api/financeiro/titulos`, `GET|PATCH /api/financeiro/titulos/:id` (+ `/cancelar`, `/observacoes`, `/rateio`, `/arquivos`), `POST /api/financeiro/parcelas/:id/baixa`, `/estorno`, `/atraso` e `PATCH /api/financeiro/parcelas/:id`.

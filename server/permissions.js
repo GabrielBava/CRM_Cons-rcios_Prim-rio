@@ -22,6 +22,7 @@ const MODULES = [
   { key: 'posvenda', label: 'Pós-venda (checklist, NPS e lances)', group: 'Operação' },
   { key: 'comissoes', label: 'Comissões e cancelamentos', group: 'Operação' },
   { key: 'treinamentos', label: 'Treinamentos', group: 'Operação' },
+  { key: 'financeiro', label: 'Financeiro (contas a pagar, a receber e cadastros)', group: 'Financeiro' },
   { key: 'administradoras', label: 'Administradoras', group: 'Administração' },
   { key: 'planos', label: 'Planos', group: 'Administração' },
   { key: 'relatorios', label: 'Relatórios', group: 'Administração' },

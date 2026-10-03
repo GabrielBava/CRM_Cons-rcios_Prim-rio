@@ -19,6 +19,7 @@ const sales = require('./services/sales');
 const goals = require('./services/goals');
 const trainings = require('./services/trainings');
 const distribution = require('./services/distribution');
+const treasury = require('./services/treasury');
 
 const DEMO_USERS = ['admin@demo.local', 'gestora@demo.local', 'consultor1@demo.local', 'consultor2@demo.local', 'leitura@demo.local'];
 
@@ -308,9 +309,106 @@ function seedDemo(db, password) {
     goals.saveGoals(db, admin, { month, items: [{ scope: 'user', user_id: c1.id, target_credit: 800000, target_sales: 4 }, { scope: 'user', user_id: c2.id, target_credit: 600000, target_sales: 3 }, { scope: 'team', team_id: team, target_credit: 1500000, target_sales: 7 }] });
   });
   setSetting(db, 'require_sale_checklist', checklistSetting !== false);
+  seedTreasuryDemo(db, { admin, gestor, c1, PDF });
   finance.overdueSweep(db);
   sales.presaleSweep(db);
   sales.commissionSweep(db);
+}
+
+/**
+ * Financeiro da empresa: contas, parceiros, despesas (recorrentes, assinaturas, parcelada e pontuais) e receitas
+ * das administradoras (com rateio por competência), com atrasos com e sem motivo e baixas com e sem comprovante.
+ */
+function seedTreasuryDemo(db, { admin, gestor, c1, PDF }) {
+  const today = dateAgo(0);
+  const one = (sql, ...a) => db.prepare(sql).get(...a)?.id;
+  const cat = (dir, name) => one('SELECT id FROM fin_categories WHERE direction = ? AND name = ?', dir, name);
+  const cc = (name) => one('SELECT id FROM fin_cost_centers WHERE name = ?', name);
+  const pm = (name) => one('SELECT id FROM fin_payment_methods WHERE name = ?', name);
+  const mDay = (offset, day) => treasury.addMonths(`${today.slice(0, 7)}-01`, offset, day);
+  const proof = (name) => ({ filename: `comprovante-${name}.pdf`, mime: 'application/pdf', content_base64: PDF });
+  tx(db, () => {
+    const opening = mDay(-7, 1);
+    const main = one("SELECT id FROM fin_accounts WHERE name = 'Conta principal'");
+    const cash = one("SELECT id FROM fin_accounts WHERE type = 'caixa'");
+    treasury.saveCatalog(db, admin, 'contas', { id: main, bank: 'Banco Exemplo S.A.', agency: '0001', number: '12345-6', pix_key: 'financeiro@vero.example', opening_balance: 85000, opening_date: opening });
+    treasury.saveCatalog(db, admin, 'contas', { id: cash, opening_balance: 800, opening_date: opening });
+    const rec = treasury.saveCatalog(db, admin, 'contas', { name: 'Conta de recebimentos', bank: 'Banco Digital Exemplo', agency: '0001', number: '98765-4', type: 'pagamento', opening_balance: 15000, opening_date: opening }).id;
+    treasury.saveCatalog(db, admin, 'formas', { id: pm('Pix'), active: true });
+    const partner = (name, kind, extra = {}) => treasury.saveCatalog(db, admin, 'parceiros', { name, kind, ...extra }).id;
+    const P = {
+      imob: partner('Imobiliária Paulista Ltda', 'fornecedor', { doc: '12.345.678/0001-90', email: 'locacao@imobpaulista.example', notes: 'Aluguel da sala comercial (contrato de 30 meses).' }),
+      crm: partner('Nuvem CRM Software', 'fornecedor', { email: 'cobranca@nuvemcrm.example' }),
+      sim: partner('SimulaCon Tecnologia', 'fornecedor', { email: 'financeiro@simulacon.example' }),
+      midia: partner('Agência Pixel Mídia', 'fornecedor', { doc: '23.456.789/0001-01', notes: 'Gestão de tráfego pago (Meta e Google Ads).' }),
+      cont: partner('Contábil Exata', 'fornecedor', { phone: '(11) 3333-4444' }),
+      info: partner('InfoStore Equipamentos', 'fornecedor'),
+      brindes: partner('Brindes & Cia', 'fornecedor'),
+    };
+    const adms = db.prepare('SELECT id, name FROM administrators WHERE active = 1 ORDER BY id LIMIT 3').all();
+    const payer = adms.map((a) => partner(a.name, 'pagador', { administrator_id: a.id, notes: 'Comissões pagas por nota fiscal, até o dia 20.' }));
+    const parceiroImob = partner('Imobiliária Parceira Horizonte', 'ambos', { notes: 'Indica clientes e recebe/paga intermediação.' });
+
+    const title = (data) => treasury.createTitle(db, admin, { account_id: main, responsible_id: gestor.id, ...data }).id;
+    const items = (id) => db.prepare('SELECT * FROM fin_installments WHERE title_id = ? ORDER BY number').all(id);
+    /** Baixa as ocorrências vencidas (até "until"), com comprovante, exceto as indicadas. */
+    const payPast = (id, { until = today, skip = [], noProof = [], extra = 0 } = {}) => {
+      for (const i of items(id)) {
+        if (i.status !== 'aberto' || i.due_date > until || skip.includes(i.number)) continue;
+        const paid = i.due_date < today ? i.due_date : today;
+        treasury.settle(db, admin, i.id, { paid_at: paid, paid_amount: i.amount + extra, ...(noProof.includes(i.number) ? {} : proof(`${id}-${i.number}`)) });
+      }
+    };
+
+    // Despesas recorrentes do dia a dia
+    const rent = title({ direction: 'pagar', kind: 'recorrente', description: 'Aluguel da sala comercial', partner_id: P.imob, category_id: cat('pagar', 'Aluguel e condomínio'), cost_center_id: cc('Administrativo'), payment_method_id: pm('Boleto'), installment_value: 6500, periodicity: 'mensal', first_due: mDay(-3, 5), end_date: mDay(26, 5), invoice_number: 'Contrato 2026/014' });
+    const lastRent = items(rent).filter((i) => i.due_date < today).pop()?.number;
+    payPast(rent, { noProof: [lastRent] });
+    const salaries = title({ direction: 'pagar', kind: 'recorrente', description: 'Salários e encargos da equipe interna', category_id: cat('pagar', 'Salários e pró-labore'), cost_center_id: cc('Operação e pós-venda'), payment_method_id: pm('TED'), installment_value: 16500, periodicity: 'mensal', first_due: mDay(-3, 5), responsible_id: admin.id });
+    payPast(salaries);
+    const ads = title({ direction: 'pagar', kind: 'recorrente', description: 'Tráfego pago: campanhas de geração de leads', partner_id: P.midia, category_id: cat('pagar', 'Tráfego pago (Meta e Google Ads)'), cost_center_id: cc('Marketing'), payment_method_id: pm('Boleto'), installment_value: 9000, periodicity: 'mensal', first_due: mDay(-3, 15) });
+    payPast(ads);
+    const acc = title({ direction: 'pagar', kind: 'recorrente', description: 'Honorários da contabilidade', partner_id: P.cont, category_id: cat('pagar', 'Contabilidade'), cost_center_id: cc('Administrativo'), payment_method_id: pm('Boleto'), installment_value: 1800, periodicity: 'mensal', first_due: treasury.addMonths(today, -3, Number(dateAgo(4).slice(8, 10))) });
+    const accLate = items(acc).filter((i) => i.due_date < today).pop();
+    payPast(acc, { skip: [accLate.number] });
+    treasury.lateReason(db, gestor, accLate.id, { reason: 'O boleto veio com a data de vencimento errada; pedimos um novo boleto à contabilidade, que deve chegar até amanhã.' });
+    treasury.addNote(db, gestor, acc, { text: 'Contabilidade confirmou o envio de um novo boleto, sem juros.' });
+    const tax = title({ direction: 'pagar', kind: 'recorrente', description: 'Simples Nacional (DAS)', category_id: cat('pagar', 'Impostos (Simples, ISS)'), cost_center_id: cc('Administrativo'), payment_method_id: pm('Boleto'), installment_value: 3400, periodicity: 'mensal', first_due: mDay(-3, 20), responsible_id: admin.id });
+    payPast(tax);
+
+    // Assinaturas: CRM mensal (renova em breve) e simulador anual
+    const crm = title({ direction: 'pagar', kind: 'assinatura', description: 'CRM e discadora (licenças da equipe)', partner_id: P.crm, category_id: cat('pagar', 'Software e assinaturas (CRM, discadora, simulador)'), cost_center_id: cc('Tecnologia'), payment_method_id: pm('Boleto'), installment_value: 890, periodicity: 'mensal', first_due: treasury.addMonths(today, -11, 10), renewal_date: dateAgo(-12), auto_renew: 1 });
+    payPast(crm);
+    const sim = title({ direction: 'pagar', kind: 'assinatura', description: 'Plataforma de simulação (plano anual)', partner_id: P.sim, category_id: cat('pagar', 'Software e assinaturas (CRM, discadora, simulador)'), cost_center_id: cc('Comercial'), payment_method_id: pm('TED'), installment_value: 4800, periodicity: 'anual', first_due: treasury.addMonths(today, -2, 12), auto_renew: 0 });
+    payPast(sim);
+
+    // Compra parcelada e despesas pontuais
+    const nb = title({ direction: 'pagar', kind: 'parcelada', description: 'Notebooks para a equipe (4 unidades)', partner_id: P.info, category_id: cat('pagar', 'Equipamentos e informática'), cost_center_id: cc('Tecnologia'), payment_method_id: pm('Boleto'), installments: 6, total_value: 18000, first_due: mDay(-2, 8), invoice_number: '55.120' });
+    payPast(nb);
+    title({ direction: 'pagar', kind: 'pontual', description: 'Brindes para o evento de clientes', partner_id: P.brindes, category_id: cat('pagar', 'Eventos e brindes'), cost_center_id: cc('Comercial'), payment_method_id: pm('Pix'), total_value: 2350, first_due: dateAgo(3), responsible_id: c1.id, note: 'Canecas e cadernos com a marca para o evento de clientes.' });
+    title({ direction: 'pagar', kind: 'pontual', description: 'Curso de certificação dos novos especialistas', category_id: cat('pagar', 'Certificações e cursos'), cost_center_id: cc('Comercial'), payment_method_id: pm('Boleto'), total_value: 1200, first_due: dateAgo(-9) });
+    const coffee = title({ direction: 'pagar', kind: 'pontual', description: 'Café e copa do escritório', category_id: cat('pagar', 'Material de escritório'), cost_center_id: cc('Administrativo'), payment_method_id: pm('Dinheiro'), total_value: 380, first_due: dateAgo(6), account_id: cash });
+    payPast(coffee, { noProof: [1] });
+
+    // Receitas: comissões das administradoras (uma nota de 100 mil rateada em 4 meses de competência)
+    const big = treasury.createTitle(db, admin, { direction: 'receber', kind: 'pontual', description: `Comissões de vendas — ${adms[0]?.name || 'administradora'}`, partner_id: payer[0], category_id: cat('receber', 'Comissão de venda (administradora)'), cost_center_id: cc('Comercial'), payment_method_id: pm('TED'), account_id: rec, responsible_id: admin.id, total_value: 100000, first_due: dateAgo(2), invoice_number: '1.204', invoice_date: dateAgo(8) }).id;
+    treasury.saveAllocations(db, admin, big, { allocations: [{ competence: mDay(0, 1).slice(0, 7), amount: 40000 }, { competence: mDay(-1, 1).slice(0, 7), amount: 30000 }, { competence: mDay(-2, 1).slice(0, 7), amount: 20000 }, { competence: mDay(-3, 1).slice(0, 7), amount: 10000, notes: 'Vendas do início do trimestre' }] });
+    payPast(big);
+    if (payer[1]) {
+      const recur = treasury.createTitle(db, admin, { direction: 'receber', kind: 'recorrente', description: `Comissão recorrente das parcelas — ${adms[1].name}`, partner_id: payer[1], category_id: cat('receber', 'Comissão recorrente (parcelas)'), cost_center_id: cc('Comercial'), payment_method_id: pm('TED'), account_id: main, responsible_id: admin.id, installment_value: 24000, periodicity: 'mensal', first_due: mDay(-3, 20) }).id;
+      payPast(recur);
+    }
+    const monthly = treasury.createTitle(db, admin, { direction: 'receber', kind: 'recorrente', description: `Comissões de vendas do mês — ${adms[0]?.name || 'administradora'}`, partner_id: payer[0], category_id: cat('receber', 'Comissão de venda (administradora)'), cost_center_id: cc('Comercial'), payment_method_id: pm('TED'), account_id: main, responsible_id: admin.id, installment_value: 18000, periodicity: 'mensal', first_due: mDay(-3, 10), notes: 'Valor de referência: a nota de cada mês é ajustada na baixa.' }).id;
+    payPast(monthly);
+    const third = payer[2] || payer[0];
+    const parc = treasury.createTitle(db, admin, { direction: 'receber', kind: 'parcelada', description: `Comissão parcelada do grupo imobiliário — ${(adms[2] || adms[0])?.name || ''}`, partner_id: third, category_id: cat('receber', 'Comissão de venda (administradora)'), cost_center_id: cc('Comercial'), payment_method_id: pm('TED'), account_id: rec, responsible_id: gestor.id, installments: 3, total_value: 45000, first_due: mDay(-1, 25), invoice_number: '1.188' }).id;
+    payPast(parc);
+    const prize = treasury.createTitle(db, admin, { direction: 'receber', kind: 'pontual', description: 'Prêmio por meta do trimestre', partner_id: payer[0], category_id: cat('receber', 'Prêmio por meta'), cost_center_id: cc('Comercial'), payment_method_id: pm('TED'), account_id: rec, responsible_id: gestor.id, total_value: 8000, first_due: dateAgo(6) }).id;
+    treasury.lateReason(db, gestor, items(prize)[0].id, { reason: 'A administradora pediu uma nova nota fiscal com o CNPJ da filial; nota reemitida e enviada ontem.' });
+    treasury.createTitle(db, admin, { direction: 'receber', kind: 'pontual', description: 'Bonificação da campanha comercial do mês', partner_id: payer[0], category_id: cat('receber', 'Bonificação ou campanha da administradora'), cost_center_id: cc('Comercial'), payment_method_id: pm('TED'), account_id: rec, responsible_id: admin.id, total_value: 15000, first_due: dateAgo(-12) });
+    treasury.createTitle(db, admin, { direction: 'receber', kind: 'pontual', description: 'Intermediação de carta contemplada', partner_id: parceiroImob, category_id: cat('receber', 'Intermediação'), cost_center_id: cc('Comercial'), payment_method_id: pm('Pix'), account_id: main, responsible_id: c1.id, total_value: 6000, first_due: dateAgo(-35) });
+  });
+  treasury.sweep(db);
 }
 
 module.exports = { seedDemo, DEMO_USERS };

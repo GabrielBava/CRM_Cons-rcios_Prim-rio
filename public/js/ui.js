@@ -287,7 +287,7 @@ export function modal({ title, body, submitLabel = 'Salvar', onSubmit, wide = fa
       }
     });
     if (onMount) onMount(form, close);
-    const first = form.querySelector('input:not([type=hidden]),select,textarea');
+    const first = form.querySelector('input:not([type=hidden]):not([data-nofocus]),select:not([data-nofocus]),textarea:not([data-nofocus])');
     if (first) setTimeout(() => first.focus(), 30);
   });
 }

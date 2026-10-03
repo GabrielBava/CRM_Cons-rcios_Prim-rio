@@ -28,6 +28,7 @@ import * as plans from './views/plans.js';
 import * as users from './views/users.js';
 import * as profileView from './views/profile.js';
 import * as postsaleView from './views/postsale.js';
+import * as treasuryView from './views/treasury.js';
 import { icon } from './icons.js';
 
 // Menu lateral: [rota, rótulo, tela, módulo de permissão, grupo]
@@ -58,7 +59,8 @@ const EXTRA = {
   atividades: [activities, 'crm', 'funil'],
   importar: [importer, 'crm', 'funil'],
   simulacoes: [sales, 'propostas', 'propostas'],
-  financeiro: [financeView, 'clientes', 'clientes'],
+  'parcelas-clientes': [financeView, 'clientes', 'clientes'],
+  financeiro: [treasuryView, 'financeiro', 'financeiro'],
   produtos: [plans, 'planos', 'planos'],
   'meu-cadastro': [profileView, null, null],
 };
@@ -66,6 +68,19 @@ const EXTRA = {
 const NAV_ICON = { painel: 'painel', entrada: 'leads', funil: 'crm', agenda: 'agenda', simulador: 'simulador', propostas: 'propostas', clientes: 'clientes', metas: 'metas', prevenda: 'prevenda', vendas: 'vendas', posvenda: 'posvenda', comissoes: 'comissoes', treinamentos: 'treinamentos', administradoras: 'administradoras', planos: 'planos', relatorios: 'relatorios', usuarios: 'usuarios', configuracoes: 'configuracoes' };
 const navLink = ([k, label]) => html`<a href="#/${k}" data-nav="${k}">${icon(NAV_ICON[k])}<span>${label}</span></a>`;
 const allowed = (mod) => (state.user?.modules || []).includes(mod);
+// Financeiro da empresa: grupo próprio no menu. Quem não tem o módulo, mas é responsável por lançamentos, vê só pagar/receber.
+const finAccess = () => allowed('financeiro') || !!state.user?.fin_responsible;
+function finNav() {
+  if (!finAccess()) return '';
+  const full = allowed('financeiro');
+  const links = [
+    ...(full && state.user.role === 'admin' ? [['financeiro', 'Visão geral', 'financeiro']] : []),
+    ['financeiro/pagar', 'Contas a pagar', 'saida'],
+    ['financeiro/receber', 'Contas a receber', 'entrada'],
+    ...(full ? [['financeiro/cadastros', 'Cadastros', 'cadastros']] : []),
+  ];
+  return html`<div class="nav-group">Financeiro</div>${links.map(([k, label, ic]) => html`<a href="#/${k}" data-nav="${k}">${icon(ic)}<span>${label}</span></a>`)}`;
+}
 
 const app = document.getElementById('app');
 
@@ -178,6 +193,7 @@ function shell() {
     <aside class="sidebar" id="sidebar">
       <a class="brand" href="#/painel" aria-label="Vero Consórcios — painel inicial"><span class="brand-logo" role="img" aria-label="Vero Consórcios"></span></a>
       <nav>${NAV.filter(([, , , m, g]) => allowed(m) && g !== 'admin').map(navLink)}
+        ${finNav()}
         ${NAV.some(([, , , m, g]) => g === 'admin' && allowed(m)) ? html`<div class="nav-group">Administração</div>${NAV.filter(([, , , m, g]) => g === 'admin' && allowed(m)).map(navLink)}` : ''}</nav>
     </aside>
     <div class="main">
@@ -371,7 +387,8 @@ async function route() {
   const mod = navItem?.[2] || extra?.[0];
   const moduleKey = navItem?.[3] || extra?.[1];
   const isRecord = (key === 'leads' || key === 'clientes') && /^\d+$/.test(parts[1] || '');
-  const navKey = navItem ? key : extra?.[2];
+  let navKey = navItem ? key : extra?.[2];
+  if (key === 'financeiro') navKey = parts[1] ? `financeiro/${parts[1]}` : state.user.role === 'admin' && allowed('financeiro') ? 'financeiro' : 'financeiro/pagar';
   document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === navKey));
   let view = $('#view');
   if (!view) return;
@@ -383,7 +400,7 @@ async function route() {
     return;
   }
   // A ficha do cadastro é acessível a quem tem CRM ou Clientes; as demais telas seguem o módulo liberado ao usuário
-  const canOpen = isRecord ? allowed('crm') || allowed('clientes') || allowed('distribuicao') : !moduleKey || allowed(moduleKey);
+  const canOpen = isRecord ? allowed('crm') || allowed('clientes') || allowed('distribuicao') : key === 'financeiro' ? finAccess() : !moduleKey || allowed(moduleKey);
   if (!canOpen) {
     render(view, html`<div class="page"><h1>Acesso não liberado</h1><p class="muted">Seu usuário não tem acesso a esta tela. Fale com o administrador para liberar o módulo em Usuários.</p></div>`);
     return;

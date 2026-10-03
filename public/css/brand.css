@@ -542,3 +542,61 @@ input[type=checkbox], input[type=radio] { padding: 0; min-height: 0; border: 0; 
 @media (prefers-color-scheme: light) { :root:not([data-theme]) .brand-logo { background-image: url('../img/vero-logo-light.webp'); } }
 .public-page header .brand-logo { max-width: 200px; margin-bottom: 18px; }
 @media (max-width: 900px) { .sidebar .brand-logo { max-width: 160px; } }
+
+/* ---------- Financeiro da empresa: visão geral, contas a pagar e a receber, cadastros ---------- */
+.page-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 var(--gap); }
+.page-actions:empty { display: none; }
+.row-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+td.fin-act .row-actions { flex-direction: column; flex-wrap: nowrap; align-items: stretch; min-width: 132px; }
+td.fin-act .row-actions .btn { justify-content: center; white-space: nowrap; }
+td.fin-desc { min-width: 220px; }
+.fin-kpis { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+.fin-block { margin-top: var(--gap); }
+.fin-block .section-head h3 { display: flex; align-items: center; gap: 8px; }
+.fin-mini-kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.fin-mini-kpis a { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border-radius: var(--radius); background: var(--bg-card-2); border: 1px solid var(--border-soft); color: var(--text); transition: background 0.15s; }
+.fin-mini-kpis a:hover { background: var(--bg-active); text-decoration: none; color: var(--text); }
+.fin-mini-kpis a span { font-size: var(--fs-xs); color: var(--text-muted); }
+.fin-mini-kpis a strong { font-family: var(--font-display); font-size: 1.15rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.fin-mini-kpis a small { font-size: var(--fs-xs); color: var(--text-muted); }
+.fin-mini-kpis a.late { border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
+.fin-mini-kpis a.late strong { color: var(--danger); }
+.fin-lists h4 { margin: 0 0 8px; font-size: var(--fs-sm); font-weight: 600; }
+.fin-mini { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.fin-mini li { position: relative; padding: 9px 12px; padding-right: 110px; border-radius: var(--radius); background: var(--bg-card-2); border: 1px solid var(--border-soft); font-size: var(--fs-sm); line-height: 1.35; }
+.fin-mini li a { color: var(--text); }
+.fin-mini-val { position: absolute; right: 12px; top: 9px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.fin-accounts { list-style: none; margin: 0 0 14px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.fin-accounts li { display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: var(--radius); background: var(--bg-card-2); border: 1px solid var(--border-soft); font-size: var(--fs-sm); }
+.fin-accounts .num { text-align: right; font-variant-numeric: tabular-nums; }
+.fin-months { width: 100%; margin-bottom: 12px; }
+.fin-page h4 { font-family: var(--font-display); }
+.fin-detail { margin: 0 0 14px; }
+.fin-detail .qual-block dl > div dd { text-align: right; }
+.fin-alloc { margin: 14px 0; }
+.fin-alloc .quota-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.fin-alloc .chip-sm { padding: 4px 10px; }
+.alloc-list .quota-row.alloc-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr) auto; }
+.alloc-row .icon { align-self: end; margin-bottom: 6px; }
+.fin-note-add { display: flex; gap: 8px; align-items: flex-end; margin-bottom: 10px; }
+.fin-note-add textarea { flex: 1; min-height: 56px; }
+.fin-notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 300px; overflow-y: auto; }
+.fin-notes li { padding: 8px 10px; border-radius: var(--radius); background: var(--bg-card); border: 1px solid var(--border-soft); font-size: var(--fs-sm); line-height: 1.4; overflow-wrap: anywhere; }
+.fin-notes .badge { margin-right: 4px; }
+.fin-comp { border: 1px solid var(--border-soft); border-radius: var(--radius); background: var(--bg-card-2); margin-bottom: 8px; }
+.fin-comp summary { display: flex; justify-content: space-between; gap: 12px; padding: 10px 14px; cursor: pointer; font-size: var(--fs-sm); }
+.fin-comp summary span { font-weight: 600; font-variant-numeric: tabular-nums; }
+.fin-comp[open] summary { border-bottom: 1px solid var(--border-soft); }
+.fin-comp .table-wrap { padding: 4px 8px 8px; }
+.fin-cat-tabs { margin-bottom: var(--gap); }
+.modal .seg.full { display: flex; flex-wrap: wrap; width: 100%; margin-bottom: 14px; }
+@media (max-width: 700px) {
+  .fin-mini li { padding-right: 12px; }
+  .fin-mini-val { position: static; display: block; margin-top: 2px; }
+  .alloc-list .quota-row.alloc-row { grid-template-columns: 1fr 1fr; }
+  .alloc-row label:nth-child(3) { grid-column: 1 / -1; }
+  .fin-note-add { flex-direction: column; align-items: stretch; }
+  .row-actions { justify-content: flex-start; }
+  td.fin-act .row-actions { flex-direction: row; flex-wrap: wrap; min-width: 0; }
+  td.fin-desc { min-width: 0; }
+}

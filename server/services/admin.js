@@ -361,7 +361,7 @@ function meta(db, user) {
     (options[o.list] ||= []).push({ ...o, flags: JSON.parse(o.flags || '{}') });
   }
   return {
-    user: { id: user.id, name: user.name, email: user.email, role: user.role, role_label: ROLES[user.role], team_id: user.team_id, modules: perms.userModules(user), photo: user.photo || null, job_title: user.job_title || null },
+    user: { id: user.id, name: user.name, email: user.email, role: user.role, role_label: ROLES[user.role], team_id: user.team_id, modules: perms.userModules(user), fin_responsible: require('./treasury').hasResponsibilities(db, user), photo: user.photo || null, job_title: user.job_title || null },
     modules: perms.MODULES,
     roles: ROLES,
     options,

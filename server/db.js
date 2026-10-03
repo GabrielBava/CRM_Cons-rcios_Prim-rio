@@ -1035,6 +1035,7 @@ function seedDefaults(db) {
     db.exec("UPDATE contacts SET postsale_started_at = (SELECT MIN(s.confirmed_at) FROM sales s WHERE s.contact_id = contacts.id AND s.status = 'confirmada') WHERE postsale_started_at IS NULL");
     db.prepare("INSERT INTO settings (key, value) VALUES ('migr_fluxo_venda_v4', 'true')").run();
   }
+  seedTreasury(db, now);
   // Nome oficial da empresa: Vero Consórcios (só preenche quando ainda não foi definido)
   if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_marca_vero'").get()) {
     db.prepare("UPDATE settings SET value = ? WHERE key = 'company_name' AND value IN (?, 'null')").run(JSON.stringify('Vero Consórcios'), JSON.stringify(''));
@@ -1047,6 +1048,42 @@ function seedDefaults(db) {
     ins.run('Consórcio de imóvel', 'imovel', null, 'Produto genérico — ajuste administradora e condições.', now, now);
     ins.run('Consórcio de veículo', 'veiculo', null, 'Produto genérico — ajuste administradora e condições.', now, now);
     ins.run('Consórcio de serviços', 'servico', null, 'Produto genérico — ajuste administradora e condições.', now, now);
+  }
+}
+
+/** Cadastros iniciais do Financeiro: categorias usuais do mercado de consórcios, centros de custo, contas e formas de pagamento. */
+const FIN_PAY_CATEGORIES = [
+  ['Pessoal', ['Salários e pró-labore', 'Comissões de especialistas e parceiros', 'Encargos e benefícios', 'Profissionais terceirizados (PJ)']],
+  ['Estrutura', ['Aluguel e condomínio', 'Energia, água e internet', 'Telefonia', 'Material de escritório', 'Limpeza e manutenção']],
+  ['Tecnologia', ['Software e assinaturas (CRM, discadora, simulador)', 'Equipamentos e informática']],
+  ['Marketing e vendas', ['Tráfego pago (Meta e Google Ads)', 'Marketing e conteúdo', 'Compra de leads', 'Eventos e brindes']],
+  ['Impostos e financeiro', ['Impostos (Simples, ISS)', 'Tarifas bancárias', 'Contabilidade', 'Juros e multas']],
+  ['Jurídico e regulatório', ['Jurídico', 'Certificações e cursos', 'Associações de classe']],
+  ['Outros', ['Viagens e deslocamento', 'Outras despesas']],
+];
+const FIN_REC_CATEGORIES = [
+  ['Administradoras', ['Comissão de venda (administradora)', 'Comissão recorrente (parcelas)', 'Bonificação ou campanha da administradora', 'Prêmio por meta']],
+  ['Serviços', ['Intermediação', 'Venda de carta contemplada', 'Consultoria']],
+  ['Outros', ['Reembolsos', 'Rendimentos financeiros', 'Outras receitas']],
+];
+function seedTreasury(db, now) {
+  if (db.prepare('SELECT COUNT(*) AS n FROM fin_categories').get().n === 0) {
+    const ins = db.prepare('INSERT INTO fin_categories (direction, group_name, name, position, created_at) VALUES (?, ?, ?, ?, ?)');
+    let pos = 0;
+    for (const [dir, list] of [['pagar', FIN_PAY_CATEGORIES], ['receber', FIN_REC_CATEGORIES]]) for (const [g, names] of list) for (const n of names) ins.run(dir, g, n, pos++, now);
+  }
+  if (db.prepare('SELECT COUNT(*) AS n FROM fin_cost_centers').get().n === 0) {
+    const ins = db.prepare('INSERT INTO fin_cost_centers (name, description, created_at) VALUES (?, ?, ?)');
+    for (const [n, d] of [['Comercial', 'Especialistas, comissões e ferramentas de venda'], ['Marketing', 'Tráfego pago, conteúdo e geração de leads'], ['Administrativo', 'Estrutura, contabilidade e jurídico'], ['Operação e pós-venda', 'Formalização, pós-venda e atendimento'], ['Tecnologia', 'Sistemas e equipamentos'], ['Diretoria', 'Pró-labore e despesas da diretoria']]) ins.run(n, d, now);
+  }
+  if (db.prepare('SELECT COUNT(*) AS n FROM fin_payment_methods').get().n === 0) {
+    const ins = db.prepare('INSERT INTO fin_payment_methods (name, active, position, created_at) VALUES (?, ?, ?, ?)');
+    [['Boleto', 1], ['TED', 1], ['Dinheiro', 1], ['Pix', 0], ['Cartão de crédito', 0], ['Débito automático', 0]].forEach(([n, a], i) => ins.run(n, a, i, now));
+  }
+  if (db.prepare('SELECT COUNT(*) AS n FROM fin_accounts').get().n === 0) {
+    const ins = db.prepare('INSERT INTO fin_accounts (name, bank, type, opening_balance, created_at) VALUES (?, ?, ?, 0, ?)');
+    ins.run('Conta principal', 'Banco a definir', 'corrente', now);
+    ins.run('Caixa (dinheiro)', null, 'caixa', now);
   }
 }
 
@@ -1480,6 +1517,139 @@ CREATE TABLE IF NOT EXISTS bid_strategy_history (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_bid_hist_contract ON bid_strategy_history(contract_id, created_at);
+
+-- =====================================================================
+-- Financeiro da empresa (contas a pagar e a receber). Não confundir com finance_entries,
+-- que são as parcelas do cliente junto à administradora.
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS fin_accounts (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  bank TEXT, agency TEXT, number TEXT, pix_key TEXT,
+  type TEXT NOT NULL DEFAULT 'corrente',
+  opening_balance REAL NOT NULL DEFAULT 0,
+  opening_date TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS fin_cost_centers (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS fin_categories (
+  id INTEGER PRIMARY KEY,
+  direction TEXT NOT NULL CHECK (direction IN ('pagar','receber')),
+  group_name TEXT,
+  name TEXT NOT NULL,
+  position INTEGER NOT NULL DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS fin_partners (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'fornecedor' CHECK (kind IN ('fornecedor','pagador','ambos')),
+  doc TEXT, email TEXT, phone TEXT, notes TEXT,
+  administrator_id INTEGER REFERENCES administrators(id),
+  default_category_id INTEGER REFERENCES fin_categories(id),
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS fin_payment_methods (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  position INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+-- Título: a despesa ou a receita (pontual, parcelada, recorrente ou assinatura). As ocorrências ficam em fin_installments.
+CREATE TABLE IF NOT EXISTS fin_titles (
+  id INTEGER PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  direction TEXT NOT NULL CHECK (direction IN ('pagar','receber')),
+  description TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('pontual','parcelada','recorrente','assinatura')),
+  partner_id INTEGER REFERENCES fin_partners(id),
+  category_id INTEGER REFERENCES fin_categories(id),
+  cost_center_id INTEGER REFERENCES fin_cost_centers(id),
+  payment_method_id INTEGER REFERENCES fin_payment_methods(id),
+  account_id INTEGER REFERENCES fin_accounts(id),
+  responsible_id INTEGER REFERENCES users(id),
+  total_value REAL,
+  installment_value REAL,
+  installments INTEGER,
+  periodicity TEXT,
+  first_due TEXT,
+  end_date TEXT,
+  renewal_date TEXT,
+  auto_renew INTEGER NOT NULL DEFAULT 1,
+  invoice_number TEXT,
+  invoice_date TEXT,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'ativo' CHECK (status IN ('ativo','encerrado','cancelado')),
+  cancel_reason TEXT,
+  renewal_alerted_at TEXT,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_fin_titles_dir ON fin_titles(direction, status);
+CREATE TABLE IF NOT EXISTS fin_installments (
+  id INTEGER PRIMARY KEY,
+  title_id INTEGER NOT NULL REFERENCES fin_titles(id),
+  number INTEGER NOT NULL,
+  due_date TEXT NOT NULL,
+  amount REAL NOT NULL,
+  status TEXT NOT NULL DEFAULT 'aberto' CHECK (status IN ('aberto','pago','cancelado')),
+  paid_at TEXT,
+  paid_amount REAL,
+  paid_by INTEGER REFERENCES users(id),
+  account_id INTEGER REFERENCES fin_accounts(id),
+  payment_method_id INTEGER REFERENCES fin_payment_methods(id),
+  file_id INTEGER,
+  late_reason TEXT,
+  late_reason_at TEXT,
+  late_reason_by INTEGER REFERENCES users(id),
+  alerted_at TEXT,
+  reminded_at TEXT,
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_fin_inst_due ON fin_installments(status, due_date);
+CREATE INDEX IF NOT EXISTS idx_fin_inst_title ON fin_installments(title_id);
+-- Rateio por competência (ex.: nota de R$ 100 mil = 40 mil de outubro + 30 de setembro + ...). Só informativo.
+CREATE TABLE IF NOT EXISTS fin_allocations (
+  id INTEGER PRIMARY KEY,
+  title_id INTEGER NOT NULL REFERENCES fin_titles(id),
+  competence TEXT NOT NULL,
+  amount REAL NOT NULL,
+  notes TEXT
+);
+CREATE TABLE IF NOT EXISTS fin_notes (
+  id INTEGER PRIMARY KEY,
+  title_id INTEGER NOT NULL REFERENCES fin_titles(id),
+  installment_id INTEGER REFERENCES fin_installments(id),
+  kind TEXT NOT NULL DEFAULT 'observacao',
+  text TEXT NOT NULL,
+  user_id INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS fin_files (
+  id INTEGER PRIMARY KEY,
+  title_id INTEGER NOT NULL REFERENCES fin_titles(id),
+  installment_id INTEGER REFERENCES fin_installments(id),
+  kind TEXT NOT NULL DEFAULT 'comprovante',
+  filename TEXT NOT NULL,
+  mime TEXT,
+  size INTEGER NOT NULL,
+  content BLOB NOT NULL,
+  uploaded_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL
+);
 
 -- Notificações da plataforma (sino no topo)
 CREATE TABLE IF NOT EXISTS notifications (

@@ -32,6 +32,7 @@ const pipeline = require('./services/pipeline');
 const profile = require('./services/profile');
 const notifications = require('./services/notifications');
 const postsale = require('./services/postsale');
+const treasury = require('./services/treasury');
 
 function createRouter(db) {
   const routes = [];
@@ -101,6 +102,28 @@ function createRouter(db) {
   add('GET', '/api/propostas-panorama', ({ user, query }) => (perms.requireModule(user, 'propostas'), proposals.panorama(db, user, query)));
   add('POST', '/api/propostas/iniciar', ({ user, body }) => proposals.startProposal(db, user, body));
   add('POST', '/api/propostas/:id/resposta', ({ user, params, body }) => (proposals.registerResponse(db, user, params.id, body), { ok: true }));
+
+  /* ---------- Financeiro da empresa (contas a pagar e a receber) ---------- */
+  add('GET', '/api/financeiro/visao-geral', ({ user }) => treasury.overview(db, user));
+  add('GET', '/api/financeiro/cadastros', ({ user, query }) => treasury.catalogs(db, user, { all: query.todos === '1' }));
+  add('POST', '/api/financeiro/cadastros/:tipo', ({ user, params, body }) => treasury.saveCatalog(db, user, params.tipo, body));
+  add('GET', '/api/financeiro/lancamentos', ({ user, query }) => treasury.listItems(db, user, query));
+  add('GET', '/api/financeiro/competencia', ({ user, query }) => treasury.competence(db, user, query));
+  add('POST', '/api/financeiro/titulos', ({ user, body }) => treasury.createTitle(db, user, body));
+  add('GET', '/api/financeiro/titulos/:id', ({ user, params }) => treasury.getTitle(db, user, params.id));
+  add('PATCH', '/api/financeiro/titulos/:id', ({ user, params, body }) => treasury.updateTitle(db, user, params.id, body));
+  add('POST', '/api/financeiro/titulos/:id/cancelar', ({ user, params, body }) => treasury.cancelTitle(db, user, params.id, body));
+  add('POST', '/api/financeiro/titulos/:id/observacoes', ({ user, params, body }) => treasury.addNote(db, user, params.id, body));
+  add('POST', '/api/financeiro/titulos/:id/rateio', ({ user, params, body }) => treasury.saveAllocations(db, user, params.id, body));
+  add('POST', '/api/financeiro/titulos/:id/arquivos', ({ user, params, body }) => treasury.uploadFile(db, user, params.id, body), { bodyLimit: 12e6 });
+  add('GET', '/api/financeiro/arquivos/:id', ({ user, params, res }) => {
+    const f = treasury.getFile(db, user, params.id);
+    return sendBinary(res, f.filename, f.mime, f.content);
+  });
+  add('POST', '/api/financeiro/parcelas/:id/baixa', ({ user, params, body }) => treasury.settle(db, user, params.id, body), { bodyLimit: 12e6 });
+  add('POST', '/api/financeiro/parcelas/:id/estorno', ({ user, params, body }) => treasury.reopen(db, user, params.id, body));
+  add('PATCH', '/api/financeiro/parcelas/:id', ({ user, params, body }) => treasury.editInstallment(db, user, params.id, body));
+  add('POST', '/api/financeiro/parcelas/:id/atraso', ({ user, params, body }) => treasury.lateReason(db, user, params.id, body));
 
   /* ---------- Pré-venda, vendas, comissões e cancelamentos ---------- */
   add('GET', '/api/pre-vendas', ({ user, query }) => (perms.requireModule(user, 'prevenda'), sales.listPreSales(db, user, query)));
@@ -404,6 +427,11 @@ function createRouter(db) {
       require('./services/postsale').timelineSweep(db);
     } catch (e) {
       console.error('Falha na rotina de pré-venda/comissões:', e.message);
+    }
+    try {
+      treasury.sweep(db);
+    } catch (e) {
+      console.error('Falha na rotina do financeiro:', e.message);
     }
   }
 

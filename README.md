@@ -1,6 +1,6 @@
 # Vero Consórcios: ERP/CRM de consórcios primários
 
-ERP/CRM para a venda de consórcios contratados do zero, do primeiro contato ao pós-venda. No topo à direita ficam o sino de notificações e o menu do usuário (foto, Meu cadastro, Alterar senha e Sair). O menu lateral tem 17 itens:
+ERP/CRM para a venda de consórcios contratados do zero, do primeiro contato ao pós-venda. No topo à direita ficam o sino de notificações e o menu do usuário (foto, Meu cadastro, Alterar senha e Sair). O menu lateral tem 17 itens e o grupo Financeiro:
 
 1. Painel inicial
 2. Prospects e leads (distribuição com roleta)
@@ -19,6 +19,8 @@ ERP/CRM para a venda de consórcios contratados do zero, do primeiro contato ao 
 15. Planos
 16. Relatórios
 17. Usuários (perfis e liberação de telas por usuário)
+
+**Financeiro** (caixa da empresa): Visão geral (só o administrador), Contas a pagar (pontual, parcelada, recorrente ou assinatura, com comprovante, responsável e motivo do atraso), Contas a receber (instituição pagadora, motivo, conta de entrada e rateio por competência) e Cadastros (categorias prontas, centros de custo, parceiros, contas bancárias e formas de pagamento).
 
 A ficha do cliente tem 9 blocos, com documentos validados, financeiro, pós-venda e pesquisa NPS por link. As integrações com discadora, simulador, Meta Ads, WhatsApp e agenda externa estão preparadas ou marcadas como pendentes até serem validadas.
 
@@ -80,7 +82,8 @@ Também cria dados fictícios:
 - propostas na esteira de follow-up;
 - pré-vendas;
 - 1 venda confirmada, 1 aguardando pagamento e 1 cancelada;
-- comissões, metas e treinamentos.
+- comissões, metas e treinamentos;
+- financeiro da empresa: 3 contas, fornecedores e pagadores, aluguel, salários, tráfego pago, assinaturas (CRM mensal com renovação próxima e simulador anual), compra parcelada, contas a pagar e a receber atrasadas (com e sem motivo), comissões recebidas e uma nota de R$ 100 mil rateada em 4 meses de competência.
 
 O comando não roda em um banco que já tenha cadastros.
 
@@ -137,7 +140,8 @@ Os testes automatizados cobrem:
 - link de cadastro (um ativo por vez, acessos, revogação ao inativar o cadastro);
 - documentos (aprovação automática da equipe, validação dos enviados pelo cliente, vínculo com várias vendas, validade);
 - pós-venda (pesquisa NPS por link, cancelamento justificado, estratégia de lance);
-- simulação rápida e abertura do simulador de propostas com nome e contato.
+- simulação rápida e abertura do simulador de propostas com nome e contato;
+- financeiro da empresa (cadastros prontos, despesa parcelada, atraso com motivo e aviso ao administrador, baixa com comprovante, assinatura com renovação, recorrente anual, rateio por competência e visão geral só do administrador).
 
 ## Estrutura
 
@@ -154,7 +158,8 @@ server/
                     administradoras e planos (catalog.js), pré-venda, vendas, comissões e
                     cancelamentos (sales.js), metas (goals.js), distribuição (distribution.js),
                     treinamentos (trainings.js), painel inicial (home.js), pós-venda (postsale.js),
-                    notificações (notifications.js), Meu cadastro (profile.js))
+                    notificações (notifications.js), Meu cadastro (profile.js),
+                    financeiro da empresa: contas a pagar e a receber (treasury.js))
   permissions.js    perfis e módulos (telas) liberados por usuário
 public/             interface web (HTML + CSS + JavaScript em módulos, sem build).
                     A página do cliente (#/ficha/<token>) não exige login.

@@ -1086,3 +1086,88 @@ test('qualificação: preenchimento pela R1 completa só os campos vazios; propo
   pr = (await call('c1', 'GET', `/api/propostas/${p.data.id}`)).data;
   assert.equal(pr.notes, 'Cliente pediu retorno em março.');
 });
+
+test('financeiro: cadastros prontos, despesa parcelada, atraso com motivo, baixa com comprovante e visão geral só do administrador', async () => {
+  const cad = (await call('admin', 'GET', '/api/financeiro/cadastros')).data;
+  assert.ok(cad.categorias.filter((c) => c.direction === 'pagar').length >= 20, 'categorias de despesa prontas');
+  assert.ok(cad.categorias.some((c) => c.direction === 'receber' && /Comissão de venda/.test(c.name)));
+  assert.deepEqual(cad.formas.map((f) => f.name), ['Boleto', 'TED', 'Dinheiro']);
+  assert.ok(cad.centros.length >= 5 && cad.contas.length >= 1);
+  const cat = (dir, re) => cad.categorias.find((c) => c.direction === dir && re.test(c.name)).id;
+  const acc = cad.contas[0].id;
+  const boleto = cad.formas.find((f) => f.name === 'Boleto').id;
+  const c1 = await userId('c1@t.com');
+  // Especialista sem o módulo não lança nem vê a visão geral
+  assert.equal((await call('c1', 'GET', '/api/financeiro/visao-geral')).status, 403);
+  assert.equal((await call('c1', 'POST', '/api/financeiro/titulos', { direction: 'pagar' })).status, 403);
+  // Cadastro de parceiro e despesa parcelada
+  const forn = await call('admin', 'POST', '/api/financeiro/cadastros/parceiros', { name: 'Imobiliária Centro', kind: 'fornecedor', doc: '12.345.678/0001-90' });
+  assert.equal(forn.status, 200, JSON.stringify(forn.data));
+  const yesterday = new Date(Date.now() - 27 * 3600000).toISOString().slice(0, 10);
+  const parc = await call('admin', 'POST', '/api/financeiro/titulos', { direction: 'pagar', kind: 'parcelada', description: 'Notebooks da equipe', category_id: cat('pagar', /Equipamentos/), cost_center_id: cad.centros[0].id, payment_method_id: boleto, account_id: acc, installments: 3, total_value: 1000, first_due: yesterday, responsible_id: c1 });
+  assert.equal(parc.status, 200, JSON.stringify(parc.data));
+  assert.equal(parc.data.installments, 3);
+  let t = (await call('admin', 'GET', `/api/financeiro/titulos/${parc.data.id}`)).data;
+  assert.deepEqual(t.items.map((i) => i.amount), [333.33, 333.33, 333.34], 'a última parcela fecha o total');
+  assert.equal(t.items[0].situation, 'atrasado');
+  // Rotina avisa o responsável; ele vê o próprio lançamento (sem o módulo), informa o motivo e paga com comprovante
+  require('../server/services/treasury').sweep(appDb);
+  const nots = (await call('c1', 'GET', '/api/notificacoes')).data;
+  assert.ok(nots.rows.some((n) => /atrasado: Notebooks/.test(n.title)));
+  const mine = (await call('c1', 'GET', '/api/financeiro/lancamentos?direcao=pagar&status=atrasado')).data;
+  assert.equal(mine.rows.length, 1, 'responsável vê só o que é dele');
+  const inst = mine.rows[0];
+  assert.equal((await call('c1', 'POST', `/api/financeiro/parcelas/${inst.id}/atraso`, { reason: 'ok' })).status, 400);
+  assert.equal((await call('c1', 'POST', `/api/financeiro/parcelas/${inst.id}/atraso`, { reason: 'Boleto chegou com a data errada; pedi um novo ao fornecedor.' })).status, 200);
+  assert.ok((await call('admin', 'GET', '/api/notificacoes')).data.rows.some((n) => /Motivo do atraso/.test(n.title)));
+  // Novo boleto: mudar o vencimento exige explicação
+  const next = t.items[1];
+  assert.equal((await call('admin', 'PATCH', `/api/financeiro/parcelas/${next.id}`, { due_date: '2030-01-10' })).status, 400);
+  assert.equal((await call('admin', 'PATCH', `/api/financeiro/parcelas/${next.id}`, { due_date: '2030-01-10', reason: 'Novo boleto emitido com a data correta' })).status, 200);
+  const pay = await call('c1', 'POST', `/api/financeiro/parcelas/${inst.id}/baixa`, { paid_at: yesterday, filename: 'comprovante.pdf', content_base64: PDF });
+  assert.equal(pay.status, 200, JSON.stringify(pay.data));
+  t = (await call('admin', 'GET', `/api/financeiro/titulos/${parc.data.id}`)).data;
+  assert.equal(t.items[0].status, 'pago');
+  assert.ok(t.items[0].file_id, 'comprovante anexado');
+  assert.ok(t.history.some((n) => n.kind === 'atraso') && t.history.some((n) => n.kind === 'alteracao'), 'histórico de observações');
+  assert.equal((await call('admin', 'GET', `/api/financeiro/arquivos/${t.items[0].file_id}`)).status, 200);
+  const ov = (await call('admin', 'GET', '/api/financeiro/visao-geral')).data;
+  assert.equal(ov.accounts.find((a) => a.id === acc).saidas, 333.33);
+  assert.ok(ov.pagar.recentes.some((r) => r.title_id === parc.data.id));
+  assert.equal((await call('gestor', 'GET', '/api/financeiro/visao-geral')).status, 403);
+});
+
+test('financeiro: assinatura com renovação, recorrente anual e conta a receber com rateio por competência', async () => {
+  const cad = (await call('admin', 'GET', '/api/financeiro/cadastros')).data;
+  const cat = (dir, re) => cad.categorias.find((c) => c.direction === dir && re.test(c.name)).id;
+  const first = new Date(Date.now() + 5 * 86400000).toISOString().slice(0, 10);
+  const sub = await call('admin', 'POST', '/api/financeiro/titulos', { direction: 'pagar', kind: 'assinatura', description: 'CRM e discadora', category_id: cat('pagar', /Software/), periodicity: 'mensal', installment_value: 450, first_due: first, auto_renew: true });
+  assert.equal(sub.status, 200, JSON.stringify(sub.data));
+  assert.equal(sub.data.installments, 12, 'mensal: 12 meses à frente');
+  let s = (await call('admin', 'GET', `/api/financeiro/titulos/${sub.data.id}`)).data;
+  assert.ok(s.renewal_date > first, 'ciclo de renovação definido');
+  // Sem renovação automática: ocorrências param antes da renovação
+  assert.equal((await call('admin', 'PATCH', `/api/financeiro/titulos/${sub.data.id}`, { auto_renew: false, renewal_date: new Date(Date.now() + 70 * 86400000).toISOString().slice(0, 10) })).status, 200);
+  s = (await call('admin', 'GET', `/api/financeiro/titulos/${sub.data.id}`)).data;
+  assert.ok(s.items.filter((i) => i.status === 'aberto').length <= 3);
+  const yearly = await call('admin', 'POST', '/api/financeiro/titulos', { direction: 'pagar', kind: 'recorrente', description: 'Anuidade da associação', category_id: cat('pagar', /Associações/), periodicity: 'anual', installment_value: 1200, first_due: first });
+  assert.equal(yearly.data.installments, 1);
+  // Receita: nota da administradora com rateio por competência
+  const adm = await call('admin', 'POST', '/api/financeiro/cadastros/parceiros', { name: 'Administradora XP (pagadora)', kind: 'pagador' });
+  const rec = await call('admin', 'POST', '/api/financeiro/titulos', { direction: 'receber', kind: 'pontual', description: 'Nota de comissões', partner_id: adm.data.id, category_id: cat('receber', /Comissão de venda/), total_value: 100000, first_due: first, invoice_number: 'NF-1001', invoice_date: first, account_id: cad.contas[0].id });
+  assert.equal(rec.status, 200, JSON.stringify(rec.data));
+  const bad = await call('admin', 'POST', `/api/financeiro/titulos/${rec.data.id}/rateio`, { allocations: [{ competence: '2026-10', amount: 40000 }, { competence: '2026-09', amount: 30000 }] });
+  assert.equal(bad.status, 400, 'rateio precisa fechar o total');
+  const ok = await call('admin', 'POST', `/api/financeiro/titulos/${rec.data.id}/rateio`, { allocations: [{ competence: '2026-10', amount: 40000 }, { competence: '2026-09', amount: 30000 }, { competence: '2026-08', amount: 20000 }, { competence: '2026-07', amount: 10000 }] });
+  assert.equal(ok.status, 200, JSON.stringify(ok.data));
+  const comp = (await call('admin', 'GET', '/api/financeiro/competencia?de=2026-07&ate=2026-10')).data;
+  assert.deepEqual(comp.months.map((m) => [m.competence, m.total]), [['2026-10', 40000], ['2026-09', 30000], ['2026-08', 20000], ['2026-07', 10000]]);
+  // Recebido: entra no saldo da conta
+  const item = (await call('admin', 'GET', `/api/financeiro/titulos/${rec.data.id}`)).data.items[0];
+  assert.equal((await call('admin', 'POST', `/api/financeiro/parcelas/${item.id}/baixa`, {})).status, 200);
+  const ov = (await call('admin', 'GET', '/api/financeiro/visao-geral')).data;
+  assert.ok(ov.mes.entradas >= 100000);
+  // Cancelamento exige motivo
+  assert.equal((await call('admin', 'POST', `/api/financeiro/titulos/${yearly.data.id}/cancelar`, {})).status, 400);
+  assert.equal((await call('admin', 'POST', `/api/financeiro/titulos/${yearly.data.id}/cancelar`, { reason: 'Saímos da associação' })).status, 200);
+});
