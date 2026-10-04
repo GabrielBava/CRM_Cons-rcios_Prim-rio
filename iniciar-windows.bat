@@ -7,6 +7,7 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-start "" http://127.0.0.1:3000/lp/
+REM Abre a landing page alguns segundos depois, quando o servidor ja estiver no ar
+start "" /min powershell -NoProfile -Command "Start-Sleep 4; Start-Process 'http://127.0.0.1:3000/lp/'"
 node --disable-warning=ExperimentalWarning scripts\local.js
 pause
