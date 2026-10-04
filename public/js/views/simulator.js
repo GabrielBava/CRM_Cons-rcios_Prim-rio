@@ -16,7 +16,7 @@ export async function show(view) {
       <section class="card">
         <h3>Precisa gerar uma proposta?</h3>
         <p>Propostas são geradas a partir do cadastro do cliente, para que cada proposta tenha dono, ID do cliente e acompanhamento de follow-up.</p>
-        <ol class="small"><li>Abra <a href="#/propostas">Propostas</a> e clique em <strong>Nova proposta</strong>.</li><li>Escolha o cliente pelo nome ou ID (C-000001).</li><li>O simulador abre com o nome completo e o contato do cliente já preenchidos.</li><li>Depois de gerar o PDF, registre os valores e marque como enviada: a esteira de follow-up começa automaticamente.</li></ol>
+        <ol class="small"><li>Abra <a href="#/propostas">Propostas</a> e clique em <strong>Nova proposta</strong>.</li><li>Escolha o cliente pelo nome ou ID (C-000001).</li><li>O simulador abre com o nome completo e o contato do cliente já preenchidos.</li><li>Ao gerar o PDF, os valores e o PDF voltam para a proposta no CRM; marque-a como apresentada e a esteira de follow-up começa automaticamente.</li></ol>
         <p><a class="btn" href="#/propostas">Ir para Propostas</a></p>
       </section>
     </div>

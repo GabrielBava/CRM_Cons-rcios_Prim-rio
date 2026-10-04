@@ -230,6 +230,35 @@ function createRouter(db) {
   add('POST', '/api/cadastros/:id/simulador-proposta', ({ user, params, body }) => record.proposalSimulatorLink(db, user, params.id, body));
   add('GET', '/api/publico/nps', ({ query }) => record.publicNpsForm(db, query.token), { public: true });
   add('POST', '/api/publico/nps', ({ body }) => record.publicNpsSubmit(db, body.token, body), { public: true });
+
+  /* ---------- Landing page e simulador (sem login; liberados para outros domínios via CORS) ---------- */
+  const cors = (req, res) => {
+    // LP_ALLOWED_ORIGINS (ex.: https://veroconsorcios.com.br) tem prioridade sobre a configuração; "*" aceita qualquer site
+    const allowed = process.env.LP_ALLOWED_ORIGINS ? process.env.LP_ALLOWED_ORIGINS.split(',').map((x) => x.trim()) : require('./db').getSetting(db, 'lp_allowed_origins') || [];
+    const origin = req.headers.origin;
+    if (origin && (allowed.includes('*') || allowed.includes(origin))) {
+      res.setHeader('Access-Control-Allow-Origin', allowed.includes('*') ? '*' : origin);
+      res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      res.setHeader('Access-Control-Max-Age', '86400');
+    }
+  };
+  const preflight = ({ req, res }) => {
+    cors(req, res);
+    res.writeHead(204);
+    res.end();
+  };
+  const clientIp = (req) => String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket?.remoteAddress || 'local';
+  add('OPTIONS', '/api/publico/lp/leads', preflight, { integration: true });
+  add('POST', '/api/publico/lp/leads', ({ req, res, body }) => {
+    cors(req, res);
+    return require('./services/landing').receive(db, body, { ip: clientIp(req) });
+  }, { integration: true, bodyLimit: 50e3 });
+  add('OPTIONS', '/api/publico/simulador/proposta', preflight, { integration: true });
+  add('POST', '/api/publico/simulador/proposta', ({ req, res, body }) => {
+    cors(req, res);
+    return proposals.receiveFromSimulator(db, body);
+  }, { integration: true, bodyLimit: 12e6 });
   add('GET', '/api/pos-venda', ({ user, query }) => (perms.requireModule(user, 'posvenda'), postsale.overview(db, user, query)));
   add('GET', '/api/pos-venda/nps', ({ user, query }) => (perms.requireModule(user, 'posvenda'), postsale.npsBoard(db, user, query)));
   add('POST', '/api/pos-venda/nps/:id/tratativa', ({ user, params, body }) => (postsale.treatNps(db, user, params.id, body), { ok: true }));

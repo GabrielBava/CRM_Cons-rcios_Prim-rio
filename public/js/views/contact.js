@@ -406,7 +406,7 @@ const TAB_RENDER = {
       )}</section>
       <section class="card">
         <div class="section-head"><h3>Propostas</h3>${w ? html`<span class="inline-actions"><button class="btn primary" data-act="proposal-sim">Gerar proposta</button>${c.opportunities.length ? html`<button class="btn" data-act="prop-new">Registrar proposta gerada</button>` : ''}</span>` : ''}</div>
-        <p class="hint">"Gerar proposta" abre o simulador com o nome completo e o contato do cliente preenchidos. Depois de gerar o PDF, registre a proposta aqui com o link e o anexo.</p>
+        <p class="hint">"Gerar proposta" abre o simulador com o nome completo e o contato do cliente preenchidos. Ao gerar o PDF, a proposta é atualizada aqui sozinha (valores e PDF em Documentos); use "Registrar proposta gerada" só para propostas feitas fora do simulador.</p>
         ${table(
           [
             { label: 'Código', render: (p) => html`<a href="#" data-prop="${p.id}">${p.code}</a> <small>v${p.version}</small>` },

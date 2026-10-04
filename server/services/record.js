@@ -740,7 +740,10 @@ function proposalSimulatorLink(db, user, contactId, data = {}) {
   const phone = c.whatsapp || c.phone1 || c.phone2 || '';
   const params = new URLSearchParams({ nome: name || '', contato: phone, origem: 'crm', cadastro: c.code, modo: 'proposta' });
   if (data.proposal_code) params.set('proposta', data.proposal_code);
-  const url = `${base.split('#')[0]}${base.includes('?') ? '&' : '?'}${params}#${params}`;
+  // O token da proposta vai só depois do "#": não aparece em registros de servidores e proxies
+  const hash = new URLSearchParams(params);
+  if (data.crm_token) hash.set('crm_token', data.crm_token);
+  const url = `${base.split('#')[0]}${base.includes('?') ? '&' : '?'}${params}#${hash}`;
   let oppId = null;
   if (data.opportunity_id) {
     const o = db.prepare('SELECT id FROM opportunities WHERE id = ? AND contact_id = ?').get(Number(data.opportunity_id), c.id);

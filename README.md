@@ -46,6 +46,8 @@ A interface segue o manual da marca v1.0 (aplicações e diretrizes, elementos d
 
 ## Como executar
 
+**Teste local completo (CRM + simulador + landing page):** `npm run local` (ou `iniciar-windows.bat` / `iniciar-mac-linux.sh`). Cria o banco de demonstração na primeira vez e serve o CRM em `/`, a landing page em `/lp/` e o simulador em `/simulador/`. Roteiro passo a passo em [`TESTE-LOCAL.md`](TESTE-LOCAL.md).
+
 ```bash
 npm start                    # http://127.0.0.1:3000
 ```

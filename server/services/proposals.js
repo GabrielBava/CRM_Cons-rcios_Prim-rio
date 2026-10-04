@@ -1,7 +1,7 @@
 'use strict';
 const { PROPOSAL_STATUS, PROPOSAL_CADENCE } = require('../constants');
 const { loadContact, childScope, audit, diff, paging, optionLabel } = require('../core');
-const { badRequest, notFound, clean, toNumber, toDateOnly, nowIso } = require('../util');
+const { badRequest, notFound, HttpError, clean, toNumber, toDateOnly, nowIso, randomToken, sha256 } = require('../util');
 const { tx, nextCode } = require('../db');
 const { insertActivity } = require('./activities');
 const { assertOption, loadOpp } = require('./opportunities');
@@ -492,8 +492,63 @@ function startProposal(db, user, data) {
     audit(db, user, 'proposal', r.id, 'iniciada', { code: r.code }, c.id);
     return r;
   });
-  const link = require('./record').proposalSimulatorLink(db, user, c.id, { opportunity_id: opp.id, proposal_code: res.code });
+  // Token de uso único desta proposta: o simulador devolve os valores e o PDF ao CRM quando a proposta é gerada
+  const token = randomToken(32);
+  db.prepare('UPDATE proposals SET simulator_token_hash = ?, simulator_token_expires_at = ? WHERE id = ?').run(sha256(token), new Date(Date.now() + 72 * 3600000).toISOString(), res.id);
+  const link = require('./record').proposalSimulatorLink(db, user, c.id, { opportunity_id: opp.id, proposal_code: res.code, crm_token: token });
   return { ...res, url: link.url };
+}
+
+/**
+ * Proposta gerada no simulador (POST /api/publico/simulador/proposta, sem login): o simulador aberto pelo CRM envia
+ * os valores do plano e o PDF. A proposta em rascunho recebe as condições, o PDF fica anexado ao cliente e o
+ * especialista é avisado. Autenticação: o token de uso único criado em "Gerar proposta" (72 horas).
+ */
+const SIM_MODALITY = { integral: 'parcela_integral' };
+function receiveFromSimulator(db, data) {
+  const token = clean(data.token);
+  if (!token) throw new HttpError(401, 'Token da proposta ausente.');
+  const p = db.prepare('SELECT * FROM proposals WHERE simulator_token_hash = ?').get(sha256(token));
+  if (!p) throw new HttpError(401, 'Token da proposta inválido.');
+  if (!p.simulator_token_expires_at || p.simulator_token_expires_at < nowIso()) throw new HttpError(401, 'O link desta proposta expirou. Gere a proposta de novo pelo CRM.');
+  if (p.status !== 'rascunho') throw new HttpError(409, `A proposta ${p.code} já foi apresentada ao cliente; para mudar as condições, crie uma nova versão no CRM.`);
+  const pct = (v) => (v == null || v === '' ? undefined : toNumber(v));
+  const fields = {
+    credit_value: toNumber(data.credito) ?? undefined,
+    term_months: data.prazo != null ? Math.round(toNumber(data.prazo)) : undefined,
+    initial_installment: toNumber(data.parcela_inicial) ?? undefined,
+    admin_fee_pct: pct(data.taxa_adm_pct),
+    reserve_fund_pct: pct(data.fundo_reserva_pct),
+    insurance_pct: data.seguro ? pct(data.seguro_pct) : undefined,
+    contemplation_month: data.mes_contemplacao != null ? Math.round(toNumber(data.mes_contemplacao)) : undefined,
+    has_adhesion: data.adesao === true ? 1 : data.adesao === false ? 0 : undefined,
+    adhesion_pct: data.adesao ? pct(data.adesao_pct) : undefined,
+    adhesion_months: data.adesao && data.adesao_meses ? Math.round(toNumber(data.adesao_meses)) : undefined,
+    payment_modality: data.modalidade ? SIM_MODALITY[data.modalidade] || 'parcela_reduzida' : undefined,
+    reducer_pct: pct(data.redutor_pct),
+    bid_deduction: ['parcela', 'prazo'].includes(data.abatimento) ? data.abatimento : undefined,
+  };
+  for (const k of Object.keys(fields)) if (fields[k] === undefined || Number.isNaN(fields[k])) delete fields[k];
+  if (data.categoria && ['imovel', 'veiculo', 'servico'].includes(data.categoria)) fields.category = data.categoria;
+  const o = normalize(db, fields, p.contact_id);
+  if (fields.category) o.category = fields.category;
+  const now = nowIso();
+  return tx(db, () => {
+    const keys = Object.keys(o);
+    if (keys.length) db.prepare(`UPDATE proposals SET ${keys.map((k) => `${k} = ?`).join(', ')}, generated_at = ?, updated_at = ? WHERE id = ?`).run(...keys.map((k) => o[k]), now, now, p.id);
+    let attachmentId = null;
+    if (data.pdf_base64) {
+      const r = require('./record').insertAttachment(db, p.contact_id, { filename: clean(data.pdf_nome) || `Proposta_${p.code}.pdf`, content_base64: data.pdf_base64, doc_type: 'proposta', proposal_id: p.id, notes: `PDF gerado no simulador${data.administradora ? ` · ${clean(data.administradora)}` : ''}` }, { userId: p.owner_id, source: 'equipe' });
+      attachmentId = r?.id ?? r ?? null;
+      if (attachmentId) db.prepare('UPDATE proposals SET pdf_attachment_id = ? WHERE id = ?').run(attachmentId, p.id);
+    }
+    const money = (v) => (v == null ? '—' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
+    insertActivity(db, { contact_id: p.contact_id, opportunity_id: p.opportunity_id, type: 'proposta', ref_type: 'proposal', ref_id: p.id, source: 'simulador',
+      notes: `Proposta ${p.code} gerada no simulador: crédito ${money(o.credit_value ?? p.credit_value)}, prazo ${o.term_months ?? p.term_months ?? '—'} meses, parcela inicial ${money(o.initial_installment ?? p.initial_installment)}${data.administradora ? `, ${clean(data.administradora)}` : ''}.${attachmentId ? ' PDF anexado em Documentos.' : ''} Próximo passo: enviar ao cliente e marcar como apresentada.` });
+    audit(db, { id: null, name: 'Simulador' }, 'proposal', p.id, 'gerada_no_simulador', { campos: keys, pdf: !!attachmentId }, p.contact_id);
+    if (p.owner_id) require('./notifications').notify(db, p.owner_id, { kind: 'proposta', title: `Proposta ${p.code} gerada no simulador`, body: `Crédito ${money(o.credit_value ?? p.credit_value)} · parcela ${money(o.initial_installment ?? p.initial_installment)}. Envie ao cliente e marque como apresentada.`, link: `#/leads/${p.contact_id}/propostas` });
+    return { ok: true, proposta: p.code, campos: keys.length, pdf_anexado: !!attachmentId };
+  });
 }
 
 /** Panorama: propostas vigentes com etapa da esteira, próximo follow-up, alertas e probabilidade. */
@@ -601,4 +656,4 @@ function panorama(db, user, q = {}) {
   };
 }
 
-module.exports = { createProposal, updateProposal, changeStatus, newVersion, expireSweep, getProposal, listProposals, registerResponse, startProposal, panorama, proposalScore, startCadence };
+module.exports = { createProposal, updateProposal, changeStatus, newVersion, expireSweep, getProposal, listProposals, registerResponse, startProposal, receiveFromSimulator, panorama, proposalScore, startCadence };

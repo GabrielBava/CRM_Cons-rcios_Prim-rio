@@ -12,7 +12,8 @@
     "dev": "node --disable-warning=ExperimentalWarning --watch server/index.js",
     "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js",
     "demo": "node --disable-warning=ExperimentalWarning scripts/demo-data.js",
-    "build:preview": "node scripts/build-preview.js"
+    "build:preview": "node scripts/build-preview.js",
+    "local": "node --disable-warning=ExperimentalWarning scripts/local.js"
   },
   "license": "UNLICENSED",
   "devDependencies": {

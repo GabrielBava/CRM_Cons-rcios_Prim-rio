@@ -703,6 +703,7 @@ const DEFAULT_OPTIONS = {
   ],
   objetivo: [
     ['aquisicao', 'Aquisição'],
+    ['alavancagem', 'Alavancagem patrimonial'],
     ['investimento', 'Investimento'],
   ],
   tipo_produto: [
@@ -987,7 +988,10 @@ const DEFAULT_SETTINGS = {
   auto_tentativa_origins: ['meta_ads', 'instagram', 'facebook', 'linkedin', 'tiktok', 'landing_page', 'site'],
   presale_email_subject: 'Seu cadastro para a adesão ao consórcio',
   // Simulador usado para gerar propostas (o CRM envia nome e contato do cliente no endereço)
-  proposal_simulator_url: 'https://claude.ai/artifact/Fk7ApKUi2U4BqAfvzfGgpd',
+  // Padrão: o simulador servido pelo próprio CRM (public/simulador); a versão de teste on-line usa o artefato
+  proposal_simulator_url: '/simulador/index.html',
+  // Landing page: origens que podem enviar leads de outro domínio (vazio = só o próprio CRM; "*" = qualquer site)
+  lp_allowed_origins: ['*'],
   doc_checklist: {
     PF: ['identificacao', 'comprovante_endereco', 'comprovante_renda', 'comprovante_estado_civil'],
     PJ: ['contrato_social', 'cartao_cnpj', 'comprovante_endereco', 'faturamento', 'doc_representante'],
@@ -1088,6 +1092,16 @@ function seedDefaults(db) {
     db.exec("UPDATE contracts SET adhesion_date = (SELECT s.allocated_on FROM sales s WHERE s.id = contracts.sale_id) WHERE adhesion_date IS NULL AND sale_id IS NOT NULL");
     db.prepare("INSERT INTO settings (key, value) VALUES ('migr_v5_leads', 'true')").run();
   }
+  // v6: objetivo "alavancagem" (landing page: Investimento e Mecanismo de Alavancagem)
+  if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_v6_lp'").get()) {
+    if (!db.prepare("SELECT 1 FROM options WHERE list = 'objetivo' AND value = 'alavancagem'").get()) {
+      const pos = db.prepare("SELECT COALESCE(MAX(position), -1) AS p FROM options WHERE list = 'objetivo'").get().p + 1;
+      db.prepare("INSERT INTO options (list, value, label, position, flags) VALUES ('objetivo', 'alavancagem', 'Alavancagem patrimonial', ?, '{}')").run(pos);
+    }
+    // Simulador agora servido pelo próprio CRM (public/simulador): troca o endereço antigo do artefato
+    db.prepare("UPDATE settings SET value = ? WHERE key = 'proposal_simulator_url' AND value = ?").run(JSON.stringify('/simulador/index.html'), JSON.stringify('https://claude.ai/artifact/Fk7ApKUi2U4BqAfvzfGgpd'));
+    db.prepare("INSERT INTO settings (key, value) VALUES ('migr_v6_lp', 'true')").run();
+  }
   // Nome oficial da empresa: Vero Consórcios (só preenche quando ainda não foi definido)
   if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_marca_vero'").get()) {
     db.prepare("UPDATE settings SET value = ? WHERE key = 'company_name' AND value IN (?, 'null')").run(JSON.stringify('Vero Consórcios'), JSON.stringify(''));
@@ -1181,6 +1195,7 @@ const ADDED_COLUMNS = {
     ['property_free_liens', 'TEXT'], ['pays_rent', 'TEXT'], ['rent_value', 'REAL'], ['temperature', 'TEXT'], ['temperature_reason', 'TEXT'],
   ],
   proposals: [
+    ['simulator_token_hash', 'TEXT'], ['simulator_token_expires_at', 'TEXT'], ['generated_at', 'TEXT'], ['pdf_attachment_id', 'INTEGER REFERENCES attachments(id)'],
     ['accepted_at', 'TEXT'], ['accepted_channel', 'TEXT'], ['accepted_by', 'INTEGER REFERENCES users(id)'], ['refusal_reason', 'TEXT'],
     ['category', 'TEXT'], ['sent_channel', 'TEXT'], ['last_response_at', 'TEXT'], ['last_response', 'TEXT'],
     ['refusal_notes', 'TEXT'], ['refused_at', 'TEXT'], ['retake_at', 'TEXT'],

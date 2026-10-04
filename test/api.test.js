@@ -572,7 +572,7 @@ test('simulação registra data, hora e autor; proposta abre o simulador com nom
   assert.equal(d.simulations[0].credit_value, null);
   const p = await call('c1', 'POST', `/api/cadastros/${c.data.id}/simulador-proposta`, {});
   assert.equal(p.status, 200);
-  const u = new URL(p.data.url);
+  const u = new URL(p.data.url, 'http://localhost');
   assert.equal(u.searchParams.get('nome'), 'Maria Simulada');
   assert.equal(u.searchParams.get('contato').replace(/\D/g, ''), '11955550106', 'usa o WhatsApp do cliente');
   assert.equal((await call('leitor', 'POST', `/api/cadastros/${c.data.id}/simulador-proposta`, {})).status, 403);
@@ -1242,4 +1242,48 @@ test('administradora: senha do portal cifrada, visível só ao administrador; co
   assert.equal(row.installment_value, 1150);
   assert.equal(row.client_choice, 'venda');
   assert.equal((await call('admin', 'PATCH', `/api/contratos/${k.data.id}`, { client_choice: 'outra' })).status, 400);
+});
+
+test('landing page: simulador (aquisição ou alavancagem) e mecanismo de alavancagem criam lead em Tentativa; proposta do simulador volta ao CRM', async () => {
+  const c1 = await userId('c1@t.com');
+  await call('admin', 'PATCH', '/api/distribuicao/roleta', { mode: 'sequencial', auto: true, first_contact_hours: 1, participants: [{ user_id: c1, active: true, weight: 1 }] });
+  const pub = async (body) => {
+    const r = await fetch(`${base}/api/publico/lp/leads`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://lp.exemplo.com' }, body: JSON.stringify(body) });
+    return { status: r.status, data: await r.json(), cors: r.headers.get('access-control-allow-origin') };
+  };
+  const a = await pub({ nome: 'Lia Veículo', email: 'lia.lp@ex.com', celular: '11955551001', categoria: 'Veículo', modo: 'parcela', credito: 100000, parcela: 1500, prazo: 80, preferencia_contato: 'WhatsApp', melhor_horario: 'Manhã', aceite_privacidade: true });
+  assert.equal(a.status, 200, JSON.stringify(a.data));
+  assert.equal(a.data.objetivo, 'aquisicao');
+  assert.equal(a.cors, '*');
+  const b = await pub({ nome: 'Ivo Investe', email: 'ivo.lp@ex.com', celular: '11955551002', categoria: 'Investimento', credito: 1000000, aceite_privacidade: true });
+  assert.equal(b.data.objetivo, 'alavancagem');
+  const m = await pub({ tipo: 'alavancagem_financeira', nome: 'Mel Alavanca', telefone: '11955551003', email: 'mel.lp@ex.com', credito: 500000, inicio: 'De imediato', preferencia_contato: 'Ligação', melhor_horario: 'Noite', aceite_privacidade: true });
+  assert.equal(m.data.objetivo, 'alavancagem');
+  assert.equal((await pub({ nome: 'Sem Aceite', email: 'sa@ex.com' })).status, 400);
+  const found = (await call('admin', 'GET', `/api/cadastros?q=${m.data.codigo}`)).data;
+  const mel = (await call('admin', 'GET', `/api/cadastros/${(found.rows || found)[0].id}`)).data;
+  assert.equal(mel.owner_id, c1, 'distribuído na hora');
+  assert.equal(mel.opportunities[0].stage_name, 'Tentativa de contato');
+  assert.equal(mel.opportunities[0].objective_type, 'alavancagem');
+  assert.equal(mel.opportunities[0].urgency, 'curto');
+  assert.equal(mel.pref_channel, 'ligacao');
+  // Mesmo telefone com outro objetivo: sem duplicar o cadastro, abre outro negócio
+  const again = await pub({ nome: 'Lia Veículo', email: 'lia.lp@ex.com', celular: '11955551001', categoria: 'Investimento', credito: 800000, aceite_privacidade: true });
+  assert.equal(again.data.status, 'existente');
+  const lia = (await call('admin', 'GET', `/api/cadastros/${(((await call('admin', 'GET', `/api/cadastros?q=${a.data.codigo}`)).data).rows || [])[0].id}`)).data;
+  assert.deepEqual(lia.opportunities.map((o) => o.objective_type).sort(), ['alavancagem', 'aquisicao']);
+  // Proposta: o CRM abre o simulador com um token; o simulador devolve valores e PDF
+  const st = await call('admin', 'POST', '/api/propostas/iniciar', { contact_id: lia.id });
+  assert.equal(st.status, 200, JSON.stringify(st.data));
+  const token = new URLSearchParams(new URL(st.data.url, 'http://x').hash.slice(1)).get('crm_token');
+  assert.ok(token && !new URL(st.data.url, 'http://x').search.includes('crm_token'), 'token só no #');
+  const send = async (b) => { const r = await fetch(`${base}/api/publico/simulador/proposta`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }); return { status: r.status, data: await r.json() }; };
+  assert.equal((await send({ token: 'invalido' })).status, 401);
+  const ok = await send({ token, credito: 120000, prazo: 80, parcela_inicial: 1780.5, taxa_adm_pct: 15, fundo_reserva_pct: 2, modalidade: 'integral', pdf_nome: 'Proposta.pdf', pdf_base64: Buffer.from('%PDF-1.4 x').toString('base64') });
+  assert.equal(ok.status, 200, JSON.stringify(ok.data));
+  assert.ok(ok.data.pdf_anexado);
+  const pr = appDb.prepare('SELECT * FROM proposals WHERE code = ?').get(st.data.code);
+  assert.equal(pr.credit_value, 120000);
+  assert.equal(pr.initial_installment, 1780.5);
+  assert.ok(pr.generated_at && pr.pdf_attachment_id);
 });

@@ -6,7 +6,7 @@
   'use strict';
   const DEMO_PASSWORD = 'demo12345';
   // v3: menu do usuário, notificações, pós-venda e funil com ações em massa — recarrega a demonstração nova
-  const DB_KEY = 'crm-preview-db-v6';
+  const DB_KEY = 'crm-preview-db-v7';
   const COOKIE_KEY = 'crm-preview-session';
   const req = (p) => window.CRMBackend.require(p);
   window.CRM_PREVIEW = true;
@@ -81,6 +81,8 @@
   function openDatabase(bytes) {
     adapter = new window.CRMShims.SqlJsAdapter(bytes ? new SQL.Database(bytes) : new SQL.Database());
     req('server/db.js').initDb(adapter);
+    // Versão on-line: o simulador local (/simulador) não existe aqui; usa o simulador publicado
+    adapter.prepare("UPDATE settings SET value = ? WHERE key = 'proposal_simulator_url' AND value = ?").run(JSON.stringify('https://claude.ai/artifact/Fk7ApKUi2U4BqAfvzfGgpd'), JSON.stringify('/simulador/index.html'));
     router = req('server/router.js').createRouter(adapter);
     router.sweep();
   }

@@ -406,7 +406,7 @@ export async function openProposalSimulator(contact, oppId) {
     if (w) {
       w.opener = null;
       w.location.href = r.url;
-      toast(`Proposta ${r.code} iniciada: o simulador abriu com o nome e o contato do cliente. Depois de gerar o PDF, complete os dados em Propostas.`);
+      toast(`Proposta ${r.code} iniciada: o simulador abriu com o nome e o contato do cliente. Ao gerar o PDF, os valores e o PDF voltam para o CRM.`);
     } else {
       await modal({
         title: 'Abrir simulador de propostas',
