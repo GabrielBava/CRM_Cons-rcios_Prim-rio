@@ -26,6 +26,7 @@ A ficha do cliente tem 9 blocos, com documentos validados, financeiro, pós-vend
 
 - **Especificação funcional (telas, funil, permissões e módulo ERP):** [`docs/ESPECIFICACAO.md`](docs/ESPECIFICACAO.md)
 - **Contratos de integração (discadora, simulador, leads, WhatsApp):** [`docs/INTEGRACOES.md`](docs/INTEGRACOES.md)
+- **Modelo de dados (DDL completo e relacionamentos):** [`docs/DDL.sql`](docs/DDL.sql) e [`docs/MODELO_DE_DADOS.md`](docs/MODELO_DE_DADOS.md), gerados por `node scripts/ddl.js`
 
 ## Identidade visual
 
