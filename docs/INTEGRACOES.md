@@ -140,7 +140,8 @@ Campos padrão: `id_lead_plataforma`, `plataforma` (ex.: `meta_ads`), `nome`, `t
 - Mesmo `plataforma` + `id_lead_plataforma`: `duplicado`, nada é criado.
 - Telefone ou e-mail de um cadastro existente: `existente`. O cadastro recebe **um novo registro de origem** e uma anotação no histórico, sem criar duplicata.
 - Correspondência com mais de um cadastro: `sem_vinculo`, para revisão em **Ligações e atividades › Entradas**.
-- Sem correspondência: `criado`, com relacionamento "lead", oportunidade em "Novo prospect" e o responsável padrão configurado (ou nenhum, para o gestor distribuir).
+- Sem correspondência: `criado`, com relacionamento "lead" e o responsável padrão configurado. Sem responsável padrão, **a roleta distribui na hora** (sem esperar a rotina de 15 minutos).
+- Leads de formulário (origens Meta Ads, Instagram, Facebook, LinkedIn, TikTok, landing page e site, configuráveis em `auto_tentativa_origins`) chegam com nome e contato e entram direto na etapa **Tentativa de contato**, com a tarefa de primeiro contato para o especialista.
 
 ## 4. WhatsApp: `POST /api/integracoes/whatsapp/mensagens`
 
@@ -181,6 +182,16 @@ Base para o futuro modelo de R1: depois da reunião, um processo lê a transcri�
 ```
 
 Resposta: `filled` (campos preenchidos agora), `ignored` (já tinham valor ou não são aceitos) e `qualification` (`filled` de `total` campos essenciais e o que ainda falta). Os valores das listas seguem os códigos de Configurações › Listas (objetivo, finalidade do crédito, urgência, decisor etc.). O preenchimento fica no histórico do negócio e na auditoria.
+
+Campos novos aceitos: `housing_purpose` (morar/investir), `bid_source` (reserva, fgts, reserva_fgts, venda_bem, outro), `has_property`, `property_type` (apartamento, casa, terreno…), `property_value`, `property_free_liens`, `pays_rent` e `rent_value`.
+
+**Arquivo da transcrição (tela do negócio).** `POST /api/oportunidades/:id/transcricoes` recebe `{ filename, text }` (o navegador converte .docx e .xlsx em texto), guarda a transcrição e devolve os campos identificados (`items`: chave, descrição, valor lido, valor entendido, se vai preencher). `POST /api/oportunidades/:id/transcricoes/:tid/aplicar` completa os campos vazios. Formatos lidos:
+
+- linhas "Descrição: valor" no texto (ex.: `Crédito desejado: R$ 300.000,00`, `Prazo desejado: curto`, `Origem do lance: FGTS`);
+- planilha com as colunas **Campo** (chave ou descrição) e **Valor** — o modelo sai em `GET /api/r1/campos` e no botão "Modelo da transcrição";
+- planilha com um campo por coluna (cabeçalho na 1ª linha, valores na 2ª).
+
+O futuro agente de IA que ler a transcrição pode gerar qualquer um desses formatos ou chamar diretamente o endpoint `/qualificacao`.
 
 ## Exportação para discadora
 

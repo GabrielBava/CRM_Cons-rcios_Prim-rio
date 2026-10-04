@@ -1,6 +1,7 @@
 // 1. Painel inicial: visão do dia do especialista (ou consolidada para líder e administrador) e ações sugeridas.
 import { get } from '../api.js';
-import { html, render, $, on, state, selectOptions, userItems, fmtMoney, fmtMoneyShort, fmtDateTime, fmtDate, relTime, badge, empty, toastError, K, monthLabel } from '../ui.js';
+import { html, render, $, on, state, selectOptions, userItems, fmtMoney, fmtMoneyShort, fmtDateTime, fmtDate, relTime, badge, empty, toastError, K, monthLabel, avatar } from '../ui.js';
+import { tempBadge } from '../qualification.js';
 import { icon } from '../icons.js';
 
 const LEVEL = { alta: ['Alta', 'ok'], media: ['Média', 'warn'], baixa: ['Baixa', 'danger'] };
@@ -30,7 +31,12 @@ export async function show(view) {
     const hour = new Date().getHours();
     const hello = hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite';
     const g = d.goal;
-    const maxFunnel = Math.max(1, ...d.funnel.map((f) => f.count));
+    // Funil visual: etapas abertas em faixas que afunilam (Prospect → Follow-up), venda no fim; nutrição e perdidos ao lado
+    const open = d.funnel.filter((f) => f.kind === 'aberta');
+    const won = d.funnel.find((f) => f.kind === 'ganho');
+    const side = d.funnel.filter((f) => f.kind === 'nutricao' || f.kind === 'perdido');
+    const bands = [...open, ...(won ? [won] : [])];
+    const funnelTotal = open.reduce((t, f) => ({ n: t.n + f.count, v: t.v + f.value, q: t.q + f.temps.quente, m: t.m + f.temps.morno, fr: t.fr + f.temps.frio }), { n: 0, v: 0, q: 0, m: 0, fr: 0 });
     render(view, html`<div class="page">
       <div class="page-head"><div><h1>${hello}, ${state.user.name.split(' ')[0]}!</h1><p class="muted">${new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })} · ${d.scope.name ? `visão de ${d.scope.name}` : d.scope.all ? 'visão de toda a empresa' : 'visão da sua equipe'}</p></div>
         ${manager ? html`<label class="inline">Ver<select data-user>${selectOptions(userItems(), selected, { placeholder: state.user.role === 'admin' ? 'Toda a empresa' : 'Minha equipe' })}</select></label>` : ''}</div>
@@ -63,8 +69,24 @@ export async function show(view) {
         </section>
       </div>
 
-      <section class="card"><div class="section-head"><h3>Funil de vendas</h3><a href="#/funil" class="small">abrir o CRM</a></div>
-        <div class="bars">${d.funnel.map((f) => html`<a class="bar-row" href="#/funil"><span class="bar-label">${f.name}</span><span class="bar"><span class="bar-fill ${f.kind === 'ganho' ? 'won' : f.kind === 'perdido' ? 'stalled' : ''}" style="width:${(f.count / maxFunnel) * 100}%"></span></span><span class="bar-val">${f.count}${f.value ? ` · ${fmtMoney(f.value)}` : ''}</span></a>`)}</div>
+      <section class="card funnel-card"><div class="section-head"><h3>Funil de vendas</h3><a href="#/funil" class="small">abrir o CRM</a></div>
+        <div class="funnel-summary">
+          <span><strong>${funnelTotal.n}</strong> negócio(s) em aberto · <strong>${fmtMoneyShort(funnelTotal.v)}</strong></span>
+          <span class="temp-legend">${tempBadge('quente')} ${funnelTotal.q} ${tempBadge('morno')} ${funnelTotal.m} ${tempBadge('frio')} ${funnelTotal.fr}</span>
+        </div>
+        <div class="funnel-viz" role="list">${bands.map((f, i) => {
+          const w = 100 - (i * 58) / Math.max(1, bands.length - 1);
+          const next = bands[i + 1] ? (100 - ((i + 1) * 58) / Math.max(1, bands.length - 1)) : w - 6;
+          const pct = f.kind === 'aberta' && funnelTotal.n ? Math.round((f.count / funnelTotal.n) * 100) : null;
+          const cut = (((w - next) / 2) / w) * 100;
+          return html`<a class="funnel-band ${f.kind === 'ganho' ? 'won' : ''}" role="listitem" href="#/funil" style="--w:${w}%;--cut:${cut.toFixed(2)}%;--i:${i}">
+            <span class="funnel-name">${f.name}</span>
+            <span class="funnel-nums"><strong>${f.count}</strong> ${f.count === 1 ? 'card' : 'cards'} · <strong>${f.value ? fmtMoneyShort(f.value) : 'R$ 0'}</strong>${pct != null ? html` <small>· ${pct}% do funil</small>` : f.kind === 'ganho' ? html` <small>· no mês</small>` : ''}
+            ${f.kind === 'aberta' && f.count ? html`<span class="funnel-temps" title="Quente ${f.temps.quente} · Morno ${f.temps.morno} · Frio ${f.temps.frio}">${f.temps.quente ? html`<i class="t-q">${f.temps.quente}</i>` : ''}${f.temps.morno ? html`<i class="t-m">${f.temps.morno}</i>` : ''}${f.temps.frio ? html`<i class="t-f">${f.temps.frio}</i>` : ''}</span>` : ''}</span>
+          </a>`;
+        })}</div>
+        ${side.length ? html`<div class="funnel-side">${side.map((f) => html`<a href="#/funil"><span>${f.name}</span><strong>${f.count}</strong><small>${f.value ? fmtMoneyShort(f.value) : '—'}</small></a>`)}</div>` : ''}
+        <p class="hint">Valor de cada etapa: proposta ativa ou, sem proposta, o crédito desejado. Temperatura: quente (prazo curto, valor e lance ou parcela), morno (objetivo e valor) e frio (sem valor nem prazo).</p>
         ${d.rotting ? html`<p class="small warn-text">${d.rotting} negócio(s) parado(s) além do prazo da etapa.</p>` : ''}
       </section>
 
@@ -78,7 +100,10 @@ export async function show(view) {
       </div>
 
       <div class="cols">
-        ${d.ranking.length ? html`<section class="card"><h3>Ranking do mês</h3><ol class="ranking">${d.ranking.slice(0, 10).map((r) => html`<li><span>${r.name}</span><span>${r.vendas} venda(s) · ${fmtMoney(r.credito)}</span></li>`)}</ol></section>` : ''}
+        ${d.ranking.length ? html`<section class="card"><h3>Ranking do mês</h3><ol class="ranking ranking-people">${d.ranking.slice(0, 10).map((r, i) => html`<li class="${i < 3 && r.vendas ? `top top-${i + 1}` : ''}">
+          <span class="rank-pos">${i + 1}º</span>${avatar(r, 34)}
+          <span class="rank-who"><strong>${r.name}</strong>${r.job_title ? html`<small>${r.job_title}</small>` : ''}</span>
+          <span class="rank-nums"><strong>${r.vendas} ${r.vendas === 1 ? 'venda' : 'vendas'}</strong><small>${fmtMoney(r.credito)}</small></span></li>`)}</ol></section>` : ''}
         <section class="card"><h3>Relacionamento e capacitação</h3>
           ${d.birthdays.length ? html`<h4>Aniversariantes da semana</h4><ul class="task-list">${d.birthdays.map((b) => html`<li><a href="#/clientes/${b.id}">${b.name}</a> <small class="muted">${b.birth_date.slice(8, 10)}/${b.birth_date.slice(5, 7)}</small></li>`)}</ul>` : ''}
           ${d.trainings.length ? html`<h4>Treinamentos obrigatórios pendentes</h4><ul class="task-list">${d.trainings.map((t) => html`<li><a href="#/treinamentos?id=${t.id}">${t.title}</a>${t.overdue ? html` ${badge('Atrasado', 'danger')}` : t.due_at ? html` <small class="muted">até ${fmtDate(t.due_at)}</small>` : ''}</li>`)}</ul>` : ''}

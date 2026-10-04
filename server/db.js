@@ -583,6 +583,10 @@ const DEFAULT_OPTIONS = {
     ['whatsapp', 'WhatsApp'],
     ['ligacao_ativa', 'Ligação ativa'],
     ['discadora', 'Discadora'],
+    ['facebook', 'Facebook'],
+    ['linkedin', 'LinkedIn'],
+    ['tiktok', 'TikTok'],
+    ['landing_page', 'Landing page'],
     ['site', 'Site ou formulário'],
     ['evento', 'Evento'],
     ['prospeccao_propria', 'Prospecção própria'],
@@ -609,6 +613,8 @@ const DEFAULT_OPTIONS = {
     ['lance_fixo', 'Lance fixo'],
     ['lance_livre', 'Lance livre'],
     ['combinacao', 'Combinação'],
+    ['lance_fidelidade', 'Lance fidelidade'],
+    ['lance_retido', 'Lance retido'],
   ],
   modalidade_pagamento: [
     ['parcela_integral', 'Parcela integral'],
@@ -664,6 +670,31 @@ const DEFAULT_OPTIONS = {
     ['360k_4_8m', 'R$ 360 mil a R$ 4,8 milhões/ano'],
     ['4_8m_30m', 'R$ 4,8 milhões a R$ 30 milhões/ano'],
     ['acima_30m', 'Acima de R$ 30 milhões/ano'],
+  ],
+  finalidade_moradia: [
+    ['morar', 'Para morar'],
+    ['investir', 'Para investir (renda ou valorização)'],
+  ],
+  tipo_imovel: [
+    ['apartamento', 'Apartamento'],
+    ['casa', 'Casa'],
+    ['casa_condominio', 'Casa em condomínio'],
+    ['terreno', 'Terreno'],
+    ['sala_comercial', 'Sala ou loja comercial'],
+    ['galpao', 'Galpão'],
+    ['rural', 'Imóvel rural'],
+    ['outro', 'Outro'],
+  ],
+  origem_lance: [
+    ['reserva', 'Reserva financeira (recurso próprio)'],
+    ['fgts', 'FGTS'],
+    ['reserva_fgts', 'Reserva e FGTS'],
+    ['venda_bem', 'Venda de um bem'],
+    ['outro', 'Outro'],
+  ],
+  escolha_contemplacao: [
+    ['faturamento', 'Faturamento (usar o crédito na compra do bem)'],
+    ['venda', 'Venda da carta contemplada'],
   ],
   temperatura: [
     ['frio', 'Frio'],
@@ -951,7 +982,9 @@ const DEFAULT_SETTINGS = {
   postsale_referral_min_nps: 9,
   // Linha do tempo do pós-venda: D+N (dias corridos a partir da confirmação da venda) de cada etapa
   postsale_days: { primeira_parcela: 0, onboarding: 1, acesso_cliente: 5, recebimento_boletos: 7, estrategia_lance: 10, preferencias_contato: 15, nps: 30, indicacao: 35 },
-  roleta: { mode: 'sequencial', auto: false, participants: [], last_user_id: null, first_contact_hours: 1 },
+  roleta: { mode: 'sequencial', auto: true, participants: [], last_user_id: null, first_contact_hours: 1 },
+  // Leads de formulário (Meta Ads, Instagram, Facebook, LinkedIn, TikTok, landing page e site) entram direto em "Tentativa de contato"
+  auto_tentativa_origins: ['meta_ads', 'instagram', 'facebook', 'linkedin', 'tiktok', 'landing_page', 'site'],
   presale_email_subject: 'Seu cadastro para a adesão ao consórcio',
   // Simulador usado para gerar propostas (o CRM envia nome e contato do cliente no endereço)
   proposal_simulator_url: 'https://claude.ai/artifact/Fk7ApKUi2U4BqAfvzfGgpd',
@@ -1036,6 +1069,25 @@ function seedDefaults(db) {
     db.prepare("INSERT INTO settings (key, value) VALUES ('migr_fluxo_venda_v4', 'true')").run();
   }
   seedTreasury(db, now);
+  // v5: novas origens de formulário, tipos de contemplação e roleta automática (entrada imediata + rotina a cada 15 minutos)
+  if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_v5_leads'").get()) {
+    const addOpt = (list, items) => {
+      let pos = db.prepare('SELECT COALESCE(MAX(position), -1) AS p FROM options WHERE list = ?').get(list).p;
+      for (const [value, label] of items) {
+        if (!db.prepare('SELECT 1 FROM options WHERE list = ? AND value = ?').get(list, value)) db.prepare("INSERT INTO options (list, value, label, position, flags) VALUES (?, ?, ?, ?, '{}')").run(list, value, label, ++pos);
+      }
+    };
+    addOpt('origem', [['facebook', 'Facebook'], ['linkedin', 'LinkedIn'], ['tiktok', 'TikTok'], ['landing_page', 'Landing page']]);
+    addOpt('tipo_contemplacao', [['lance_fidelidade', 'Lance fidelidade'], ['lance_retido', 'Lance retido']]);
+    const r = db.prepare("SELECT value FROM settings WHERE key = 'roleta'").get();
+    if (r) {
+      const cfg = JSON.parse(r.value || '{}');
+      db.prepare("UPDATE settings SET value = ? WHERE key = 'roleta'").run(JSON.stringify({ ...cfg, auto: true }));
+    }
+    db.exec('UPDATE contracts SET installment_initial = installment_value WHERE installment_initial IS NULL AND installment_value IS NOT NULL');
+    db.exec("UPDATE contracts SET adhesion_date = (SELECT s.allocated_on FROM sales s WHERE s.id = contracts.sale_id) WHERE adhesion_date IS NULL AND sale_id IS NOT NULL");
+    db.prepare("INSERT INTO settings (key, value) VALUES ('migr_v5_leads', 'true')").run();
+  }
   // Nome oficial da empresa: Vero Consórcios (só preenche quando ainda não foi definido)
   if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_marca_vero'").get()) {
     db.prepare("UPDATE settings SET value = ? WHERE key = 'company_name' AND value IN (?, 'null')").run(JSON.stringify('Vero Consórcios'), JSON.stringify(''));
@@ -1125,6 +1177,8 @@ const ADDED_COLUMNS = {
     ['existing_consortium_value', 'REAL'], ['existing_consortium_admin', 'TEXT'], ['existing_financing_balance', 'REAL'],
     ['existing_financing_cet', 'REAL'], ['existing_financing_bank', 'TEXT'],
     ['credit_purpose_type', 'TEXT'], ['has_bid_resources', 'TEXT'], ['had_consortium', 'TEXT'], ['has_financing', 'TEXT'], ['decision_notes', 'TEXT'],
+    ['housing_purpose', 'TEXT'], ['bid_source', 'TEXT'], ['has_property', 'TEXT'], ['property_type', 'TEXT'], ['property_value', 'REAL'],
+    ['property_free_liens', 'TEXT'], ['pays_rent', 'TEXT'], ['rent_value', 'REAL'], ['temperature', 'TEXT'], ['temperature_reason', 'TEXT'],
   ],
   proposals: [
     ['accepted_at', 'TEXT'], ['accepted_channel', 'TEXT'], ['accepted_by', 'INTEGER REFERENCES users(id)'], ['refusal_reason', 'TEXT'],
@@ -1148,7 +1202,10 @@ const ADDED_COLUMNS = {
     ['contract_number', 'TEXT'], ['installment_value', 'REAL'], ['due_day', 'INTEGER'], ['first_due_date', 'TEXT'],
     ['contemplated_at', 'TEXT'], ['contemplation_type', 'TEXT'], ['bid_value', 'REAL'], ['acquired_asset', 'TEXT'],
     ['seller_id', 'INTEGER REFERENCES users(id)'], ['sale_value', 'REAL'],
+    ['installment_initial', 'REAL'], ['adhesion_date', 'TEXT'], ['next_readjustment_date', 'TEXT'], ['available_credit', 'REAL'],
+    ['contemplation_credit', 'REAL'], ['net_to_pay', 'REAL'], ['client_choice', 'TEXT'],
   ],
+  administrators: [['portal_password_enc', 'TEXT'], ['portal_password_updated_at', 'TEXT'], ['portal_password_updated_by', 'INTEGER']],
 };
 
 const EXTRA_SCHEMA = `
@@ -1651,6 +1708,19 @@ CREATE TABLE IF NOT EXISTS fin_files (
   created_at TEXT NOT NULL
 );
 
+-- Transcrições da R1 anexadas ao negócio (texto extraído do arquivo; os campos identificados completam a qualificação)
+CREATE TABLE IF NOT EXISTS r1_transcripts (
+  id INTEGER PRIMARY KEY,
+  opportunity_id INTEGER NOT NULL REFERENCES opportunities(id),
+  filename TEXT,
+  content TEXT NOT NULL,
+  fields TEXT,
+  applied TEXT,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_r1_opp ON r1_transcripts(opportunity_id);
+
 -- Notificações da plataforma (sino no topo)
 CREATE TABLE IF NOT EXISTS notifications (
   id INTEGER PRIMARY KEY,
@@ -1720,8 +1790,21 @@ function initDb(db) {
   return db;
 }
 
+/** Chave que cifra os segredos guardados no banco (ex.: senha do portal da administradora): CRM_SECRET_KEY ou o arquivo <banco>.key. */
+function ensureSecretKey(file) {
+  if (process.env.CRM_SECRET_KEY || file === ':memory:') return;
+  const keyFile = `${file}.key`;
+  try {
+    if (!fs.existsSync(keyFile)) fs.writeFileSync(keyFile, require('node:crypto').randomBytes(32).toString('base64'), { mode: 0o600 });
+    process.env.CRM_SECRET_KEY = fs.readFileSync(keyFile, 'utf8').trim();
+  } catch (e) {
+    console.error('Não foi possível ler ou criar a chave de cifragem:', e.message);
+  }
+}
+
 function openDb(file) {
   if (file !== ':memory:') fs.mkdirSync(path.dirname(file), { recursive: true });
+  ensureSecretKey(file);
   const db = new DatabaseSync(file);
   if (file !== ':memory:') db.exec('PRAGMA journal_mode = WAL;');
   return initDb(db);

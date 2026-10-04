@@ -9,6 +9,7 @@ const CONTRACT_FIELDS = [
   'product_id', 'category', 'administrator', 'group_code', 'quota_code', 'credit_value', 'term_months', 'contracted_at', 'quotas',
   'status', 'payment_modality', 'strategy', 'notes', 'proposal_id', 'contract_number', 'installment_value', 'due_day', 'first_due_date',
   'contemplated_at', 'contemplation_type', 'bid_value', 'acquired_asset', 'seller_id', 'sale_value',
+  'installment_initial', 'adhesion_date', 'next_readjustment_date', 'available_credit', 'contemplation_credit', 'net_to_pay', 'client_choice',
 ];
 
 function normalizeContract(db, data, contactId) {
@@ -36,7 +37,7 @@ function normalizeContract(db, data, contactId) {
   }
   if (data.credit_value !== undefined) o.credit_value = toNumber(data.credit_value);
   for (const f of ['contract_number', 'acquired_asset']) if (data[f] !== undefined) o[f] = clean(data[f]);
-  for (const f of ['installment_value', 'bid_value', 'sale_value']) {
+  for (const f of ['installment_value', 'installment_initial', 'bid_value', 'sale_value', 'available_credit', 'contemplation_credit', 'net_to_pay']) {
     if (data[f] !== undefined) {
       o[f] = toNumber(data[f]);
       if (o[f] != null && o[f] < 0) throw badRequest('Valores não podem ser negativos.');
@@ -47,7 +48,11 @@ function normalizeContract(db, data, contactId) {
     if (n != null && (!Number.isInteger(n) || n < 1 || n > 31)) throw badRequest('Dia de vencimento deve estar entre 1 e 31.');
     o.due_day = n;
   }
-  for (const f of ['first_due_date', 'contemplated_at']) if (data[f] !== undefined) o[f] = toDateOnly(data[f]);
+  for (const f of ['first_due_date', 'contemplated_at', 'adhesion_date', 'next_readjustment_date']) if (data[f] !== undefined) o[f] = toDateOnly(data[f]);
+  if (data.client_choice !== undefined) {
+    o.client_choice = clean(data.client_choice);
+    assertOption(db, 'escolha_contemplacao', o.client_choice, 'escolha do cliente na contemplação');
+  }
   if (data.contemplation_type !== undefined) {
     o.contemplation_type = clean(data.contemplation_type);
     assertOption(db, 'tipo_contemplacao', o.contemplation_type, 'tipo de contemplação');
@@ -88,6 +93,10 @@ function createContractRow(db, user, data) {
     }
   }
   if (o.product_id && !o.administrator) o.administrator = db.prepare('SELECT administrator FROM products WHERE id = ?').get(o.product_id)?.administrator ?? null;
+  // Parcela inicial = a da contratação; a parcela atual (installment_value) é ajustada depois pelo pós-venda
+  if (o.installment_initial == null && o.installment_value != null) o.installment_initial = o.installment_value;
+  if (o.installment_value == null && o.installment_initial != null) o.installment_value = o.installment_initial;
+  if (o.available_credit == null && o.credit_value != null) o.available_credit = o.credit_value;
   const now = nowIso();
   const code = nextCode(db, 'contract', 'CT');
   const row = { status: 'em_formalizacao', seller_id: opp?.owner_id ?? user.id, ...o, code, contact_id: contactId, opportunity_id: opp?.id ?? null, owner_id: opp?.owner_id ?? user.id, created_by: user.id, created_at: now, updated_at: now };

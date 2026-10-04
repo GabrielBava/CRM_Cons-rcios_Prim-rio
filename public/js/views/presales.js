@@ -1,7 +1,7 @@
 // 9. Pré-venda: do aceite da proposta ao comprovante de pagamento. Link de cadastro, conferência, termo de adesão com as cotas
 // (grupo, cota e contrato), contrato assinado, pagamento (Pix ou boleto) e comprovante, que leva a venda para Vendas.
 import { get, post } from '../api.js';
-import { html, raw, render, $, $$, on, state, selectOptions, userItems, table, badge, fmtMoney, fmtDate, fmtDateTime, relTime, modal, field, toast, toastError, empty, can, opts } from '../ui.js';
+import { html, raw, render, $, $$, on, state, selectOptions, userItems, table, badge, fmtMoney, fmtDate, fmtDateTime, relTime, modal, field, toast, toastError, empty, can, opts, fmtMoneyInput, moneyValue, todayLocal } from '../ui.js';
 import { fileToBase64 } from './record-tabs.js';
 
 const PAY = { pix: 'Pix', boleto: 'Boleto' };
@@ -111,7 +111,7 @@ async function newPreSale() {
 /** Editor das cotas do termo de adesão: crédito, grupo, cota e nº do contrato; botão para adicionar cotas. */
 const quotaRow = (q = {}, i = 0) => html`<div class="quota-row" data-quota>
   <span class="quota-n">${i + 1}ª</span>
-  <label>Crédito (R$)<input type="number" step="0.01" min="0" data-q="credit_value" value="${q.credit_value ?? ''}" required></label>
+  <label>Crédito (R$)<input type="text" inputmode="decimal" data-money data-q="credit_value" value="${fmtMoneyInput(q.credit_value)}" required></label>
   <label>Grupo<input data-q="group_code" value="${q.group_code ?? ''}" required></label>
   <label>Cota<input data-q="quota_code" value="${q.quota_code ?? ''}" required></label>
   <label>Nº do contrato<input data-q="contract_number" value="${q.contract_number ?? ''}" required></label>
@@ -124,13 +124,13 @@ export function bindQuotaEditor(form) {
   if (!list) return;
   const renumber = () => {
     $$('[data-quota]', list).forEach((r, i) => ($('.quota-n', r).textContent = `${i + 1}ª`));
-    const vals = $$('[data-q=credit_value]', list).map((x) => Number(x.value) || 0);
+    const vals = $$('[data-q=credit_value]', list).map((x) => moneyValue(x));
     $('[data-q-total]', form).textContent = `${vals.length} cota(s) · total ${fmtMoney(vals.reduce((t, v) => t + v, 0))}`;
   };
   on(form, 'click', '[data-q-add]', () => {
     const last = $$('[data-quota]', list).pop();
     const tmp = document.createElement('div');
-    tmp.innerHTML = String(quotaRow({ credit_value: last ? $('[data-q=credit_value]', last).value : '', group_code: last ? $('[data-q=group_code]', last).value : '' }, 0));
+    tmp.innerHTML = String(quotaRow({ credit_value: last ? moneyValue($('[data-q=credit_value]', last)) : '', group_code: last ? $('[data-q=group_code]', last).value : '' }, 0));
     list.appendChild(tmp.firstElementChild);
     renumber();
   });
@@ -141,7 +141,7 @@ export function bindQuotaEditor(form) {
   list.addEventListener('input', renumber);
   renumber();
 }
-export const readQuotas = (form) => $$('[data-quota]', form).map((r) => Object.fromEntries($$('[data-q]', r).map((x) => [x.dataset.q, x.value])));
+export const readQuotas = (form) => $$('[data-quota]', form).map((r) => Object.fromEntries($$('[data-q]', r).map((x) => [x.dataset.q, x.dataset.money !== undefined ? String(moneyValue(x)) : x.value])));
 
 /** Formulário da próxima etapa, conforme a situação atual e a ordem da pré-venda. */
 function nextStepForm(ps) {
@@ -149,7 +149,7 @@ function nextStepForm(ps) {
   const steps = ps.steps || [];
   const idx = Math.max(ps.step, 2);
   const nextKey = ['cancelada', 'concluida'].includes(ps.status) ? null : steps[idx + 1]?.[0];
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayLocal();
   switch (nextKey) {
     case 'conferido':
       return {
@@ -297,7 +297,7 @@ async function openPreSale(id, reload) {
       const hint = form.querySelector('.credit-hint');
       if (hint && form.plan_id) {
         const check = async () => {
-          const vals = $$('[data-q=credit_value]', form).map((x) => x.value).filter(Boolean);
+          const vals = $$('[data-q=credit_value]', form).map((x) => moneyValue(x)).filter(Boolean);
           if (!form.plan_id.value || !vals.length) return (hint.textContent = '');
           const errs = [];
           for (const v of [...new Set(vals)]) {

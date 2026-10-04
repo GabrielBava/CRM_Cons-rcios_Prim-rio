@@ -604,3 +604,41 @@ Cadastros são desativados, não apagados, para manter o histórico.
 **Permissões.** O módulo é do administrador por padrão e pode ser liberado a outro usuário em Usuários. Quem não tem o módulo, mas é responsável por um lançamento, vê só os próprios lançamentos em Contas a pagar e Contas a receber: dá baixa, anexa comprovante, informa o motivo do atraso e registra observações. Não cria lançamentos nem acessa cadastros ou a visão geral.
 
 **API.** `GET /api/financeiro/visao-geral`, `GET|POST /api/financeiro/cadastros[/:tipo]`, `GET /api/financeiro/lancamentos`, `GET /api/financeiro/competencia`, `POST /api/financeiro/titulos`, `GET|PATCH /api/financeiro/titulos/:id` (+ `/cancelar`, `/observacoes`, `/rateio`, `/arquivos`), `POST /api/financeiro/parcelas/:id/baixa`, `/estorno`, `/atraso` e `PATCH /api/financeiro/parcelas/:id`.
+
+## 18. Entrada de leads, temperatura, transcrição da R1, painel e produto contratado
+
+**Importação de base de leads.** O popup **Novo lead** tem os botões **Baixar modelo Excel** e **Importar base de leads**.
+
+- O modelo (.xlsx) traz as colunas obrigatórias em destaque (Nome; Telefone ou E-mail) e as opcionais (WhatsApp, Telefone 2, Tipo, CPF/CNPJ, Empresa, Cidade, UF, Profissão, Origem, Campanha, Crédito desejado, Observações, E-mail do responsável, ID do lead, Data de recebimento), além da aba **Instruções** com a descrição de cada coluna e as origens aceitas.
+- A importação aceita .xlsx ou .csv. Antes de gravar, o CRM lê as colunas (mapeamento automático, ajustável) e **valida cada linha**: nome, telefone ou e-mail e crédito.
+- **Duplicados são removidos**: cadastros que já existem (telefone, e-mail, CPF/CNPJ ou ID do lead) e linhas repetidas no arquivo ficam fora; a lista dos removidos aparece na prévia e pode ser baixada em Excel. Só os cadastros novos viram cards no funil.
+- O responsável pode ser um usuário ou **a roleta** (distribuição na hora).
+
+**Leads de formulário direto em Tentativa de contato.** Leads com nome e telefone ou e-mail vindos de Meta Ads, Instagram, Facebook, LinkedIn, TikTok, landing page ou site (lista configurável `auto_tentativa_origins`) começam na etapa **Tentativa de contato**, por qualquer entrada (API, importação ou cadastro manual).
+
+**Roleta automática.** Ligada por padrão. Quando um lead entra sem responsável, a roleta distribui **no mesmo momento** e cria a tarefa de primeiro contato. A cada **15 minutos** uma rotina verifica a fila de Prospects e leads e distribui o que tiver ficado sem especialista (ex.: canal sem participante ativo); se ainda sobrar, avisa administradores e líderes.
+
+**Temperatura do negócio.** Calculada a cada alteração da qualificação, em todas as etapas do funil:
+
+| Temperatura | Regra |
+|---|---|
+| Quente | Prazo curto (até 3 meses), valor do crédito definido e lance ou parcela informados |
+| Morno | Objetivo e valor definidos, sem prazo curto ou sem lance/parcela |
+| Frio | Só curiosidade: sem valor nem prazo |
+
+Lance informado = recurso próprio para lance, valor do lance, FGTS. A temperatura aparece ao lado do nome nos cartões e na lista do CRM, no título do negócio (com o que falta para esquentar), no painel lateral e na ficha (o campo deixou de ser manual). O cadastro acompanha o negócio aberto mais recente; a probabilidade das propostas usa a temperatura.
+
+**Novos campos da qualificação.** Necessidade: **moradia — morar ou investir** (quando a categoria é imóvel). Estratégia: **quanto tem para lance** e **de onde vem o lance** (reserva, FGTS, reserva e FGTS, venda de um bem), **possui imóvel?** com tipo (apartamento, casa, casa em condomínio, terreno, sala comercial, galpão, rural, outro), valor e **livre de ônus** (só aparece com "possui imóvel = sim"), **paga aluguel?** e valor do aluguel.
+
+**Transcrição da R1.** Na tela do negócio e em **Editar qualificação**, o botão **Anexar transcrição da R1** recebe o arquivo da reunião (.txt, .docx, .xlsx ou .csv). O CRM identifica os campos (pela descrição ou pela chave), mostra o valor lido e o entendido e **preenche só os campos vazios**; a transcrição fica anexada ao negócio. Há um modelo em Excel (Campo, Descrição, Tipo, Opções, Valor) para o futuro agente de IA (ver INTEGRACOES.md, seção 6).
+
+**Valores em reais.** Todos os campos de valor (crédito, parcela, lance, FGTS, imóvel, aluguel, metas, cotas, financeiro) usam o formato R$ 1.234,56.
+
+**Simulador.** Aberto pelo menu **Simulador**, entra no modo simulação: o botão "Gerar proposta (PDF)" fica inativo. Propostas só pela tela Propostas.
+
+**Painel inicial.** O funil de vendas aparece em forma de funil: uma faixa por etapa (Prospect → Follow-up e Venda no mês), com a quantidade de cards, o valor (proposta ativa ou crédito desejado), a participação no funil e a contagem quente/morno/frio; Nutrição e Perdidos ficam ao lado. O **ranking do mês** mostra a foto (ou as iniciais) do especialista, o cargo, o número de vendas e o valor vendido.
+
+**Produto contratado.** Campos: **contrato da cota** (nº na administradora), **crédito contratado** e **crédito disponível** (separados), **parcela inicial** (da contratação) e **parcela atual** (ajustada pelo pós-venda nos reajustes), **data da contratação** (a venda), **data da adesão** (alocação na administradora) e **próximo reajuste** (padrão: 12 meses após a adesão). Contemplação: data, tipo (sorteio, lance livre, fixo, **fidelidade**, **retido**, combinação), valor do lance, **crédito disponível na contemplação**, **líquido a pagar** e **escolha do cliente** (faturamento ou venda da carta).
+
+**Administradoras.** Acesso ao portal com endereço, usuário e **senha**. A senha fica cifrada no banco (AES-256-GCM com a chave `CRM_SECRET_KEY` ou o arquivo `<banco>.key`, criado na primeira execução e que deve entrar no backup), não aparece em listagens e só o administrador consegue ver; cada consulta fica na auditoria.
+

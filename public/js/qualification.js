@@ -19,6 +19,7 @@ export const QUAL_BLOCKS = [
       { name: 'objective_type', label: 'Objetivo', list: 'objetivo' },
       { name: 'credit_purpose_type', label: 'Finalidade do crédito', list: 'finalidade_credito' },
       { name: 'credit_category', label: 'Categoria de interesse', list: 'categoria_credito' },
+      { name: 'housing_purpose', label: 'Moradia: morar ou investir?', list: 'finalidade_moradia', showIf: ['credit_category', 'imovel'] },
       { name: 'product_type', label: 'Tipo de produto', list: 'tipo_produto' },
       { name: 'credit_value', label: 'Crédito desejado', type: 'money' },
       { name: 'product_id', label: 'Plano de interesse', type: 'product' },
@@ -52,13 +53,20 @@ export const QUAL_BLOCKS = [
     hint: 'Recursos para lance e como chegar à contemplação.',
     fields: [
       { name: 'has_bid_resources', label: 'Terá recurso próprio para lance?', options: YES_NO_UNKNOWN },
-      { name: 'bid_own_resources', label: 'Valor disponível para lance', type: 'money', showIf: ['has_bid_resources', 'sim'] },
+      { name: 'bid_own_resources', label: 'Quanto tem para lance', type: 'money', showIf: ['has_bid_resources', 'sim'] },
+      { name: 'bid_source', label: 'O lance vem de', list: 'origem_lance', showIf: ['has_bid_resources', 'sim'] },
       { name: 'has_fgts', label: 'Possui FGTS?', list: 'possui_fgts', pf: true },
       { name: 'fgts_available', label: 'FGTS disponível', type: 'money', pf: true, showIf: ['has_fgts', 'sim'] },
       { name: 'embedded_bid_interest', label: 'Interesse em lance embutido', options: EMBEDDED },
       { name: 'quotas', label: 'Quantidade de cotas', type: 'int' },
       { name: 'strategy', label: 'Estratégia', list: 'estrategia', help: 'A estratégia só vale como recomendação depois de validada pelo consultor.' },
       { name: 'payment_modality', label: 'Modalidade de pagamento', list: 'modalidade_pagamento' },
+      { name: 'has_property', label: 'Possui imóvel?', options: YES_NO },
+      { name: 'property_type', label: 'Tipo do imóvel', list: 'tipo_imovel', showIf: ['has_property', 'sim'] },
+      { name: 'property_value', label: 'Valor do imóvel', type: 'money', showIf: ['has_property', 'sim'] },
+      { name: 'property_free_liens', label: 'Imóvel livre de ônus?', options: YES_NO, showIf: ['has_property', 'sim'] },
+      { name: 'pays_rent', label: 'Paga aluguel hoje?', options: YES_NO },
+      { name: 'rent_value', label: 'Valor do aluguel', type: 'money', showIf: ['pays_rent', 'sim'] },
     ],
   },
   {
@@ -87,6 +95,30 @@ const ESSENTIAL = [
   ['decision_maker', 'Fator decisor'], ['had_consortium', 'Experiência com consórcio'],
 ];
 const isEmpty = (v) => v == null || v === '';
+
+/* ------------------------- Temperatura (quente, morno, frio) ------------------------- */
+
+export const TEMP = { quente: 'Quente', morno: 'Morno', frio: 'Frio' };
+const TEMP_RULE = {
+  quente: 'Prazo curto, valor definido e lance ou parcela informados.',
+  morno: 'Objetivo e valor definidos, sem prazo curto ou sem lance/parcela.',
+  frio: 'Só curiosidade: sem valor nem prazo.',
+};
+/** Selo da temperatura (ao lado do nome). info = { has, missing } calculado pelo servidor. */
+export function tempBadge(level, info = null, { short = false } = {}) {
+  if (!level) return '';
+  const why = info ? `${TEMP[level]}: ${info.has.length ? info.has.join(', ') : 'sem valor nem prazo'}${info.missing.length ? `. Para esquentar: ${info.missing.join(', ')}` : ''}` : `${TEMP[level]}: ${TEMP_RULE[level]}`;
+  return html`<span class="temp temp-${level}" title="${why}"><span class="temp-dot" aria-hidden="true"></span>${short ? '' : TEMP[level]}</span>`;
+}
+/** Painel da temperatura no negócio: o que tem e o que falta para esquentar. */
+export function tempPanel(o) {
+  const t = o.temperature_info;
+  if (!t) return '';
+  return html`<div class="temp-panel temp-${t.level}">
+    <div>${tempBadge(t.level, t)} <small class="muted">${TEMP_RULE[t.level]}</small></div>
+    <small>${t.has.length ? html`Tem: ${t.has.join(', ')}.` : 'Ainda sem valor nem prazo.'}${t.missing.length ? html` <strong>Para esquentar:</strong> ${t.missing.join(', ')}.` : ''}</small>
+  </div>`;
+}
 
 export function qualStatus(o, kind = 'PF') {
   const fields = ESSENTIAL.filter(([, , only]) => !only || only === kind);

@@ -82,11 +82,16 @@ function createApp({ dbFile = process.env.CRM_DB || path.join(__dirname, '..', '
     handle(req, res);
   });
 
-  // Rotina periódica: expiração de propostas vencidas
+  // Rotinas periódicas: manutenção a cada hora e distribuição da fila de leads (roleta) a cada 15 minutos
   router.sweep();
   const timer = setInterval(router.sweep, 60 * 60 * 1000);
   timer.unref();
-  server.on('close', () => clearInterval(timer));
+  const queueTimer = setInterval(router.queueSweep, 15 * 60 * 1000);
+  queueTimer.unref();
+  server.on('close', () => {
+    clearInterval(timer);
+    clearInterval(queueTimer);
+  });
 
   return { server, db };
 }

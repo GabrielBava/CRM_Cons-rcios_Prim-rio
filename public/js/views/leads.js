@@ -4,6 +4,7 @@ import {
   fmtDateTime, relTime, optLabel, K, can, toastError, crmTabs,
 } from '../ui.js';
 import { quickCreateContact } from '../forms.js';
+import { tempBadge } from '../qualification.js';
 import { bindDrawerLinks } from '../drawer.js';
 
 let saved = { sort: 'recentes' };
@@ -22,7 +23,7 @@ export function contactsTable(rows) {
       { label: 'Código', render: (r) => html`<a href="${recordHref(r)}">${r.code}</a>` },
       {
         label: 'Nome',
-        render: (r) => html`<a href="${recordHref(r)}" data-drawer="${r.id}"><strong>${r.name}</strong></a> <small class="muted">${r.kind}</small>${r.active === 0 ? html` ${badge('Inativo', 'muted')}` : ''}<br>${relBadge(r.relationship)} ${r.temperature ? badge(optLabel('temperatura', r.temperature), `temp-${r.temperature}`) : ''} ${r.relationship !== 'cliente' ? badge(K('lead_status', r.lead_status)) : badge(K('client_status', r.client_status), 'ok')} ${optoutBadge(r.optouts)}`,
+        render: (r) => html`<a href="${recordHref(r)}" data-drawer="${r.id}"><strong>${r.name}</strong></a> <small class="muted">${r.kind}</small>${r.active === 0 ? html` ${badge('Inativo', 'muted')}` : ''}<br>${relBadge(r.relationship)} ${r.temperature ? tempBadge(r.temperature) : ''} ${r.relationship !== 'cliente' ? badge(K('lead_status', r.lead_status)) : badge(K('client_status', r.client_status), 'ok')} ${optoutBadge(r.optouts)}`,
       },
       { label: 'Contato', render: (r) => html`${r.phone1 || r.whatsapp || html`<span class="warn-text">sem telefone</span>`}<br><small>${r.email || ''}</small>` },
       { label: 'Cidade/UF', render: (r) => [r.city, r.state].filter(Boolean).join('/') || '—' },

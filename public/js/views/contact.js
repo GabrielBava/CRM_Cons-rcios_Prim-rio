@@ -766,16 +766,16 @@ export function bindTasks(box, tasks, reload) {
 export function contractsTable(rows, { showContact = false } = {}) {
   return table(
     [
-      { label: 'Venda / produto', render: (k) => html`${k.sale_code ? html`<strong>${k.sale_code}</strong><br>` : ''}<a href="#" data-contract="${k.id}">${k.code}</a>${k.contract_number ? html`<br><small>Nº ${k.contract_number}</small>` : ''}` },
+      { label: 'Venda / produto', render: (k) => html`${k.sale_code ? html`<strong>${k.sale_code}</strong><br>` : ''}<a href="#" data-contract="${k.id}">${k.code}</a>` },
       ...(showContact ? [{ label: 'Cliente', render: (k) => html`<a href="#/leads/${k.contact_id}">${k.contact_name}</a>` }] : []),
       { label: 'Categoria', render: (k) => optLabel('categoria_credito', k.category || state.meta.products.find((p) => p.id === k.product_id)?.category) },
       { label: 'Administradora', render: (k) => k.administrator || '—' },
-      { label: 'Grupo / cota', render: (k) => `${k.group_code || '—'} / ${k.quota_code || '—'}` },
-      { label: 'Crédito', render: (k) => fmtMoney(k.credit_value), cls: 'num' },
-      { label: 'Parcela', render: (k) => html`${fmtMoney(k.installment_value)}${k.due_day ? html`<br><small>vence dia ${k.due_day}</small>` : ''}`, cls: 'num' },
+      { label: 'Grupo / cota / contrato', render: (k) => html`${k.group_code || '—'} / ${k.quota_code || '—'}${k.contract_number ? html`<br><small>Contrato ${k.contract_number}</small>` : ''}` },
+      { label: 'Crédito contratado / disponível', render: (k) => html`${fmtMoney(k.credit_value)}${k.available_credit != null && Math.abs(k.available_credit - (k.credit_value || 0)) > 0.009 ? html`<br><small>disponível ${fmtMoney(k.available_credit)}</small>` : k.available_credit != null ? html`<br><small class="muted">disponível igual</small>` : ''}`, cls: 'num' },
+      { label: 'Parcela inicial / atual', render: (k) => html`${fmtMoney(k.installment_initial ?? k.installment_value)}${k.installment_initial != null && k.installment_value != null && Math.abs(k.installment_value - k.installment_initial) > 0.009 ? html`<br><small>atual ${fmtMoney(k.installment_value)}</small>` : ''}${k.due_day ? html`<br><small>vence dia ${k.due_day}</small>` : ''}`, cls: 'num' },
       { label: 'Prazo / cotas', render: (k) => `${k.term_months ? `${k.term_months} m` : '—'} · ${k.quotas ?? '—'}` },
-      { label: 'Contratação', render: (k) => fmtDate(k.contracted_at) },
-      { label: 'Status', render: (k) => html`${badge(optLabel('status_contrato', k.status))}${k.contemplated_at ? html`<br><small>Contemplado em ${fmtDate(k.contemplated_at)}${k.contemplation_type ? ` (${optLabel('tipo_contemplacao', k.contemplation_type)})` : ''}</small>` : ''}` },
+      { label: 'Contratação / adesão', render: (k) => html`${fmtDate(k.contracted_at)}${k.adhesion_date ? html`<br><small>adesão ${fmtDate(k.adhesion_date)}</small>` : ''}${k.next_readjustment_date ? html`<br><small>reajuste ${fmtDate(k.next_readjustment_date)}</small>` : ''}` },
+      { label: 'Status', render: (k) => html`${badge(optLabel('status_contrato', k.status))}${k.contemplated_at ? html`<br><small>Contemplado em ${fmtDate(k.contemplated_at)}${k.contemplation_type ? ` (${optLabel('tipo_contemplacao', k.contemplation_type)})` : ''}${k.client_choice ? ` · ${optLabel('escolha_contemplacao', k.client_choice).split(' (')[0]}` : ''}${k.net_to_pay != null ? html`<br>líquido a pagar ${fmtMoney(k.net_to_pay)}` : ''}</small>` : ''}` },
       { label: 'Vendedor', render: (k) => html`${k.seller_name || (k.seller_id ? userName(k.seller_id) : '—')}${k.sale_value ? html`<br><small>Venda da carta: ${fmtMoney(k.sale_value)}</small>` : ''}` },
     ],
     rows,

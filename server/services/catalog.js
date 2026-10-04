@@ -4,7 +4,7 @@
  * (taxas, prazo, lances, adesão, reajuste e faixa de crédito com incremento).
  */
 const { requireAdmin, audit, optionLabel } = require('../core');
-const { badRequest, notFound, clean, toNumber, digits, isValidCNPJ, normalizeEmail, isValidEmail, nowIso } = require('../util');
+const { badRequest, notFound, clean, toNumber, digits, isValidCNPJ, normalizeEmail, isValidEmail, nowIso, sealSecret, openSecret } = require('../util');
 const { nextCode } = require('../db');
 
 /* ------------------------- Tabelas de parcelas (repasse e comissão) ------------------------- */
@@ -54,8 +54,11 @@ const ADM_TEXT = ['name', 'website', 'portal_url', 'portal_login', 'direct_name'
 function decorateAdm(a) {
   const commission = parseJson(a.commission_schedule, []);
   const payout = parseJson(a.payout_schedule, []);
+  // A senha do portal nunca sai na listagem: só a indicação de que existe (leitura sob demanda, auditada)
+  const { portal_password_enc: enc, ...rest } = a;
   return {
-    ...a,
+    ...rest,
+    portal_password_set: !!enc,
     commission_schedule: commission,
     payout_schedule: payout,
     chargeback_policy: { estornar_pagas: true, ate_dias: 365, ...parseJson(a.chargeback_policy, {}) },
@@ -111,6 +114,18 @@ function saveAdministrator(db, user, data) {
   }
   if (data.active !== undefined) o.active = data.active ? 1 : 0;
   const now = nowIso();
+  // Senha do portal: cifrada no banco; em branco mantém a atual, "remover" apaga
+  const newPassword = data.portal_password != null && String(data.portal_password) !== '' ? String(data.portal_password) : null;
+  if (newPassword) {
+    if (newPassword.length > 200) throw badRequest('Senha do portal muito longa.');
+    o.portal_password_enc = sealSecret(newPassword);
+    o.portal_password_updated_at = now;
+    o.portal_password_updated_by = user.id;
+  } else if (data.portal_password_clear === true || data.portal_password_clear === 'true') {
+    o.portal_password_enc = null;
+    o.portal_password_updated_at = now;
+    o.portal_password_updated_by = user.id;
+  }
   if (data.id) {
     const a = db.prepare('SELECT * FROM administrators WHERE id = ?').get(Number(data.id));
     if (!a) throw notFound('Administradora não encontrada.');
@@ -118,7 +133,7 @@ function saveAdministrator(db, user, data) {
     if (keys.length) db.prepare(`UPDATE administrators SET ${keys.map((k) => `${k} = ?`).join(', ')}, updated_at = ? WHERE id = ?`).run(...keys.map((k) => o[k] ?? null), now, a.id);
     // Planos continuam mostrando o nome atualizado
     if (o.name) db.prepare('UPDATE products SET administrator = ? WHERE administrator_id = ?').run(o.name, a.id);
-    audit(db, user, 'administrator', a.id, 'alterada', { campos: keys });
+    audit(db, user, 'administrator', a.id, 'alterada', { campos: keys.map((k) => (k === 'portal_password_enc' ? 'senha do portal' : k)).filter((k) => !k.startsWith('portal_password_updated')) });
     return a.id;
   }
   const row = { ...o, code: nextCode(db, 'administrator', 'ADM'), created_at: now, updated_at: now };
@@ -126,6 +141,18 @@ function saveAdministrator(db, user, data) {
   const r = db.prepare(`INSERT INTO administrators (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...cols.map((c) => row[c] ?? null));
   audit(db, user, 'administrator', Number(r.lastInsertRowid), 'criada', { nome: o.name });
   return Number(r.lastInsertRowid);
+}
+
+/** Mostra a senha do portal (só o administrador; cada consulta fica na auditoria). */
+function revealPortalPassword(db, user, id) {
+  requireAdmin(user);
+  const a = db.prepare('SELECT id, name, portal_password_enc FROM administrators WHERE id = ?').get(Number(id));
+  if (!a) throw notFound('Administradora não encontrada.');
+  if (!a.portal_password_enc) throw badRequest('Nenhuma senha cadastrada para esta administradora.');
+  const password = openSecret(a.portal_password_enc);
+  if (password == null) throw badRequest('Não foi possível abrir a senha: a chave de cifragem do servidor mudou. Cadastre a senha novamente.');
+  audit(db, user, 'administrator', a.id, 'senha_portal_consultada', {});
+  return { password };
 }
 
 /* ------------------------- Planos ------------------------- */
@@ -218,6 +245,18 @@ function savePlan(db, user, data) {
   }
   if (data.active !== undefined) o.active = data.active ? 1 : 0;
   const now = nowIso();
+  // Senha do portal: cifrada no banco; em branco mantém a atual, "remover" apaga
+  const newPassword = data.portal_password != null && String(data.portal_password) !== '' ? String(data.portal_password) : null;
+  if (newPassword) {
+    if (newPassword.length > 200) throw badRequest('Senha do portal muito longa.');
+    o.portal_password_enc = sealSecret(newPassword);
+    o.portal_password_updated_at = now;
+    o.portal_password_updated_by = user.id;
+  } else if (data.portal_password_clear === true || data.portal_password_clear === 'true') {
+    o.portal_password_enc = null;
+    o.portal_password_updated_at = now;
+    o.portal_password_updated_by = user.id;
+  }
   if (data.id) {
     const p = db.prepare('SELECT * FROM products WHERE id = ?').get(Number(data.id));
     if (!p) throw notFound('Plano não encontrado.');
@@ -267,5 +306,5 @@ function chargebackPolicy(db, administratorId) {
 }
 
 module.exports = {
-  INDEXES, normalizeSchedule, scheduleTotal, listAdministrators, saveAdministrator, listPlans, savePlan, creditError, commissionScheduleFor, chargebackPolicy, decoratePlan,
+  INDEXES, normalizeSchedule, scheduleTotal, listAdministrators, saveAdministrator, listPlans, savePlan, creditError, commissionScheduleFor, chargebackPolicy, decoratePlan, revealPortalPassword,
 };

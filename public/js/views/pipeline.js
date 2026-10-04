@@ -5,7 +5,8 @@ import {
 } from '../ui.js';
 import { bindDrawerLinks } from '../drawer.js';
 import { icon } from '../icons.js';
-import { qualBlocks, qualProgress } from '../qualification.js';
+import { qualBlocks, qualProgress, tempBadge, tempPanel } from '../qualification.js';
+import { transcriptFlow, downloadR1Template } from '../r1.js';
 import { moveStage, opportunityForm, activityForm, taskForm, simulationForm, proposalForm, proposalDetail, quickSimulation, openProposalSimulator } from '../forms.js';
 import { timeline, tasksTable, bindTasks } from './contact.js';
 
@@ -261,7 +262,7 @@ function card(o, bulk, selected) {
   const sel = selected.has(o.id);
   return html`<article class="opp-card prio-${o.priority} ${o.stalled ? 'stalled' : ''} ${sel ? 'selected' : ''}" draggable="${can.write() && !bulk ? 'true' : 'false'}" data-id="${o.id}">
     ${bulk ? html`<input type="checkbox" class="card-check" data-sel="${o.id}" aria-label="Selecionar ${o.contact_name}" ${sel ? raw('checked') : ''}>` : ''}
-    <a href="#/leads/${o.contact_id}" class="title" data-drawer="${o.contact_id}" data-opp="${o.id}">${o.contact_name}</a>
+    <div class="card-title-row"><a href="#/leads/${o.contact_id}" class="title" data-drawer="${o.contact_id}" data-opp="${o.id}">${o.contact_name}</a>${o.stage_kind === 'aberta' ? tempBadge(o.temperature, o.temperature_info) : ''}</div>
     <div class="small muted">ID ${o.contact_code}</div>
     <div class="card-tags"><span class="chip-sm">${optLabel('origem', o.contact_origin) || 'Sem origem'}</span>${o.credit_category ? html`<span class="chip-sm muted">${optLabel('categoria_credito', o.credit_category)}</span>` : ''}</div>
     ${o.deal_value ? html`<div class="small deal-value"><strong>${fmtMoney(o.deal_value)}</strong> <small class="muted">${o.deal_value_source === 'proposta' ? `${o.proposal_count > 1 ? `${o.proposal_count} propostas` : 'proposta'}` : 'desejado'}</small></div>` : ''}
@@ -273,7 +274,7 @@ function card(o, bulk, selected) {
 function oppTable(rows) {
   return table(
     [
-      { label: 'Cadastro', render: (o) => html`<a href="#/leads/${o.contact_id}" data-drawer="${o.contact_id}" data-opp="${o.id}">${o.contact_name}</a> ${optoutBadge(o.contact_optouts)}<br><small>${o.contact_code} · <a href="#/oportunidades/${o.id}">${o.code}</a></small>` },
+      { label: 'Cadastro', render: (o) => html`<a href="#/leads/${o.contact_id}" data-drawer="${o.contact_id}" data-opp="${o.id}">${o.contact_name}</a> ${o.status === 'aberta' ? tempBadge(o.temperature, o.temperature_info) : ''} ${optoutBadge(o.contact_optouts)}<br><small>${o.contact_code} · <a href="#/oportunidades/${o.id}">${o.code}</a></small>` },
       { label: 'Etapa', render: (o) => html`${o.stage_name}<br><small>${K('opp_status', o.status)}</small>` },
       { label: 'Origem', render: (o) => optLabel('origem', o.contact_origin) },
       { label: 'Categoria', render: (o) => optLabel('categoria_credito', o.credit_category) || '—' },
@@ -322,7 +323,7 @@ async function showOpp(view, id) {
     render(view, html`<div class="page">
       <div class="page-head"><div>
         <div class="crumbs"><a href="#/funil">Funil</a> / <a href="#/leads/${o.contact_id}">${o.contact_name}</a> / ${o.code}</div>
-        <h1>${o.code} ${o.title ? html`— ${o.title}` : ''}</h1>
+        <h1>${o.code} ${o.title ? html`— ${o.title}` : ''} ${o.status === 'aberta' ? tempBadge(o.temperature, o.temperature_info) : ''}</h1>
         <div class="badges">${badge(o.stage_name, `kind-${o.stage_kind}`)} ${badge(K('opp_status', o.status), o.status === 'ganha' ? 'ok' : o.status === 'perdida' ? 'danger' : '')} ${badge(`Prioridade ${K('priorities', o.priority)}`)} ${optoutBadge(o.contact_optouts)} ${o.stalled ? badge(`Sem atividade há ${o.days_without_activity} dias`, 'danger') : ''}</div>
         <div class="muted small">Cadastro: <a href="#/leads/${o.contact_id}">${o.contact_code} — ${o.contact_name}</a> · Responsável: ${o.owner_name || '—'} · ${o.days_in_stage} dia(s) na etapa atual</div>
       </div>
@@ -336,9 +337,11 @@ async function showOpp(view, id) {
       ${o.status === 'perdida' ? html`<div class="alert danger">Perdida: ${optLabel('motivo_perda', o.lost_reason)}${o.lost_notes ? ` — ${o.lost_notes}` : ''}</div>` : ''}
       ${o.status === 'pausada' && o.pause_reason ? html`<div class="alert warn">Em nutrição: ${o.pause_reason}</div>` : ''}
       ${o.status === 'aberta' ? html`<section class="card criteria-card" id="criteria"><p class="muted small">Carregando critérios da próxima etapa…</p></section>` : ''}
-      <section class="card"><div class="section-head"><h3>Qualificação do negócio</h3>${can.write() ? html`<button class="btn small" data-act="edit">Editar qualificação</button>` : ''}</div>
+      <section class="card"><div class="section-head"><h3>Qualificação do negócio</h3>${can.write() ? html`<span class="inline-actions"><button class="btn small" data-act="r1">Anexar transcrição da R1</button><button class="btn small" data-act="edit">Editar qualificação</button></span>` : ''}</div>
+        ${tempPanel(o)}
         ${qualProgress(o, contact.kind)}
         ${qualBlocks(o, contact.kind, { extra: { strategy: o.strategy ? html`${optLabel('estrategia', o.strategy)} ${o.strategy_validated_at ? badge(`validada por ${o.strategy_validated_by_name} em ${fmtDate(o.strategy_validated_at)}`, 'ok') : html`${badge('não validada pelo consultor', 'warn')} ${can.write() ? html`<button class="btn small" data-act="validate">Validar</button>` : ''}`}` : null } })}
+        ${o.transcripts?.length ? html`<div class="r1-list"><strong class="small">Transcrições da R1</strong><ul>${o.transcripts.map((t) => html`<li><small>${t.filename || 'Transcrição'} · ${fmtDateTime(t.created_at)} · ${t.user_name || '—'} · ${t.fields} campo(s) identificados${t.applied ? `, ${t.applied} preenchido(s)` : ', nenhum aplicado'}</small></li>`)}</ul></div>` : html`<p class="hint">Depois da R1, anexe a transcrição da reunião: o CRM identifica os campos e completa só os que estão vazios. <a href="#" data-act="r1-template">Modelo da transcrição (Excel)</a></p>`}
       </section>
       <div class="cols">
         <section class="card"><h3>Dados de gestão</h3><div class="kv">
@@ -393,6 +396,8 @@ async function showOpp(view, id) {
     if (r) reload();
   });
   on(view, 'click', '[data-act=edit]', async () => (await opportunityForm(contact, o)) && reload());
+  on(view, 'click', '[data-act=r1]', async () => (await transcriptFlow(o)) && reload());
+  on(view, 'click', '[data-act=r1-template]', (e) => (e.preventDefault(), downloadR1Template()));
   on(view, 'click', '[data-act=activity]', async () => (await activityForm(contact, { opportunity_id: o.id })) && reload());
   on(view, 'click', '[data-act=task]', async () => (await taskForm({ contact, opportunity_id: o.id })) && reload());
   on(view, 'click', '[data-act=validate]', async () => {

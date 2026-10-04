@@ -35,11 +35,17 @@ function home(db, user, q = {}) {
   // Funil (negócios abertos por etapa)
   const os = own('o.owner_id');
   const stages = db.prepare("SELECT id, name, kind, key, rot_days FROM pipeline_stages WHERE active = 1 ORDER BY position").all();
-  const openOpps = db.prepare(`SELECT o.id, o.stage_id, o.credit_value, o.stage_entered_at, o.last_activity_at, o.status FROM opportunities o JOIN contacts c ON c.id = o.contact_id
+  const openOpps = db.prepare(`SELECT o.*,
+    (SELECT MAX(pr.credit_value) FROM proposals pr WHERE pr.opportunity_id = o.id AND pr.status IN ('rascunho','apresentada','em_analise','aprovada')) AS proposal_value
+    FROM opportunities o JOIN contacts c ON c.id = o.contact_id
     WHERE ${os.sql} AND c.merged_into_id IS NULL AND (o.status IN ('aberta','pausada') OR (o.status IN ('ganha','perdida') AND o.closed_at >= ?))`).all(...os.params, monthStart);
+  // Valor de cada etapa = proposta ativa (ou o crédito desejado); temperatura de cada negócio para o panorama quente/morno/frio
+  const { temperatureOf } = require('./opportunities');
   const funnel = stages.map((s) => {
     const cards = openOpps.filter((o) => o.stage_id === s.id);
-    return { id: s.id, name: s.name, kind: s.kind, count: cards.length, value: cards.reduce((t, o) => t + (o.credit_value || 0), 0) };
+    const temps = { quente: 0, morno: 0, frio: 0 };
+    if (s.kind === 'aberta') for (const o of cards) temps[temperatureOf(o).level]++;
+    return { id: s.id, key: s.key, name: s.name, kind: s.kind, count: cards.length, value: cards.reduce((t, o) => t + (o.proposal_value ?? o.credit_value ?? 0), 0), temps };
   });
   const rotting = openOpps.filter((o) => {
     const st = stages.find((s) => s.id === o.stage_id);
@@ -84,7 +90,7 @@ function home(db, user, q = {}) {
     .get(...cs.params, new Date(Date.now() - 30 * 86400000).toISOString()).n;
 
   // Ranking do mês
-  const ranking = db.prepare(`SELECT u.id, u.name, COUNT(s.id) AS vendas, COALESCE(SUM(s.credit_value), 0) AS credito FROM users u
+  const ranking = db.prepare(`SELECT u.id, u.name, u.photo, u.job_title, COUNT(s.id) AS vendas, COALESCE(SUM(s.credit_value), 0) AS credito FROM users u
     LEFT JOIN sales s ON s.seller_id = u.id AND s.status IN ('confirmada','cancelada') AND substr(s.payment_date, 1, 7) = ?
     WHERE u.active = 1 AND u.role IN ('consultor','gestor') GROUP BY u.id ORDER BY credito DESC, vendas DESC, u.name`).all(month);
   const position = single ? ranking.findIndex((r) => r.id === single) + 1 : null;

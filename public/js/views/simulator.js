@@ -11,7 +11,7 @@ export async function show(view) {
         <h3>Simulação rápida</h3>
         <p>Use para responder dúvidas e comparar planos durante a conversa com o lead. <strong>A simulação não gera proposta nem PDF.</strong></p>
         ${url ? html`<p><a class="btn primary big" href="${url}" target="_blank" rel="noopener noreferrer">Abrir o simulador</a></p>` : html`<div class="alert warn">O endereço do simulador não está configurado. ${can.admin() ? html`Informe em <a href="#/configuracoes/geral">Configurações › Geral</a>.` : 'Fale com o administrador.'}</div>`}
-        <p class="hint">A regra que limita o simulador ao modo de simulação (sem o botão de gerar proposta) será aplicada no próprio simulador. O CRM já abre o simulador com o parâmetro <code>modo=simulacao</code>.</p>
+        <p class="hint">Aberto por aqui, o simulador entra no <strong>modo simulação</strong>: o botão "Gerar proposta (PDF)" fica inativo. Propostas são geradas só pela tela Propostas, a partir do cadastro do cliente.</p>
       </section>
       <section class="card">
         <h3>Precisa gerar uma proposta?</h3>

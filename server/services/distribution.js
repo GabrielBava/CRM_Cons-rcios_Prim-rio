@@ -14,7 +14,7 @@ const { insertActivity } = require('./activities');
 const { requireModule } = require('../permissions');
 
 function roleta(db) {
-  return { mode: 'sequencial', auto: false, participants: [], last_user_id: null, first_contact_hours: 1, ...(getSetting(db, 'roleta') || {}) };
+  return { mode: 'sequencial', auto: true, participants: [], last_user_id: null, first_contact_hours: 1, ...(getSetting(db, 'roleta') || {}) };
 }
 
 function queue(db, user, q = {}) {
@@ -168,11 +168,43 @@ function autoDistribute(db, contactId) {
   const c = db.prepare('SELECT * FROM contacts WHERE id = ?').get(contactId);
   if (!c || c.owner_id) return null;
   const to = pickNext(db, c, cfg);
-  if (!to) return null;
+  if (!to) {
+    const ids = db.prepare("SELECT id FROM users WHERE role IN ('admin','gestor') AND active = 1").all().map((u) => u.id);
+    require('./notifications').notify(db, ids, { kind: 'fila', level: 'warn', title: 'Lead na fila sem especialista na roleta', body: `${c.name}: nenhum especialista ativo na roleta para este canal. A rotina tenta de novo a cada 15 minutos.`, link: '#/entrada', dedupe: true });
+    return null;
+  }
   assign(db, null, c.id, to, 'auto');
   cfg.last_user_id = to;
   setSetting(db, 'roleta', cfg);
   return to;
 }
 
-module.exports = { queue, roletaStatus, saveRoleta, distribute, autoDistribute };
+/**
+ * Rotina a cada 15 minutos: com a roleta automática ligada, distribui os leads que ainda estão na fila
+ * (ex.: chegaram quando não havia especialista ativo na roleta). A entrada de um lead novo não espera a rotina:
+ * autoDistribute roda no momento em que ele é recebido.
+ */
+function queueSweep(db) {
+  const cfg = roleta(db);
+  if (!cfg.auto) return { distributed: 0, waiting: null };
+  const waiting = db.prepare(`SELECT * FROM contacts WHERE owner_id IS NULL AND merged_into_id IS NULL AND anonymized_at IS NULL
+    AND COALESCE(active, 1) = 1 AND relationship IN ('prospect','lead') ORDER BY created_at LIMIT 500`).all();
+  let n = 0;
+  for (const c of waiting) {
+    const to = pickNext(db, c, cfg);
+    if (!to) continue;
+    tx(db, () => assign(db, null, c.id, to, 'auto'));
+    cfg.last_user_id = to;
+    n++;
+  }
+  if (n) setSetting(db, 'roleta', cfg);
+  cfg.last_sweep_at = nowIso();
+  setSetting(db, 'roleta', { ...roleta(db), last_sweep_at: cfg.last_sweep_at });
+  if (waiting.length > n) {
+    const ids = db.prepare("SELECT id FROM users WHERE role IN ('admin','gestor') AND active = 1").all().map((u) => u.id);
+    require('./notifications').notify(db, ids, { kind: 'fila', level: 'warn', title: 'Leads na fila sem especialista disponível', body: 'A roleta não encontrou especialista ativo para alguns canais. Revise os participantes da roleta.', link: '#/entrada', dedupe: true });
+  }
+  return { distributed: n, waiting: waiting.length - n };
+}
+
+module.exports = { queue, roletaStatus, saveRoleta, distribute, autoDistribute, queueSweep };

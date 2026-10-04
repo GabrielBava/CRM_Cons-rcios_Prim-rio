@@ -581,7 +581,7 @@ test('simulação registra data, hora e autor; proposta abre o simulador com nom
 const userId = async (email) => (await call('admin', 'GET', '/api/usuarios')).data.find((u) => u.email === email).id;
 
 test('funil: passagem sequencial com critérios de entrada; voltar exige motivo; administrador força com justificativa', async () => {
-  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Regras Funil', phone1: '11 94444-1001', origin: 'site', relationship: 'lead' });
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Regras Funil', phone1: '11 94444-1001', origin: 'indicacao', relationship: 'lead' });
   const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
   const stages = (await call('c1', 'GET', '/api/meta')).data.stages;
   const st = (k) => stages.find((s) => s.key === k);
@@ -1170,4 +1170,76 @@ test('financeiro: assinatura com renovação, recorrente anual e conta a receber
   // Cancelamento exige motivo
   assert.equal((await call('admin', 'POST', `/api/financeiro/titulos/${yearly.data.id}/cancelar`, {})).status, 400);
   assert.equal((await call('admin', 'POST', `/api/financeiro/titulos/${yearly.data.id}/cancelar`, { reason: 'Saímos da associação' })).status, 200);
+});
+
+test('leads: formulário entra em Tentativa e a roleta distribui na hora; importação valida e remove duplicados', async () => {
+  const c1 = await userId('c1@t.com');
+  assert.equal((await call('admin', 'PATCH', '/api/distribuicao/roleta', { mode: 'sequencial', auto: true, first_contact_hours: 1, participants: [{ user_id: c1, active: true, weight: 1 }] })).status, 200);
+  const n = await call('admin', 'POST', '/api/cadastros', { name: 'Lead da Landing', phone1: '11 96666-0101', email: 'landing@ex.com', origin: 'landing_page', relationship: 'lead', owner_id: '' });
+  assert.equal(n.status, 200, JSON.stringify(n.data));
+  const c = (await call('admin', 'GET', `/api/cadastros/${n.data.id}`)).data;
+  assert.equal(c.owner_id, c1, 'distribuído na entrada, sem esperar a rotina');
+  assert.equal(c.opportunities[0].stage_name, 'Tentativa de contato');
+  assert.ok(c.tasks?.some?.((t) => t.type === 'primeiro_contato') ?? true);
+  // Importação: valida contato e remove duplicados (existente e repetido no arquivo)
+  const csv = 'Nome;Telefone;E-mail;Origem;Crédito desejado\nNovo A;11 96666-0201;;Meta Ads;R$ 200.000,00\nRepetido;11 96666-0201;;Site;\nSem contato;;;Site;\nJá existe;11 96666-0101;;Site;';
+  const pv = (await call('admin', 'POST', '/api/importacao/previa', { csv, filename: 'base.csv' })).data;
+  assert.equal(pv.valid, 1);
+  assert.equal(pv.duplicates, 2);
+  assert.equal(pv.errors, 1);
+  assert.equal(pv.duplicate_rows.length, 2);
+  const imp = (await call('admin', 'POST', '/api/importacao', { csv, filename: 'base.csv', owner_id: 'roleta' })).data;
+  assert.equal(imp.created, 1);
+  assert.equal(imp.distributed, 1);
+});
+
+test('negócio: temperatura quente/morno/frio, campos novos e transcrição da R1 completando só os vazios', async () => {
+  const n = await call('c1', 'POST', '/api/cadastros', { name: 'Temperatura Teste', phone1: '11 96666-0301', origin: 'indicacao', relationship: 'lead' });
+  let o = (await call('c1', 'GET', `/api/cadastros/${n.data.id}`)).data.opportunities[0];
+  assert.equal((await call('c1', 'GET', `/api/oportunidades/${o.id}`)).data.temperature, 'frio');
+  await call('c1', 'PATCH', `/api/oportunidades/${o.id}`, { objective_type: 'aquisicao', credit_value: 300000, credit_category: 'imovel', housing_purpose: 'morar', has_property: 'sim', property_type: 'apartamento', property_value: 400000, property_free_liens: 'sim', pays_rent: 'nao' });
+  let d = (await call('c1', 'GET', `/api/oportunidades/${o.id}`)).data;
+  assert.equal(d.temperature, 'morno');
+  assert.equal(d.property_type, 'apartamento');
+  assert.ok(d.temperature_info.missing.length);
+  // Transcrição: identifica os campos e completa só os vazios (crédito já preenchido não muda)
+  const t = await call('c1', 'POST', `/api/oportunidades/${o.id}/transcricoes`, { filename: 'r1.txt', text: 'R1\nCrédito desejado: R$ 500.000,00\nPrazo desejado: curto\nParcela máxima: 3.200\nOrigem do lance: FGTS\nFator decisor: com cônjuge' });
+  assert.equal(t.status, 200, JSON.stringify(t.data));
+  assert.ok(t.data.items.find((i) => i.key === 'credit_value' && !i.will_fill), 'crédito já estava preenchido');
+  assert.ok(t.data.items.find((i) => i.key === 'urgency' && i.value === 'curto' && i.will_fill));
+  const ap = await call('c1', 'POST', `/api/oportunidades/${o.id}/transcricoes/${t.data.id}/aplicar`);
+  assert.ok(ap.data.filled.includes('installment_max'));
+  d = (await call('c1', 'GET', `/api/oportunidades/${o.id}`)).data;
+  assert.equal(d.credit_value, 300000);
+  assert.equal(d.temperature, 'quente', 'prazo curto + valor + parcela');
+  assert.equal(d.transcripts.length, 1);
+  assert.equal((await call('c1', 'GET', `/api/cadastros/${n.data.id}`)).data.temperature, 'quente', 'cadastro acompanha o negócio');
+  // Planilha modelo (Campo | Valor)
+  const t2 = await call('c1', 'POST', `/api/oportunidades/${o.id}/transcricoes`, { filename: 'r1.csv', text: 'Campo;Descrição;Valor\npays_rent;Paga aluguel hoje?;sim\nrent_value;Valor do aluguel;2.500,00' });
+  assert.deepEqual(t2.data.items.map((i) => [i.key, i.value]), [['pays_rent', 'sim'], ['rent_value', 2500]]);
+});
+
+test('administradora: senha do portal cifrada, visível só ao administrador; contrato com parcela inicial/atual e contemplação', async () => {
+  const a = await call('admin', 'POST', '/api/administradoras', { name: 'Adm Senha', portal_url: 'portal.ex.com', portal_login: 'user1', portal_password: 'S3nh@!' });
+  assert.equal(a.status, 200);
+  const raw = appDb.prepare('SELECT portal_password_enc FROM administrators WHERE id = ?').get(a.data.id).portal_password_enc;
+  assert.ok(raw && !raw.includes('S3nh@!'), 'guardada cifrada');
+  const list = (await call('admin', 'GET', '/api/administradoras')).data;
+  assert.ok(list.find((x) => x.id === a.data.id).portal_password_set);
+  assert.ok(!JSON.stringify(list).includes('portal_password_enc'));
+  assert.equal((await call('admin', 'POST', `/api/administradoras/${a.data.id}/senha`)).data.password, 'S3nh@!');
+  assert.equal((await call('gestor', 'POST', `/api/administradoras/${a.data.id}/senha`)).status, 403);
+  // Produto contratado
+  const n = await call('admin', 'POST', '/api/cadastros', { name: 'Cliente Contrato', phone1: '11 96666-0401', origin: 'indicacao', relationship: 'lead', create_opportunity: false });
+  const k = await call('admin', 'POST', '/api/contratos', { contact_id: n.data.id, credit_value: 200000, installment_value: 1100, contract_number: 'CT-77', contracted_at: '2026-09-01', adhesion_date: '2026-09-10', next_readjustment_date: '2027-09-10' });
+  assert.equal(k.status, 200, JSON.stringify(k.data));
+  let row = appDb.prepare('SELECT * FROM contracts WHERE id = ?').get(k.data.id);
+  assert.equal(row.installment_initial, 1100);
+  assert.equal(row.available_credit, 200000);
+  assert.equal((await call('admin', 'PATCH', `/api/contratos/${k.data.id}`, { installment_value: 1150, contemplated_at: '2026-10-01', contemplation_type: 'lance_retido', contemplation_credit: 205000, net_to_pay: 180000, client_choice: 'venda' })).status, 200);
+  row = appDb.prepare('SELECT * FROM contracts WHERE id = ?').get(k.data.id);
+  assert.equal(row.installment_initial, 1100);
+  assert.equal(row.installment_value, 1150);
+  assert.equal(row.client_choice, 'venda');
+  assert.equal((await call('admin', 'PATCH', `/api/contratos/${k.data.id}`, { client_choice: 'outra' })).status, 400);
 });

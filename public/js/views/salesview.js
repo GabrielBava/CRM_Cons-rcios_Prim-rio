@@ -2,7 +2,7 @@
 // O especialista informa a alocação; o time (líder ou administrador) confirma: cada cota vira um produto do cliente,
 // as comissões são geradas e começa o pós-venda.
 import { get, post } from '../api.js';
-import { html, render, $, on, state, selectOptions, userItems, opts, table, badge, fmtMoney, fmtDate, fmtDateTime, modal, field, toast, toastError, can, optLabel } from '../ui.js';
+import { html, render, $, on, state, selectOptions, userItems, opts, table, badge, fmtMoney, fmtDate, fmtDateTime, modal, field, toast, toastError, can, optLabel, todayLocal } from '../ui.js';
 import { fileToBase64, openAttachmentFile } from './record-tabs.js';
 
 let saved = {};
@@ -108,8 +108,8 @@ export async function allocationForm(id, mode) {
           <label>Nº do contrato<input data-a="contract_number" value="${q.contract_number || ''}" required></label>
           <label class="check"><input type="checkbox" data-a="allocated" ${q.allocated_on || confirm ? 'checked' : ''}> alocada${q.allocated_on ? html` <small class="muted">${fmtDate(q.allocated_on)}</small>` : ''}</label></div>`)}</div>
       <div class="grid">
-        ${field({ name: 'allocated_on', label: 'Data da alocação na administradora', type: 'date', value: new Date().toISOString().slice(0, 10), required: true })}
-        ${legacy ? html`${field({ name: 'payment_date', label: 'Data do pagamento', type: 'date', value: new Date().toISOString().slice(0, 10), required: true })}<div class="field"><label>Comprovante de pagamento <span class="req">*</span></label><input type="file" name="file" required accept=".pdf,.jpg,.jpeg,.png,.webp,.heic"></div>` : ''}
+        ${field({ name: 'allocated_on', label: 'Data da alocação na administradora', type: 'date', value: todayLocal(), required: true })}
+        ${legacy ? html`${field({ name: 'payment_date', label: 'Data do pagamento', type: 'date', value: todayLocal(), required: true })}<div class="field"><label>Comprovante de pagamento <span class="req">*</span></label><input type="file" name="file" required accept=".pdf,.jpg,.jpeg,.png,.webp,.heic"></div>` : ''}
         ${confirm ? html`<h4 class="full">Pós-venda: como o cliente prefere ser atendido</h4>
           ${field({ name: 'pref_channel', label: 'Canal preferido', type: 'select', options: opts('canal') })}
           ${field({ name: 'pref_time', label: 'Melhor horário', placeholder: 'ex.: dias úteis após 18h' })}` : field({ name: 'notes', label: 'Observação', placeholder: 'ex.: conferido no portal da administradora', full: true })}
@@ -214,7 +214,7 @@ export function registerCancellation(v) {
     wide: true,
     body: html`<p>Cliente <strong>${v.contact_name}</strong> · crédito ${fmtMoney(v.credit_value)} · pago em ${fmtDate(v.payment_date)}.</p>
       <div class="grid">
-        ${field({ name: 'cancelled_on', label: 'Data do cancelamento', type: 'date', value: new Date().toISOString().slice(0, 10), required: true })}
+        ${field({ name: 'cancelled_on', label: 'Data do cancelamento', type: 'date', value: todayLocal(), required: true })}
         ${field({ name: 'reason', label: 'Motivo', type: 'select', options: opts('motivo_cancelamento'), required: true })}
         ${field({ name: 'responsible_id', label: 'Especialista responsável (dedução da comissão)', type: 'select', options: state.meta.users.map((u) => ({ value: u.id, label: u.name })), value: v.seller_id, allowEmpty: false })}
         ${field({ name: 'description', label: 'Descrição do motivo concreto', type: 'textarea', required: true, full: true, help: 'Ex.: cliente desistiu no prazo de 7 dias por mudança de planos; perdeu o emprego; etc.' })}

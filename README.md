@@ -58,6 +58,7 @@ Variáveis de ambiente:
 | `PORT` | `3000` | Porta HTTP |
 | `HOST` | `127.0.0.1` | Use `0.0.0.0` para expor na rede, atrás de um proxy HTTPS |
 | `CRM_DB` | `data/crm.db` | Arquivo do banco SQLite. Faça backup desse arquivo. |
+| `CRM_SECRET_KEY` | arquivo `<banco>.key` | Chave que cifra segredos no banco (senha do portal das administradoras). Sem a variável, o servidor cria o arquivo `<banco>.key` na primeira execução. |
 | `CRM_SESSION_HOURS` | `12` | Duração da sessão |
 | `COOKIE_SECURE` | — | `1` para marcar o cookie como `Secure`. É aplicado automaticamente quando o proxy envia `X-Forwarded-Proto: https`. |
 
@@ -141,6 +142,9 @@ Os testes automatizados cobrem:
 - documentos (aprovação automática da equipe, validação dos enviados pelo cliente, vínculo com várias vendas, validade);
 - pós-venda (pesquisa NPS por link, cancelamento justificado, estratégia de lance);
 - simulação rápida e abertura do simulador de propostas com nome e contato;
+- leads de formulário direto em Tentativa de contato com roleta na entrada; importação com validação e remoção de duplicados;
+- temperatura quente/morno/frio pela qualificação e transcrição da R1 completando só campos vazios;
+- senha do portal da administradora cifrada (só o administrador vê) e produto contratado com parcela inicial/atual e contemplação;
 - financeiro da empresa (cadastros prontos, despesa parcelada, atraso com motivo e aviso ao administrador, baixa com comprovante, assinatura com renovação, recorrente anual, rateio por competência e visão geral só do administrador).
 
 ## Estrutura
@@ -171,5 +175,5 @@ docs/
 ## Produção
 
 - Rode a aplicação atrás de um proxy HTTPS (Nginx, Caddy ou o balanceador da nuvem) com `HOST=0.0.0.0`.
-- Faça backup periódico do arquivo definido em `CRM_DB`, junto com os arquivos `-wal` e `-shm`.
+- Faça backup periódico do arquivo definido em `CRM_DB`, junto com os arquivos `-wal` e `-shm` e a chave `<banco>.key` (sem ela, as senhas de portal guardadas não podem ser abertas).
 - Tokens de integração são exibidos uma única vez. No banco fica apenas o hash.

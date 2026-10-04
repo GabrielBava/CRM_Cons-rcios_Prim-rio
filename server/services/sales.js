@@ -700,6 +700,12 @@ function registerAllocation(db, user, id, data) {
  * Cada cota vira um produto contratado do cliente (todos com o mesmo ID de venda), o negócio vai para "Venda",
  * as comissões são geradas e começa o pós-venda.
  */
+const addMonthsDate = (d, n) => {
+  const [y, m, day] = d.split('-').map(Number);
+  const t = new Date(Date.UTC(y, m - 1 + n, 1));
+  t.setUTCDate(Math.min(day, new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, 0)).getUTCDate()));
+  return t.toISOString().slice(0, 10);
+};
 function confirmSale(db, user, id, data) {
   let s = loadSale(db, user, id);
   loadContact(db, user, s.contact_id, { write: true });
@@ -723,7 +729,10 @@ function confirmSale(db, user, id, data) {
         contact_id: s.contact_id, opportunity_id: s.opportunity_id, product_id: s.plan_id, category: s.category, administrator: plan?.administrator,
         group_code: q.group_code, quota_code: q.quota_code, credit_value: q.credit_value, term_months: s.term_months,
         installment_value: s.installment_value && s.credit_value ? round2((s.installment_value * q.credit_value) / s.credit_value) : null, contract_number: q.contract_number,
-        contracted_at: s.adhesion_date || s.payment_date, first_due_date: s.payment_date, seller_id: s.seller_id, status: 'ativo', quotas: 1,
+        // Contratação = data da venda (pagamento da 1ª parcela); adesão = alocação da cota na administradora; reajuste anual a partir da adesão
+        contracted_at: s.payment_date || s.adhesion_date || String(s.created_at).slice(0, 10), adhesion_date: allocatedOn,
+        next_readjustment_date: addMonthsDate(allocatedOn, 12),
+        first_due_date: s.payment_date, seller_id: s.seller_id, status: 'ativo', quotas: 1,
       });
       db.prepare('UPDATE contracts SET sale_id = ?, proposal_id = COALESCE(proposal_id, ?) WHERE id = ?').run(s.id, s.proposal_id ?? null, k.id);
       db.prepare('UPDATE pre_sale_quotas SET contract_id = ?, allocated_on = COALESCE(allocated_on, ?), allocated_by = COALESCE(allocated_by, ?), updated_at = ? WHERE id = ?').run(k.id, allocatedOn, user.id, now, q.id);

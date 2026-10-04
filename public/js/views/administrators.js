@@ -66,6 +66,7 @@ export async function show(view) {
         [
           { label: 'ID', render: (a) => html`<strong>${a.code}</strong>` },
           { label: 'Administradora', render: (a) => html`<a href="#" data-edit="${a.id}"><strong>${a.name}</strong></a>${a.active ? '' : html` ${badge('Inativa', 'muted')}`}${a.cnpj ? html`<br><small>CNPJ ${a.cnpj}</small>` : ''}` },
+          { label: 'Portal', render: (a) => html`${a.portal_url ? html`<a href="${a.portal_url}" target="_blank" rel="noopener noreferrer">abrir portal</a>` : '—'}${a.portal_login ? html`<br><small>usuário: ${a.portal_login}</small>` : ''}${a.portal_password_set ? html`<br><button class="btn small ghost" data-pass="${a.id}">Ver senha</button>` : ''}` },
           { label: 'Contatos', render: (a) => html`${a.commercial_name ? html`Comercial: ${a.commercial_name}<br>` : ''}${a.manager_name ? html`Gerente de conta: ${a.manager_name}` : ''}${!a.commercial_name && !a.manager_name ? '—' : ''}` },
           { label: 'Repasse', render: (a) => html`${a.payout_day ? `dia ${a.payout_day}` : '—'}${a.payout_method ? html`<br><small>${a.payout_method}</small>` : ''}` },
           { label: 'Comissão', render: (a) => html`${scheduleText(a.commission_schedule)}<br><small>total ${fmtP(a.commission_total)}</small>` },
@@ -76,7 +77,7 @@ export async function show(view) {
         rows,
         { emptyMsg: 'Nenhuma administradora cadastrada. Cadastre a primeira para vincular planos e comissões.' },
       )}</section>
-      <p class="hint">Senhas de portais não são guardadas no sistema: registre apenas o endereço e o usuário de acesso e mantenha a senha no gerenciador de senhas da empresa.</p>
+      <p class="hint">A senha do portal fica cifrada no banco e só o administrador consegue vê-la (cada consulta fica registrada na auditoria).</p>
     </div>`);
   };
 
@@ -103,7 +104,9 @@ export async function show(view) {
         </div>
         <h4>Acesso ao portal</h4><div class="grid">
           ${field({ name: 'portal_url', label: 'Endereço do portal', value: a.portal_url })}
-          ${field({ name: 'portal_login', label: 'Usuário de acesso', value: a.portal_login, help: 'Não informe senhas aqui.' })}
+          ${field({ name: 'portal_login', label: 'Usuário de acesso', value: a.portal_login })}
+          <div class="field"><label for="portal_password">Senha de acesso</label><div class="pass-input"><input id="portal_password" type="password" name="portal_password" autocomplete="new-password" placeholder="${a.portal_password_set ? '•••••••• (cadastrada: em branco mantém a atual)' : 'Senha do portal'}"><button type="button" class="btn small ghost" data-toggle-pass>Mostrar</button></div><small>Guardada cifrada. Visível só para o administrador.</small></div>
+          ${a.portal_password_set ? field({ name: 'portal_password_clear', label: 'Remover a senha cadastrada', type: 'checkbox' }) : ''}
         </div>
         <h4>Repasse</h4><div class="grid">
           ${field({ name: 'payout_day', label: 'Dia do repasse', type: 'number', min: 1, value: a.payout_day, help: 'Dia do mês em que a administradora paga as comissões.' })}
@@ -121,7 +124,14 @@ export async function show(view) {
           ${field({ name: 'ate_dias', label: 'Estornar cancelamentos ocorridos até (dias após a venda)', type: 'number', min: 0, value: a.chargeback_policy?.ate_dias ?? 365 })}
         </div>
         ${field({ name: 'notes', label: 'Observações', type: 'textarea', value: a.notes, full: true })}`,
-      onMount: bindSchedules,
+      onMount(f) {
+        bindSchedules(f);
+        on(f, 'click', '[data-toggle-pass]', (e, b) => {
+          const i = f.portal_password;
+          i.type = i.type === 'password' ? 'text' : 'password';
+          b.textContent = i.type === 'password' ? 'Mostrar' : 'Ocultar';
+        });
+      },
       async onSubmit(d, f) {
         const { estornar_pagas, ate_dias, ...rest } = d;
         await post('/api/administradoras', {
@@ -137,6 +147,28 @@ export async function show(view) {
       },
     });
   on(view, 'click', '[data-act=new]', async () => (await form()) && load());
+  on(view, 'click', '[data-pass]', async (e, b) => {
+    const a = rows.find((x) => x.id === Number(b.dataset.pass));
+    try {
+      const r = await post(`/api/administradoras/${a.id}/senha`);
+      await modal({
+        title: `Acesso ao portal — ${a.name}`,
+        body: html`<div class="kv"><div><span>Portal</span>${a.portal_url ? html`<a href="${a.portal_url}" target="_blank" rel="noopener noreferrer">${a.portal_url}</a>` : '—'}</div><div><span>Usuário</span>${a.portal_login || '—'}</div><div><span>Senha</span><code class="secret">${r.password}</code> <button type="button" class="btn small" data-copy>Copiar</button></div></div><p class="hint">Esta consulta foi registrada na auditoria.</p>`,
+        onMount(f) {
+          on(f, 'click', '[data-copy]', async (ev, btn) => {
+            try {
+              await navigator.clipboard.writeText(r.password);
+              btn.textContent = 'Copiada';
+            } catch {
+              btn.textContent = 'Selecione e copie';
+            }
+          });
+        },
+      });
+    } catch (ex) {
+      toastError(ex);
+    }
+  });
   on(view, 'click', '[data-edit]', async (e, b) => {
     e.preventDefault();
     if (await form(rows.find((a) => a.id === Number(b.dataset.edit)))) load();

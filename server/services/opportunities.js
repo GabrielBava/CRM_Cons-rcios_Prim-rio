@@ -23,6 +23,7 @@ const OPP_FIELDS = [
   'pause_reason', 'objective_type', 'product_type', 'credit_purpose', 'financial_moment', 'employment_type', 'has_fgts', 'decision_maker',
   'existing_products', 'existing_consortium_value', 'existing_consortium_admin', 'existing_financing_balance', 'existing_financing_cet',
   'existing_financing_bank', 'credit_purpose_type', 'has_bid_resources', 'had_consortium', 'has_financing', 'decision_notes',
+  'housing_purpose', 'bid_source', 'has_property', 'property_type', 'property_value', 'property_free_liens', 'pays_rent', 'rent_value',
 ];
 const YES_NO = ['sim', 'nao', 'nao_sabe'];
 /**
@@ -41,8 +42,59 @@ const R1_FILLABLE = [
   'contemplation_type', 'installment_min', 'installment_max', 'financial_moment', 'employment_type', 'has_bid_resources', 'bid_own_resources',
   'has_fgts', 'fgts_available', 'embedded_bid_interest', 'quotas', 'decision_maker', 'decision_notes', 'had_consortium',
   'existing_consortium_admin', 'existing_consortium_value', 'has_financing', 'existing_financing_balance', 'existing_financing_cet',
-  'existing_financing_bank', 'objective',
+  'existing_financing_bank', 'objective', 'housing_purpose', 'bid_source', 'has_property', 'property_type', 'property_value',
+  'property_free_liens', 'pays_rent', 'rent_value',
 ];
+
+/**
+ * Temperatura do negócio, recalculada a cada alteração da qualificação (todas as etapas do funil):
+ *  - Quente: prazo curto, valor definido e lance ou parcela informados;
+ *  - Morno: objetivo e valor definidos, mas sem prazo curto ou sem lance/parcela;
+ *  - Frio: só curiosidade, sem valor nem prazo.
+ */
+const filled = (v) => v != null && v !== '' && v !== 0;
+function temperatureOf(o) {
+  const value = filled(o.credit_value);
+  const objective = filled(o.objective_type) || filled(o.credit_purpose_type);
+  const term = filled(o.urgency);
+  const short = o.urgency === 'curto';
+  const bid = o.has_bid_resources === 'sim' || filled(o.bid_own_resources) || filled(o.fgts_available) || o.has_fgts === 'sim';
+  const installment = filled(o.installment_min) || filled(o.installment_max);
+  const has = [];
+  if (value) has.push('valor definido');
+  if (objective) has.push('objetivo definido');
+  if (short) has.push('prazo curto');
+  else if (term) has.push('prazo médio ou longo');
+  if (bid) has.push('lance informado');
+  if (installment) has.push('parcela informada');
+  const toHot = [];
+  if (!short) toHot.push(term ? 'prazo curto (até 3 meses)' : 'prazo');
+  if (!value) toHot.push('valor do crédito');
+  if (!bid && !installment) toHot.push('lance ou parcela');
+  let level = 'frio';
+  if (value && short && (bid || installment)) level = 'quente';
+  else if (value && (objective || term)) level = 'morno';
+  return { level, has, missing: level === 'quente' ? [] : toHot };
+}
+const temperatureText = (t) => `${t.has.length ? t.has.join(', ') : 'sem valor nem prazo'}${t.missing.length ? `. Para esquentar: ${t.missing.join(', ')}` : ''}`;
+
+/** Grava a temperatura do negócio e leva a do negócio aberto mais recente para o cadastro. */
+function syncTemperature(db, oppId) {
+  const o = db.prepare('SELECT * FROM opportunities WHERE id = ?').get(Number(oppId));
+  if (!o) return null;
+  const t = temperatureOf(o);
+  const reason = temperatureText(t);
+  if (o.temperature !== t.level || o.temperature_reason !== reason) db.prepare('UPDATE opportunities SET temperature = ?, temperature_reason = ? WHERE id = ?').run(t.level, reason, o.id);
+  const latest = db.prepare("SELECT temperature FROM opportunities WHERE contact_id = ? AND status IN ('aberta','pausada') ORDER BY id DESC LIMIT 1").get(o.contact_id);
+  if (latest) db.prepare('UPDATE contacts SET temperature = ? WHERE id = ? AND COALESCE(temperature, \'\') <> ?').run(latest.temperature, o.contact_id, latest.temperature);
+  return t.level;
+}
+/** Recalcula todos os negócios (rotina periódica e bancos anteriores à temperatura automática). */
+function syncAllTemperatures(db) {
+  const ids = db.prepare("SELECT id FROM opportunities WHERE status IN ('aberta','pausada') ORDER BY id").all();
+  for (const { id } of ids) syncTemperature(db, id);
+  return ids.length;
+}
 const isEmpty = (v) => v == null || v === '';
 function qualificationStatus(o, kind = 'PF') {
   const fields = QUALIFICATION_FIELDS.filter(([, , only]) => !only || only === kind);
@@ -63,6 +115,9 @@ const OPTION_FIELDS = {
   decision_maker: 'decisor',
   existing_products: 'possui_produto',
   credit_purpose_type: 'finalidade_credito',
+  housing_purpose: 'finalidade_moradia',
+  bid_source: 'origem_lance',
+  property_type: 'tipo_imovel',
 };
 
 function assertOption(db, list, value, label) {
@@ -80,7 +135,7 @@ function normalizeOpp(db, data, contactId) {
   if (o.embedded_bid_interest && !['sim', 'nao', 'avaliar', 'nao_se_aplica'].includes(o.embedded_bid_interest)) {
     throw badRequest('Interesse em lance embutido inválido.');
   }
-  for (const f of ['has_bid_resources', 'had_consortium', 'has_financing']) {
+  for (const f of ['has_bid_resources', 'had_consortium', 'has_financing', 'has_property', 'property_free_liens', 'pays_rent']) {
     if (data[f] !== undefined) {
       o[f] = clean(data[f]);
       if (o[f] && !YES_NO.includes(o[f])) throw badRequest('Resposta inválida: use sim, não ou não sabe.');
@@ -102,7 +157,7 @@ function normalizeOpp(db, data, contactId) {
     o.existing_financing_cet = toNumber(data.existing_financing_cet);
     if (o.existing_financing_cet != null && (o.existing_financing_cet < 0 || o.existing_financing_cet > 100)) throw badRequest('CET deve estar entre 0 e 100% ao ano.');
   }
-  for (const f of ['credit_value', 'installment_min', 'installment_max', 'bid_own_resources', 'fgts_available', 'existing_consortium_value', 'existing_financing_balance']) {
+  for (const f of ['credit_value', 'installment_min', 'installment_max', 'bid_own_resources', 'fgts_available', 'existing_consortium_value', 'existing_financing_balance', 'property_value', 'rent_value']) {
     if (data[f] !== undefined) {
       o[f] = toNumber(data[f]);
       if (o[f] != null && o[f] < 0) throw badRequest('Valores monetários não podem ser negativos.');
@@ -197,6 +252,7 @@ function createOpportunityRow(db, user, data) {
     user_id: user.id,
   });
   audit(db, user, 'opportunity', id, 'criada', { code, etapa: stage.name }, contact.id);
+  syncTemperature(db, id);
   return { id, code };
 }
 
@@ -237,6 +293,7 @@ function updateOpportunity(db, user, id, data) {
     const u = buildUpdate('opportunities', before.id, o, [...OPP_FIELDS, 'strategy_validated_by', 'strategy_validated_at', 'updated_at', 'updated_by']);
     db.prepare(u.sql).run(...u.params);
     audit(db, user, 'opportunity', before.id, 'alterada', changes, before.contact_id);
+    syncTemperature(db, before.id);
   });
   return { changed: true };
 }
@@ -263,6 +320,7 @@ function fillQualification(db, user, id, data) {
     db.prepare(u.sql).run(...u.params);
     const filled = Object.keys(candidate);
     audit(db, user, 'opportunity', before.id, 'qualificacao_preenchida', { fonte: source, campos: filled }, before.contact_id);
+    syncTemperature(db, before.id);
     insertActivity(db, { contact_id: before.contact_id, opportunity_id: before.id, type: 'observacao', notes: `Qualificação completada automaticamente (${source === 'r1_transcricao' ? 'transcrição da R1' : source}): ${filled.length} campo(s) que estavam vazios.`, user_id: user.id });
   });
   const after = db.prepare('SELECT * FROM opportunities WHERE id = ?').get(before.id);
@@ -471,6 +529,9 @@ function decorate(db, rows) {
     }
     delete r.next_task;
     r.custom = JSON.parse(r.custom || '{}');
+    const temp = temperatureOf(r);
+    r.temperature = temp.level;
+    r.temperature_info = temp;
     r.deal_value = r.proposal_value ?? r.credit_value ?? null;
     r.deal_value_source = r.proposal_value != null ? 'proposta' : r.credit_value != null ? 'desejado' : null;
   }
@@ -571,6 +632,8 @@ function getOpportunity(db, user, id) {
   row.company_contacts = db.prepare('SELECT id, name, role FROM company_contacts WHERE company_id = ? AND active = 1').all(o.contact_id);
   row.strategy_validated_by_name = o.strategy_validated_by ? db.prepare('SELECT name FROM users WHERE id = ?').get(o.strategy_validated_by)?.name : null;
   row.qualification = qualificationStatus(row, loadContactKind(db, o.contact_id));
+  row.transcripts = db.prepare('SELECT t.id, t.filename, t.fields, t.applied, t.created_at, u.name AS user_name FROM r1_transcripts t LEFT JOIN users u ON u.id = t.created_by WHERE t.opportunity_id = ? ORDER BY t.id DESC').all(o.id)
+    .map((t) => ({ ...t, fields: Object.keys(JSON.parse(t.fields || '{}')).length, applied: JSON.parse(t.applied || '[]').length }));
   return row;
 }
 
@@ -643,4 +706,7 @@ module.exports = {
   saveStage,
   reorderStages,
   assertOption,
+  temperatureOf,
+  syncTemperature,
+  syncAllTemperatures,
 };

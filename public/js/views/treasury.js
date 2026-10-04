@@ -1,7 +1,7 @@
 // Financeiro da empresa: visão geral do caixa (administrador), contas a pagar, contas a receber e cadastros.
 // Cada lançamento (título) tem uma ou mais ocorrências: pontual, parcelada, recorrente ou assinatura.
 import { get, post, patch } from '../api.js';
-import { html, raw, render, $, $$, on, fresh, state, selectOptions, userItems, table, badge, fmtMoney, fmtMoneyShort, fmtDate, fmtDateTime, relTime, modal, field, toast, toastError, empty, subnav, hasModule } from '../ui.js';
+import { html, raw, render, $, $$, on, fresh, state, selectOptions, userItems, table, badge, fmtMoney, fmtMoneyShort, fmtDate, fmtDateTime, relTime, modal, field, toast, toastError, empty, subnav, hasModule, fmtMoneyInput, moneyValue, todayLocal } from '../ui.js';
 import { fileToBase64 } from './record-tabs.js';
 import { icon } from '../icons.js';
 
@@ -221,7 +221,7 @@ async function listTab(box, dir, params) {
 export function titleForm(dir, t = null) {
   const cfg = DIR[dir];
   const editing = !!t;
-  const v = t || { kind: 'pontual', periodicity: 'mensal', auto_renew: 1, account_id: cat.contas[0]?.id, responsible_id: state.user.id, first_due: new Date().toISOString().slice(0, 10) };
+  const v = t || { kind: 'pontual', periodicity: 'mensal', auto_renew: 1, account_id: cat.contas[0]?.id, responsible_id: state.user.id, first_due: todayLocal() };
   const kindSeg = html`<div class="seg full" role="radiogroup" aria-label="Tipo">${Object.entries(KINDS).map(([k, l]) => html`<label><input type="radio" name="kind" value="${k}" ${v.kind === k ? raw('checked') : ''} ${editing ? raw('disabled') : ''}> ${l}</label>`)}</div>`;
   return modal({
     title: editing ? `Editar ${t.code}` : cfg.new,
@@ -284,7 +284,7 @@ async function settleForm(instId, dir, info = null) {
     title: `${cfg.settle}: ${i.description}`,
     body: html`<p class="small muted">${i.code}${i.total_installments ? ` · parcela ${i.number}/${i.total_installments}` : ''} · vencimento ${fmtDate(i.due_date)} · ${fmtMoney(i.amount)}</p>
       <div class="grid">
-        ${field({ name: 'paid_at', label: `Data do ${cfg.done}`, type: 'date', value: new Date().toISOString().slice(0, 10), required: true })}
+        ${field({ name: 'paid_at', label: `Data do ${cfg.done}`, type: 'date', value: todayLocal(), required: true })}
         ${field({ name: 'paid_amount', label: 'Valor (R$)', type: 'money', value: i.amount, help: 'Ajuste se houve juros, multa ou desconto.' })}
         ${field({ name: 'account_id', label: cfg.account, type: 'select', options: items(cat.contas), value: i.account_id, allowEmpty: false })}
         ${field({ name: 'payment_method_id', label: 'Forma de pagamento', type: 'select', options: items(cat.formas), value: i.payment_method_id })}
@@ -462,7 +462,7 @@ export async function titleDetail(id, onChange, dirty = false) {
 function allocationForm(t) {
   const total = t.total_value ?? t.totals.previsto;
   const rows = t.allocations.length ? t.allocations : [{ competence: (t.invoice_date || t.first_due).slice(0, 7), amount: total }];
-  const row = (a = {}) => html`<div class="quota-row alloc-row" data-alloc><label>Mês de competência<input type="month" data-a="competence" value="${a.competence || ''}" required></label><label>Valor (R$)<input type="number" step="0.01" min="0" data-a="amount" value="${a.amount ?? ''}" required></label><label>Observação<input data-a="notes" value="${a.notes || ''}"></label><button type="button" class="icon" data-a-del aria-label="Remover">×</button></div>`;
+  const row = (a = {}) => html`<div class="quota-row alloc-row" data-alloc><label>Mês de competência<input type="month" data-a="competence" value="${a.competence || ''}" required></label><label>Valor (R$)<input type="text" inputmode="decimal" data-money data-a="amount" value="${fmtMoneyInput(a.amount)}" required></label><label>Observação<input data-a="notes" value="${a.notes || ''}"></label><button type="button" class="icon" data-a-del aria-label="Remover">×</button></div>`;
   return modal({
     title: `Rateio por competência — ${t.code}`,
     wide: true,
@@ -472,7 +472,7 @@ function allocationForm(t) {
     onMount(form) {
       const list = $('.alloc-list', form);
       const sum = () => {
-        const s = $$('[data-a=amount]', form).reduce((a, x) => a + (Number(x.value) || 0), 0);
+        const s = $$('[data-a=amount]', form).reduce((a, x) => a + moneyValue(x), 0);
         const diff = Math.round((total - s) * 100) / 100;
         $('[data-a-sum]', form).innerHTML = String(html`Soma ${fmtMoney(s)} ${diff ? html`<span class="warn-text">· falta ${fmtMoney(diff)}</span>` : html`<span class="ok-text">· fecha o total</span>`}`);
       };
@@ -487,7 +487,7 @@ function allocationForm(t) {
       sum();
     },
     async onSubmit(d, form) {
-      const allocations = $$('[data-alloc]', form).map((r) => Object.fromEntries($$('[data-a]', r).map((x) => [x.dataset.a, x.value])));
+      const allocations = $$('[data-alloc]', form).map((r) => Object.fromEntries($$('[data-a]', r).map((x) => [x.dataset.a, x.dataset.money !== undefined ? moneyValue(x) : x.value])));
       await post(`/api/financeiro/titulos/${t.id}/rateio`, { allocations });
       toast('Rateio salvo.');
       return true;

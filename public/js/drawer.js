@@ -2,7 +2,7 @@
 import { get } from './api.js';
 import { html, render, $, on, state, badge, relBadge, optLabel, K, fmtMoney, fmtDate, fmtDateTime, relTime, can, empty, optoutBadge } from './ui.js';
 import { activityForm, taskForm, moveStage } from './forms.js';
-import { qualProgress } from './qualification.js';
+import { qualProgress, tempBadge } from './qualification.js';
 
 let current = null;
 
@@ -58,7 +58,7 @@ export async function openLeadDrawer(contactId, { oppId = null, onChange = null 
     render($('.drawer-body', el), html`
       <div class="drawer-head">
         <div><h2>${c.name}</h2>
-          <div class="badges">${relBadge(c.relationship)} ${c.active === 0 ? badge('Inativo', 'muted') : ''} ${c.temperature ? badge(optLabel('temperatura', c.temperature)) : ''} ${optoutBadge(c.optouts)}</div>
+          <div class="badges">${relBadge(c.relationship)} ${c.active === 0 ? badge('Inativo', 'muted') : ''} ${c.temperature ? tempBadge(c.temperature) : ''} ${optoutBadge(c.optouts)}</div>
           <small class="muted">ID ${c.code} · ${c.kind} · desde ${fmtDate(c.created_at)}</small></div>
         <button class="icon" data-close aria-label="Fechar painel">×</button>
       </div>
@@ -80,6 +80,7 @@ export async function openLeadDrawer(contactId, { oppId = null, onChange = null 
       ${qualProgress(opp, c.kind, { compact: true })}
       <dl class="kv-list">
         <div><dt>Etapa</dt><dd>${badge(opp.stage_name, `kind-${opp.stage_kind}`)}</dd></div>
+        ${opp.temperature ? html`<div><dt>Temperatura</dt><dd>${tempBadge(opp.temperature)}${opp.temperature_reason ? html`<br><small>${opp.temperature_reason}</small>` : ''}</dd></div>` : ''}
         <div><dt>Categoria de interesse</dt><dd>${optLabel('categoria_credito', opp.credit_category) || '—'}</dd></div>
         <div><dt>Objetivo</dt><dd>${optLabel('objetivo', opp.objective_type) || '—'}${opp.credit_purpose_type ? html`<br><small>${optLabel('finalidade_credito', opp.credit_purpose_type)}</small>` : ''}</dd></div>
         <div><dt>Tipo de produto</dt><dd>${optLabel('tipo_produto', opp.product_type) || '—'}</dd></div>

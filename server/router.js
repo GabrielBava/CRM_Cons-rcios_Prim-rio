@@ -91,6 +91,7 @@ function createRouter(db) {
   /* ---------- Administradoras e planos ---------- */
   add('GET', '/api/administradoras', ({ user }) => catalog.listAdministrators(db, user));
   add('POST', '/api/administradoras', ({ user, body }) => ({ id: catalog.saveAdministrator(db, user, body) }));
+  add('POST', '/api/administradoras/:id/senha', ({ user, params }) => catalog.revealPortalPassword(db, user, params.id));
   add('GET', '/api/planos', ({ query }) => catalog.listPlans(db, query));
   add('POST', '/api/planos', ({ user, body }) => ({ id: catalog.savePlan(db, user, body) }));
   add('GET', '/api/planos/:id/verificar-credito', ({ params, query }) => {
@@ -178,7 +179,13 @@ function createRouter(db) {
 
   /* ---------- Cadastros ---------- */
   add('GET', '/api/cadastros', ({ user, query }) => contacts.listContacts(db, user, query));
-  add('POST', '/api/cadastros', ({ user, body }) => contacts.createContact(db, user, body));
+  add('POST', '/api/cadastros', ({ user, body }) => {
+    const r = contacts.createContact(db, user, body);
+    // Cadastrado sem responsável: a roleta distribui na hora (sem esperar a rotina de 15 minutos)
+    const c = db.prepare('SELECT owner_id FROM contacts WHERE id = ?').get(r.id);
+    if (c && !c.owner_id) require('./services/distribution').autoDistribute(db, r.id);
+    return r;
+  });
   add('POST', '/api/cadastros/verificar-duplicidade', ({ user, body }) => ({ duplicates: contacts.checkDuplicates(db, user, body, body.exclude_id ? Number(body.exclude_id) : undefined) }));
   add('GET', '/api/cadastros/:id', ({ user, params }) => contacts.getContact(db, user, params.id));
   add('PATCH', '/api/cadastros/:id', ({ user, params, body }) => contacts.updateContact(db, user, params.id, body));
@@ -254,6 +261,11 @@ function createRouter(db) {
   add('POST', '/api/oportunidades/:id/validar-estrategia', ({ user, params }) => (opps.validateStrategy(db, user, params.id), { ok: true }));
   // Qualificação vinda de fora (ex.: transcrição da R1): completa só os campos vazios
   add('POST', '/api/oportunidades/:id/qualificacao', ({ user, params, body }) => opps.fillQualification(db, user, params.id, body));
+  // Transcrição da R1: anexar, conferir os campos identificados e aplicar (só completa campos vazios)
+  add('GET', '/api/r1/campos', () => require('./services/r1').templateFields(db));
+  add('POST', '/api/oportunidades/:id/transcricoes', ({ user, params, body }) => require('./services/r1').attachTranscript(db, user, params.id, body), { bodyLimit: 4e6 });
+  add('GET', '/api/oportunidades/:id/transcricoes/:tid', ({ user, params }) => require('./services/r1').getTranscript(db, user, params.id, params.tid));
+  add('POST', '/api/oportunidades/:id/transcricoes/:tid/aplicar', ({ user, params }) => require('./services/r1').applyTranscript(db, user, params.id, params.tid));
 
   /* ---------- Atividades e tarefas ---------- */
   add('GET', '/api/atividades', ({ user, query }) => activities.listActivities(db, user, query));
@@ -408,8 +420,24 @@ function createRouter(db) {
     }
   }
 
+  /** Fila de distribuição: a cada 15 minutos a roleta distribui os leads que ainda estão sem especialista. */
+  function queueSweep() {
+    try {
+      return require('./services/distribution').queueSweep(db);
+    } catch (e) {
+      console.error('Falha na distribuição automática da fila:', e.message);
+      return null;
+    }
+  }
+
   /** Rotina de manutenção: expiração de propostas vencidas. */
   function sweep() {
+    queueSweep();
+    try {
+      opps.syncAllTemperatures(db);
+    } catch (e) {
+      console.error('Falha ao recalcular a temperatura dos negócios:', e.message);
+    }
     try {
       proposals.expireSweep(db);
     } catch (e) {
@@ -435,7 +463,7 @@ function createRouter(db) {
     }
   }
 
-  return { dispatch, sweep };
+  return { dispatch, sweep, queueSweep };
 }
 
 module.exports = { createRouter };

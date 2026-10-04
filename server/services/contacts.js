@@ -349,9 +349,16 @@ function createContact(db, user, data, opts = {}) {
     }, id);
     if (data.create_opportunity !== false && data.create_opportunity !== 'false') {
       const { createOpportunityRow } = require('./opportunities');
+      // Leads de formulário (Meta Ads, Instagram, Facebook, LinkedIn, landing page…) chegam com nome e contato: começam em "Tentativa de contato"
+      const formOrigins = getSetting(db, 'auto_tentativa_origins') || [];
+      const hasContact = !!(row.phone1_norm || row.whatsapp_norm || row.email);
+      const tentativa = formOrigins.includes(row.origin) && row.name && hasContact && ['lead', 'prospect'].includes(row.relationship || 'lead')
+        ? db.prepare("SELECT id FROM pipeline_stages WHERE key = 'tentativa' AND active = 1 AND kind = 'aberta'").get()
+        : null;
       createOpportunityRow(db, user, {
         contact_id: id,
         owner_id: ownerId,
+        stage_id: tentativa?.id,
         product_id: data.product_id,
         credit_category: data.credit_category,
         credit_value: data.credit_value,

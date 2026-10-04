@@ -2,9 +2,8 @@
 import { get, post, patch } from '../api.js';
 import {
   html, raw, render, $, on, state, field, formData, opts, userItems, table, badge, optLabel, K, fmtDate, fmtDateTime, fmtMoney, relTime,
-  modal, toast, toastError, can, empty,
-} from '../ui.js';
-import { qualBlocks, qualProgress } from '../qualification.js';
+  modal, toast, toastError, can, empty, todayLocal } from '../ui.js';
+import { qualBlocks, qualProgress, tempBadge } from '../qualification.js';
 import { timelineList, bindTimeline } from '../postsale-timeline.js';
 import { opportunityForm, contractForm } from '../forms.js';
 
@@ -53,7 +52,7 @@ export async function origem(box, c, reload, extra) {
       <fieldset ${ro(c) ? raw('disabled') : ''}><div class="grid">
         ${field({ name: 'origin', label: 'Origem do lead', type: 'select', options: opts('origem'), value: c.origin })}
         ${field({ name: 'campaign', label: 'Campanha ou ação de origem', value: c.campaign })}
-        ${field({ name: 'temperature', label: 'Temperatura do lead', type: 'select', options: opts('temperatura'), value: c.temperature })}
+        <div class="field"><label>Temperatura do lead</label><div class="static-field">${c.temperature ? tempBadge(c.temperature) : html`<span class="muted">—</span>`}</div><small>Calculada pela qualificação do negócio: quente, morno ou frio.</small></div>
         ${field({ name: 'owner_id', label: 'Responsável atual', type: 'select', options: userItems(), value: c.owner_id, placeholder: 'Sem responsável', disabled: !can.manage() })}
         <div class="field"><label>Data de cadastro</label><input value="${fmtDateTime(c.created_at)}" disabled></div>
         ${field({ name: 'first_contact_at', label: 'Data do primeiro contato', type: 'datetime', value: c.first_contact_at, help: 'Preenchida automaticamente na primeira tentativa de contato.' })}
@@ -174,7 +173,7 @@ export async function endereco(box, c, reload) {
 
 export async function negocio(box, c, reload) {
   const opp = c.opportunities;
-  const r1 = (o) => html`${qualProgress(o, c.kind)}${qualBlocks(o, c.kind)}`;
+  const r1 = (o) => html`${o.temperature && o.status === 'aberta' ? html`<p class="temp-line">${tempBadge(o.temperature)} <small class="muted">${o.temperature_reason || ''}</small></p>` : ''}${qualProgress(o, c.kind)}${qualBlocks(o, c.kind)}`;
   render(box, html`<section class="card">
     <div class="section-head"><h3>Negócios</h3>${ro(c) ? '' : html`<button class="btn" data-act="opp">+ Novo negócio</button>`}</div>
     <p class="hint">A qualificação fica em cinco blocos: necessidade, prazo, capacidade, estratégia e decisão. Em Lead e Tentativa de contato, busque o máximo de respostas; o que faltar é completado na R1. Cada negócio segue o funil com sua própria etapa e próxima ação.</p>
@@ -224,7 +223,7 @@ export function entryAction(e, action) {
     return modal({
       title: `Registrar pagamento — ${e.code}`,
       body: html`<div class="grid">
-        ${field({ name: 'paid_at', label: 'Data do pagamento', type: 'date', value: new Date().toISOString().slice(0, 10), required: true })}
+        ${field({ name: 'paid_at', label: 'Data do pagamento', type: 'date', value: todayLocal(), required: true })}
         ${field({ name: 'paid_amount', label: 'Valor pago (R$)', type: 'money', value: e.amount })}
         ${field({ name: 'payment_method', label: 'Forma de pagamento', type: 'select', options: opts('forma_pagamento') })}
         ${field({ name: 'notes', label: 'Observações', type: 'textarea', full: true })}
@@ -619,7 +618,7 @@ export async function documentos(box, c, reload) {
       ${table(
         [
           { label: 'Arquivo', render: (a) => html`<strong>${a.filename}</strong><br><small>${optLabel('tipo_documento', a.doc_type)} · ${a.size < 1024 ? '< 1' : Math.round(a.size / 1024)} KB</small>` },
-          { label: 'Situação', render: (a) => html`${docBadge(a.status)}${a.valid_until ? html`<br><small class="${a.valid_until < new Date().toISOString().slice(0, 10) ? 'overdue' : ''}">Validade: ${fmtDate(a.valid_until)}</small>` : ''}` },
+          { label: 'Situação', render: (a) => html`${docBadge(a.status)}${a.valid_until ? html`<br><small class="${a.valid_until < todayLocal() ? 'overdue' : ''}">Validade: ${fmtDate(a.valid_until)}</small>` : ''}` },
           { label: 'Enviado', render: (a) => html`${fmtDateTime(a.created_at)}<br><small>${a.source === 'cliente' ? 'pelo cliente (link)' : a.uploaded_by_name || '—'}</small>` },
           { label: 'Vendas', render: (a) => a.opportunity_ids.map((id) => c.opportunities.find((o) => o.id === id)?.code).filter(Boolean).join(', ') || '—' },
           { label: 'Observação', render: (a) => a.notes || '—' },

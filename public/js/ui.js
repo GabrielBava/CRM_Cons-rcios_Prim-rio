@@ -91,6 +91,11 @@ const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 export const fmtDate = (v) => (v ? new Date(v.length === 10 ? `${v}T12:00:00` : v).toLocaleDateString('pt-BR') : '—');
 export const fmtDateTime = (v) =>
   v ? new Date(v).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: tz }) : '—';
+/** Data de hoje (AAAA-MM-DD) no fuso do navegador — toISOString() usaria UTC e viraria "amanhã" à noite. */
+export const todayLocal = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
 export const fmtMoney = (v) => (v == null || v === '' ? '—' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
 export const fmtNum = (v) => (v == null || v === '' ? '—' : Number(v).toLocaleString('pt-BR'));
 export const fmtPct = (v) => (v == null ? '—' : `${Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%`);
@@ -189,13 +194,50 @@ export function field(f) {
       input = html`<input type="datetime-local" ${common} value="${toLocalInput(f.value)}">`;
       break;
     case 'money':
+      // Valor em reais com máscara (R$ 1.234,56); formData devolve o número
+      input = html`<div class="money-input"><span aria-hidden="true">R$</span><input type="text" inputmode="decimal" autocomplete="off" data-money ${common} value="${fmtMoneyInput(f.value)}"></div>`;
+      break;
     case 'number':
-      input = html`<input type="number" step="${f.step || (f.type === 'money' ? '0.01' : 'any')}" min="${f.min ?? ''}" ${common} value="${f.value ?? ''}">`;
+      input = html`<input type="number" step="${f.step || 'any'}" min="${f.min ?? ''}" ${common} value="${f.value ?? ''}">`;
       break;
     default:
       input = html`<input type="${f.type || 'text'}" ${common} value="${f.value ?? ''}" ${f.maxlength ? html`maxlength="${f.maxlength}"` : ''}>`;
   }
   return html`<div class="${cls}"><label for="${id}">${f.label}${f.required ? html` <span class="req">*</span>` : ''}${f.recommended ? html` <span class="rec" title="Campo recomendado">recomendado</span>` : ''}${f.sale ? html` <span class="rec sale" title="Obrigatório para concluir a venda">venda</span>` : ''}</label>${input}${f.help ? html`<small>${f.help}</small>` : ''}</div>`;
+}
+
+/* ---------------- Valores em reais (máscara dos campos de valor) ---------------- */
+/** "R$ 250.000,00", "250000", "250.000" ou "1.234,5" → número; '' quando vazio; NaN quando inválido. */
+export function parseMoneyBR(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return '';
+  let t = s.replace(/[R$\s]/g, '');
+  if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.');
+  else if (/^-?\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, '');
+  const n = Number(t);
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : NaN;
+}
+export const fmtMoneyInput = (v) => (v == null || v === '' || Number.isNaN(Number(v)) ? '' : Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+/** Número de um campo com máscara (0 quando vazio ou inválido). */
+export const moneyValue = (el) => {
+  const n = parseMoneyBR(el?.value);
+  return n === '' || Number.isNaN(n) ? 0 : n;
+};
+if (typeof document !== 'undefined' && !window.__moneyMask) {
+  window.__moneyMask = true;
+  // Só dígitos, vírgula e ponto enquanto digita; formata ao sair do campo
+  document.addEventListener('input', (e) => {
+    const el = e.target;
+    if (!el.matches?.('input[data-money]')) return;
+    const clean = el.value.replace(/[^\d.,-]/g, '');
+    if (clean !== el.value) el.value = clean;
+  });
+  document.addEventListener('focusout', (e) => {
+    const el = e.target;
+    if (!el.matches?.('input[data-money]')) return;
+    const n = parseMoneyBR(el.value);
+    if (n !== '' && !Number.isNaN(n)) el.value = fmtMoneyInput(n);
+  });
 }
 
 /** Lê um formulário para objeto. Campos datetime-local são convertidos para ISO. */
@@ -208,7 +250,10 @@ export function formData(form) {
       if (el.checked) out[el.name] = el.value;
     }
     else if (el.type === 'datetime-local') out[el.name] = fromLocalInput(el.value);
-    else out[el.name] = el.value;
+    else if (el.dataset.money !== undefined) {
+      const n = parseMoneyBR(el.value);
+      out[el.name] = n === '' ? '' : Number.isNaN(n) ? el.value : String(n);
+    } else out[el.name] = el.value;
   }
   return out;
 }

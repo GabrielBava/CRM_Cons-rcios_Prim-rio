@@ -63,7 +63,7 @@ function seedDemo(db, password) {
 
   /* ---------- Administradoras e planos (fictícios) ---------- */
   const alfa = catalog.saveAdministrator(db, admin, {
-    name: 'Administradora Alfa (fictícia)', website: 'alfa.exemplo.com.br', portal_url: 'portal.alfa.exemplo.com.br', portal_login: 'corretora.demo',
+    name: 'Administradora Alfa (fictícia)', website: 'alfa.exemplo.com.br', portal_url: 'portal.alfa.exemplo.com.br', portal_login: 'corretora.demo', portal_password: 'senha-ficticia-123',
     commercial_name: 'Marcos (comercial)', commercial_phone: '(11) 4000-1000', commercial_email: 'comercial@alfa.exemplo.com.br',
     manager_name: 'Juliana (gerente de conta)', manager_phone: '(11) 4000-1001', manager_email: 'juliana@alfa.exemplo.com.br',
     payout_day: 20, payout_method: 'TED para a conta PJ mediante nota fiscal até o dia 15',
@@ -136,6 +136,10 @@ function seedDemo(db, password) {
           objective_type: i % 3 ? 'aquisicao' : 'investimento', urgency: rnd(['curto', 'medio', 'longo'], i), installment_max: 1500 + i * 50, term_months: 200,
           strategy: rnd(['aquisicao', 'planejamento', 'formacao_patrimonial'], i), product_type: 'primario', employment_type: rnd(['clt', 'pj', 'empresario'], i), has_fgts: i % 2 ? 'sim' : 'nao',
           credit_purpose_type: rnd(['moradia', 'imovel_investimento', 'terreno_construcao'], i), installment_min: 1200 + i * 40, has_bid_resources: rnd(['sim', 'nao', 'nao_sabe'], i), credit_category: 'imovel',
+          housing_purpose: rnd(['morar', 'investir', 'morar'], i), pays_rent: i % 3 ? 'sim' : 'nao', rent_value: i % 3 ? 2200 + i * 50 : undefined,
+          has_property: i % 4 === 1 ? 'sim' : 'nao', property_type: i % 4 === 1 ? rnd(['apartamento', 'casa', 'terreno'], i) : undefined,
+          property_value: i % 4 === 1 ? 420000 + i * 10000 : undefined, property_free_liens: i % 4 === 1 ? (i % 8 === 1 ? 'sim' : 'nao') : undefined,
+          ...(rnd(['sim', 'nao', 'nao_sabe'], i) === 'sim' ? { bid_own_resources: 30000 + i * 2500, bid_source: rnd(['reserva', 'fgts', 'reserva_fgts'], i) } : {}),
         });
       }
       if (st === 'r1') {
@@ -302,13 +306,23 @@ function seedDemo(db, password) {
       const { id } = contacts.createContact(db, admin, { kind: 'PF', name, relationship: rel, phone1: `(11) 97777-10${k}0`, email: `${name.split(' ')[0].toLowerCase()}.fila@example.com`, origin, owner_id: '', credit_value: 150000 + k * 50000 }, { skipDuplicateCheck: true });
       db.prepare('UPDATE contacts SET created_at = ? WHERE id = ?').run(new Date(Date.now() - hours * 3600000).toISOString(), id);
     });
-    distribution.saveRoleta(db, admin, { mode: 'sequencial', auto: false, first_contact_hours: 1, participants: [{ user_id: c1.id, active: true, weight: 1 }, { user_id: c2.id, active: true, weight: 1 }] });
+    distribution.saveRoleta(db, admin, { mode: 'sequencial', auto: true, first_contact_hours: 1, participants: [{ user_id: c1.id, active: true, weight: 1 }, { user_id: c2.id, active: true, weight: 1 }] });
 
     // Metas do mês: especialistas e equipe
     const month = dateAgo(0).slice(0, 7);
     goals.saveGoals(db, admin, { month, items: [{ scope: 'user', user_id: c1.id, target_credit: 800000, target_sales: 4 }, { scope: 'user', user_id: c2.id, target_credit: 600000, target_sales: 3 }, { scope: 'team', team_id: team, target_credit: 1500000, target_sales: 7 }] });
   });
   setSetting(db, 'require_sale_checklist', checklistSetting !== false);
+  // Pós-venda: parcela ajustada no reajuste e uma cota contemplada por lance fidelidade (cliente escolheu o faturamento)
+  const kc = db.prepare('SELECT id, credit_value, installment_value FROM contracts WHERE sale_id IS NOT NULL ORDER BY id LIMIT 1').get();
+  if (kc && kc.credit_value) {
+    const r2 = (v) => Math.round(v * 100) / 100;
+    require('./services/clients').updateContract(db, admin, kc.id, {
+      installment_value: kc.installment_value ? r2(kc.installment_value * 1.045) : undefined, available_credit: r2(kc.credit_value * 1.045),
+      contemplated_at: dateAgo(1), contemplation_type: 'lance_fidelidade', bid_value: r2(kc.credit_value * 0.2),
+      contemplation_credit: r2(kc.credit_value * 1.045), net_to_pay: r2(kc.credit_value * 0.9), client_choice: 'faturamento',
+    });
+  }
   seedTreasuryDemo(db, { admin, gestor, c1, PDF });
   finance.overdueSweep(db);
   sales.presaleSweep(db);

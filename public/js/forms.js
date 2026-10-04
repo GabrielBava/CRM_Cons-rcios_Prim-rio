@@ -2,9 +2,11 @@
 import { get, post, patch } from './api.js';
 import {
   html, raw, esc, modal, field, opts, toItems, userItems, productItems, state, toast, toastError, K, optLabel, fmtMoney, fmtDate,
-  fmtDateTime, badge, $, $$, on, confirmDialog, can, stageById, table,
-} from './ui.js';
+  fmtDateTime, badge, $, $$, on, confirmDialog, can, stageById, table, todayLocal } from './ui.js';
 import { qualFormFields, bindQualForm } from './qualification.js';
+import { transcriptFlow } from './r1.js';
+import { downloadLeadTemplate } from './lead-import.js';
+import { icon } from './icons.js';
 
 const nav = (hash) => (location.hash = hash);
 
@@ -23,6 +25,10 @@ export function quickCreateContact(defaults = {}) {
   const cfg = state.meta.settings.field_config || {};
   const visible = (k, f) => (cfg[k === 'PJ' ? 'contact_pj' : 'contact_pf']?.[f]?.visible !== false);
   const body = html`
+    ${can.write() ? html`<div class="import-banner">
+      <div><strong>Tem uma base de leads?</strong><small>Importe a planilha (.xlsx ou .csv): o CRM lê as colunas, valida cada linha e remove os duplicados antes de criar os cards.</small></div>
+      <div class="import-banner-actions"><button type="button" class="btn small" data-lead-template>${icon('baixar', 14)}Baixar modelo Excel</button><button type="button" class="btn small primary" data-lead-import>${icon('importar', 14)}Importar base de leads</button></div>
+    </div>` : ''}
     <div class="seg" role="radiogroup">
       <label><input type="radio" name="kind" value="PF" ${kind === 'PF' ? raw('checked') : ''}> Pessoa física</label>
       <label><input type="radio" name="kind" value="PJ" ${kind === 'PJ' ? raw('checked') : ''}> Pessoa jurídica</label>
@@ -44,10 +50,10 @@ export function quickCreateContact(defaults = {}) {
       ${field({ name: 'campaign', label: 'Campanha ou ação de origem' })}
       ${field({ name: 'first_contact_at', label: 'Data do primeiro contato', type: 'datetime' })}
       ${field({ name: 'relationship', label: 'Tipo', type: 'select', options: [{ value: 'prospect', label: 'Prospect (ainda sem interesse demonstrado)' }, { value: 'lead', label: 'Lead (demonstrou interesse)' }], value: defaults.relationship || 'lead', allowEmpty: false })}
-      ${field({ name: 'owner_id', label: 'Responsável', type: 'select', options: userItems(), value: defaults.owner_id !== undefined ? defaults.owner_id : state.user.id, allowEmpty: can.manage(), placeholder: 'Sem responsável (fila de distribuição)', disabled: !can.manage() })}
+      ${field({ name: 'owner_id', label: 'Responsável', type: 'select', options: userItems(), value: defaults.owner_id !== undefined ? defaults.owner_id : state.user.id, allowEmpty: can.manage(), placeholder: 'Sem responsável: distribuir pela roleta', disabled: !can.manage() })}
       ${field({ name: 'product_id', label: 'Produto de interesse', type: 'select', options: productItems() })}
       ${field({ name: 'initial_notes', label: 'Observações iniciais', type: 'textarea', full: true })}
-      ${field({ name: 'create_opportunity', label: 'Criar negócio no funil (etapa "Prospect" ou "Lead")', type: 'checkbox', value: true, full: true })}
+      ${field({ name: 'create_opportunity', label: 'Criar negócio no funil (Prospect ou Lead; leads de formulário — Meta, Instagram, Facebook, LinkedIn, landing page — entram em "Tentativa de contato")', type: 'checkbox', value: true, full: true })}
       <details class="full"><summary>Dados de campanha digital (opcional)</summary>
         <p class="hint">Preencha somente os dados que a plataforma forneceu. Campos sem informação ficam vazios.</p>
         <div class="grid">
@@ -78,6 +84,11 @@ export function quickCreateContact(defaults = {}) {
         form.querySelector('label[for^=f_name]').childNodes[0].textContent = pj ? 'Nome do contato principal ' : 'Nome completo ou nome de contato ';
       });
       on(form, 'click', '[data-open-dup]', () => close(null));
+      on(form, 'click', '[data-lead-template]', () => downloadLeadTemplate());
+      on(form, 'click', '[data-lead-import]', () => {
+        close(null);
+        nav('#/importar');
+      });
       const check = async () => {
         const d = { phone1: form.phone1.value, phone2: form.phone2.value, email: form.email.value, doc: form.doc?.value };
         if (!d.phone1 && !d.phone2 && !d.email && !d.doc) return;
@@ -267,9 +278,14 @@ export function opportunityForm(contact, opp) {
   return modal({
     title: opp ? `Editar ${opp.code}` : `Nova oportunidade — ${contact.name}`,
     wide: true,
-    body: opportunityFields(opp || { owner_id: contact.owner_id }, contact.company_contacts || [], contact.kind),
-    onMount(form) {
+    body: html`${opp ? html`<div class="import-banner r1-banner"><div><strong>Transcrição da R1</strong><small>Anexe o arquivo da reunião: os campos identificados preenchem o que ainda está pendente (os já preenchidos não mudam).</small></div><div class="import-banner-actions"><button type="button" class="btn small primary" data-r1-attach>Anexar transcrição da R1</button></div></div>` : ''}${opportunityFields(opp || { owner_id: contact.owner_id }, contact.company_contacts || [], contact.kind)}`,
+    onMount(form, close) {
       bindQualForm(form);
+      on(form, 'click', '[data-r1-attach]', async () => {
+        // Aplicada a transcrição, o formulário fecha para recarregar com os campos preenchidos
+        const r = await transcriptFlow(opp);
+        if (r) close(true);
+      });
     },
     async onSubmit(d) {
       d.custom = extractCustom(d);
@@ -600,7 +616,7 @@ export async function proposalDetail(id, onChange) {
     ${p.refusal_reason ? html`<div class="alert warn">Recusada${p.refused_at ? ` em ${fmtDate(p.refused_at)}` : ''}: <strong>${optLabel('motivo_recusa_proposta', p.refusal_reason)}</strong>.${p.refusal_notes ? ` ${p.refusal_notes}` : ''}${p.retake_at ? html`<br>Retomar contato em ${fmtDate(p.retake_at)}.` : ''}</div>` : ''}
     ${!final && can.write() ? html`<div class="inline-actions"><label>Alterar status para <select name="new_status"><option value="">—</option>${nextStatuses.map((s) => html`<option value="${s}">${K('proposal_status', s)}</option>`)}</select></label>
       <label class="st-extra st-aprovada" hidden>Canal do aceite <select name="accepted_channel"><option value="">Selecione…</option>${opts('canal_aceite').map((o) => html`<option value="${o.value}">${o.label}</option>`)}</select></label>
-      <label class="st-extra st-aprovada" hidden>Data do aceite <input type="date" name="accepted_at" value="${new Date().toISOString().slice(0, 10)}"></label>
+      <label class="st-extra st-aprovada" hidden>Data do aceite <input type="date" name="accepted_at" value="${todayLocal()}"></label>
       <label class="st-extra st-apresentada" hidden>Enviada por <select name="sent_channel"><option value="whatsapp">WhatsApp</option><option value="email">E-mail</option><option value="presencial">Presencial</option><option value="video">Videochamada</option></select></label>
       <label class="st-extra st-recusada" hidden>Motivo da recusa <select name="refusal_reason"><option value="">Selecione…</option>${opts('motivo_recusa_proposta').map((o) => html`<option value="${o.value}">${o.label}${o.flags?.recuperavel ? ' (recuperável)' : ''}</option>`)}</select></label>
       <label class="st-extra st-recusada" hidden>Detalhe <input name="refusal_notes" placeholder="O que o cliente disse?"></label>
@@ -701,24 +717,33 @@ export function contractForm(contact, contract) {
       ${field({ name: 'administrator', label: 'Administradora', value: k.administrator })}
       ${field({ name: 'group_code', label: 'Grupo', value: k.group_code })}
       ${field({ name: 'quota_code', label: 'Cota', value: k.quota_code })}
-      ${field({ name: 'credit_value', label: 'Crédito contratado (R$)', type: 'money', value: k.credit_value })}
+      ${field({ name: 'contract_number', label: 'Contrato da cota (nº na administradora)', value: k.contract_number })}
       ${field({ name: 'term_months', label: 'Prazo (meses)', type: 'number', value: k.term_months })}
+      <h4 class="full qual-form-title">Crédito e parcela<small>O crédito contratado é o da venda; o disponível muda com reajustes e lances.</small></h4>
+      ${field({ name: 'credit_value', label: 'Crédito contratado', type: 'money', value: k.credit_value })}
+      ${field({ name: 'available_credit', label: 'Crédito disponível', type: 'money', value: k.available_credit, help: 'Em branco na criação: igual ao contratado.' })}
+      ${field({ name: 'installment_initial', label: 'Parcela inicial', type: 'money', value: k.installment_initial ?? (contract ? null : undefined), help: 'Valor da parcela na contratação.' })}
+      ${field({ name: 'installment_value', label: 'Parcela atual', type: 'money', value: k.installment_value, help: 'Ajustada pelo especialista de pós-venda (reajustes).' })}
       ${field({ name: 'quotas', label: 'Quantidade de cotas', type: 'number', value: k.quotas })}
-      ${field({ name: 'contracted_at', label: 'Data da contratação', type: 'date', value: k.contracted_at })}
+      <h4 class="full qual-form-title">Datas<small>Contratação = venda; adesão = alocação da cota na administradora.</small></h4>
+      ${field({ name: 'contracted_at', label: 'Data da contratação (venda)', type: 'date', value: k.contracted_at })}
+      ${field({ name: 'adhesion_date', label: 'Data da adesão (alocação)', type: 'date', value: k.adhesion_date })}
+      ${field({ name: 'next_readjustment_date', label: 'Próximo reajuste', type: 'date', value: k.next_readjustment_date })}
       ${field({ name: 'status', label: 'Status do contrato', type: 'select', options: opts('status_contrato'), value: k.status || 'em_formalizacao', allowEmpty: false })}
       ${field({ name: 'payment_modality', label: 'Modalidade de pagamento', type: 'select', options: opts('modalidade_pagamento'), value: k.payment_modality })}
       ${field({ name: 'strategy', label: 'Estratégia associada', type: 'select', options: opts('estrategia'), value: k.strategy })}
-      ${field({ name: 'contract_number', label: 'Nº do contrato na administradora', value: k.contract_number })}
-      ${field({ name: 'installment_value', label: 'Valor da parcela (R$)', type: 'money', value: k.installment_value })}
       ${field({ name: 'due_day', label: 'Dia de vencimento', type: 'number', value: k.due_day, min: 1, step: 1 })}
       ${field({ name: 'first_due_date', label: 'Primeiro vencimento', type: 'date', value: k.first_due_date })}
       ${field({ name: 'seller_id', label: 'Vendedor da venda', type: 'select', options: userItems(), value: k.seller_id, placeholder: 'Não informado' })}
-      ${field({ name: 'sale_value', label: 'Valor de venda da carta (R$)', type: 'money', value: k.sale_value, help: 'Para carta contemplada vendida.' })}
-      <h4 class="full">Contemplação</h4>
+      <h4 class="full qual-form-title">Contemplação<small>Sorteio, lance livre, fixo, fidelidade ou retido; o cliente escolhe usar o crédito (faturamento) ou vender a carta.</small></h4>
       ${field({ name: 'contemplated_at', label: 'Data da contemplação', type: 'date', value: k.contemplated_at })}
       ${field({ name: 'contemplation_type', label: 'Tipo de contemplação', type: 'select', options: opts('tipo_contemplacao'), value: k.contemplation_type })}
-      ${field({ name: 'bid_value', label: 'Valor do lance (R$)', type: 'money', value: k.bid_value })}
+      ${field({ name: 'bid_value', label: 'Valor do lance', type: 'money', value: k.bid_value })}
+      ${field({ name: 'contemplation_credit', label: 'Crédito disponível na contemplação', type: 'money', value: k.contemplation_credit })}
+      ${field({ name: 'net_to_pay', label: 'Líquido a pagar', type: 'money', value: k.net_to_pay, help: 'Saldo devedor que o cliente ainda paga depois da contemplação.' })}
+      ${field({ name: 'client_choice', label: 'Escolha do cliente', type: 'select', options: opts('escolha_contemplacao'), value: k.client_choice, placeholder: 'Ainda não decidiu' })}
       ${field({ name: 'acquired_asset', label: 'Bem adquirido', value: k.acquired_asset })}
+      ${field({ name: 'sale_value', label: 'Valor de venda da carta', type: 'money', value: k.sale_value, help: 'Quando o cliente escolhe vender a carta contemplada.' })}
       ${propItems.length ? field({ name: 'proposal_id', label: 'Proposta vinculada', type: 'select', options: propItems, value: k.proposal_id, placeholder: 'Nenhuma' }) : ''}
       ${field({ name: 'notes', label: 'Observações', type: 'textarea', value: k.notes, full: true })}
     </div>`,
