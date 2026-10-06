@@ -186,6 +186,8 @@ docs/
 
 ## Produção
 
+- **Instalação em Ubuntu (VM local ou na nuvem):** `sudo DOMINIO=crm.seudominio.com.br bash deploy/instalar-ubuntu.sh` instala o Node.js 22, cria o serviço `vero-consorcios` (systemd), o banco em `/var/lib/vero-consorcios`, a configuração em `/etc/vero-consorcios.env` e o HTTPS (Caddy). Sem `DOMINIO`, responde na porta 3000. Para uma VM local de teste: `vagrant up` (ver `Vagrantfile` e TESTE-LOCAL.md).
+
 - Rode a aplicação atrás de um proxy HTTPS (Nginx, Caddy ou o balanceador da nuvem) com `HOST=0.0.0.0`.
 - Faça backup periódico do arquivo definido em `CRM_DB`, junto com os arquivos `-wal` e `-shm` e a chave `<banco>.key` (sem ela, as senhas de portal guardadas não podem ser abertas).
 - Tokens de integração são exibidos uma única vez. No banco fica apenas o hash.

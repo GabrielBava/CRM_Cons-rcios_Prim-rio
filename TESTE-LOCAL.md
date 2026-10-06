@@ -29,6 +29,47 @@ administrador: `LOCAL_VAZIO=1 npm run local` (Windows: `set LOCAL_VAZIO=1` antes
 
 Use dois navegadores (ou uma janela anônima) para ver ao mesmo tempo o administrador e um especialista.
 
+## 1.1 Testar numa máquina virtual (opcional)
+
+Use uma máquina virtual (VM) para testar num computador "limpo", sem mexer no seu, ou para deixar o sistema no ar
+para outras pessoas. A pasta já traz o instalador `deploy/instalar-ubuntu.sh` (Node.js, serviço que sobe sozinho,
+dados de demonstração e, com domínio, HTTPS automático) e o `Vagrantfile` (VM local com um comando).
+
+**Opção A — VM no seu computador, automática (VirtualBox + Vagrant)**
+
+1. Instale o [VirtualBox](https://www.virtualbox.org/wiki/Downloads) e o [Vagrant](https://developer.hashicorp.com/vagrant/install).
+2. Abra o terminal (no Windows, o "Prompt de Comando") dentro da pasta descompactada e rode `vagrant up`.
+   Na primeira vez ele baixa o Ubuntu 24.04 e instala tudo (cerca de 5 a 10 minutos).
+3. Acesse no navegador do seu computador: <http://localhost:8080/> (CRM), <http://localhost:8080/lp/> e
+   <http://localhost:8080/simulador/>. Login: `admin@demo.local` · `demo12345`.
+4. `vagrant halt` desliga a VM; `vagrant up` liga de novo; `vagrant destroy` apaga tudo para recomeçar do zero.
+
+**Opção B — VM no VirtualBox, passo a passo (sem Vagrant)**
+
+1. Baixe o Ubuntu Server 24.04 em <https://ubuntu.com/download/server> e crie uma VM no VirtualBox (2 GB de RAM, 20 GB de disco).
+2. Em Configurações › Rede › Avançado › Redirecionamento de portas, crie a regra: porta do hospedeiro 8080 → porta do convidado 3000.
+3. Instale o Ubuntu (marque "Install OpenSSH server"), copie o zip para a VM (ex.: `scp -P 2222 vero-consorcios-local.zip usuario@localhost:`,
+   com mais uma regra 2222 → 22) e, dentro da VM: `unzip vero-consorcios-local.zip && cd vero-consorcios && sudo bash deploy/instalar-ubuntu.sh`.
+4. Acesse <http://localhost:8080/> no seu computador.
+
+**Opção C — VM na nuvem, como seria "de verdade" (recomendado para o teste completo)**
+
+Uma VM na internet permite testar o que depende de endereço público: a LP hospedada na HostGator enviando leads, o link da
+ficha aberto no celular do cliente, o Google Agenda (o Google exige um endereço de retorno) e o e-mail.
+
+1. Contrate uma VM Ubuntu 24.04 com 1 a 2 GB de RAM (ex.: VPS da HostGator, DigitalOcean, AWS Lightsail ou Google Cloud).
+2. No DNS do seu domínio, crie um registro **A** `crm` apontando para o IP da VM (ex.: `crm.veroconsorciosbr.com.br`).
+3. Envie o zip para a VM (`scp vero-consorcios-local.zip root@IP-DA-VM:`) e, nela:
+   `unzip vero-consorcios-local.zip && cd vero-consorcios && sudo DOMINIO=crm.veroconsorciosbr.com.br bash deploy/instalar-ubuntu.sh`
+4. Pronto: <https://crm.veroconsorciosbr.com.br/> com certificado HTTPS automático. Para começar sem dados fictícios, use `DEMO=0`.
+5. Google Agenda, SMTP e origens da LP ficam em `/etc/vero-consorcios.env` (exemplos comentados no arquivo) ou nas telas de
+   Configurações; depois de alterar o arquivo: `sudo systemctl restart vero-consorcios`.
+
+**Opção D — Windows Sandbox (rápido, Windows 10/11 Pro)**
+
+Ative "Área Restrita do Windows" em Recursos do Windows, abra-a, copie o zip para dentro, instale o Node.js 22 LTS e dê dois
+cliques em `iniciar-windows.bat`. Ao fechar a área restrita, tudo é apagado.
+
 ## 2. Roteiro de testes
 
 ### A. Landing page → CRM (simulador da LP)
