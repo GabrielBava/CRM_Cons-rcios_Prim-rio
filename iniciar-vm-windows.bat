@@ -14,7 +14,7 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-if not exist "%ProgramFiles%\Oracle\VirtualBox\VBoxManage.exe" (
+if not exist "%VBOX_MSI_INSTALL_PATH%VBoxManage.exe" if not exist "%ProgramFiles%\Oracle\VirtualBox\VBoxManage.exe" (
   echo VirtualBox nao encontrado. Instale em https://www.virtualbox.org/wiki/Downloads
   pause
   exit /b 1
