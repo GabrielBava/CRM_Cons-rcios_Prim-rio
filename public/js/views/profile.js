@@ -31,8 +31,9 @@ function resizePhoto(file) {
 export async function show(view) {
   const load = async () => {
     let p;
+    let g = null;
     try {
-      p = await get('/api/perfil');
+      [p, g] = await Promise.all([get('/api/perfil'), get('/api/google/status').catch(() => null)]);
     } catch (e) {
       return toastError(e);
     }
@@ -56,6 +57,15 @@ export async function show(view) {
             <div><dt>Sessões ativas</dt><dd>${p.active_sessions}</dd></div>
           </dl>
           <button type="button" class="btn" data-act="pw">Alterar senha</button>
+          <div class="google-box ${g?.connected ? 'ok' : ''}">
+            <h3>Google Agenda</h3>
+            ${!g ? html`<p class="muted small">Indisponível.</p>`
+              : g.connected ? html`<p class="small">Conectado a <strong>${g.google_email || 'sua conta Google'}</strong> desde ${fmtDateTime(g.connected_at)}. Cada R1 agendada no CRM entra na sua agenda com link do Google Meet e convite para o cliente.</p>
+                <button type="button" class="btn small ghost" data-act="google-off">Desconectar</button>`
+              : g.configured ? html`<p class="small">Conecte sua agenda para que a R1 agendada no CRM crie o evento no seu Google Agenda, gere o link do Google Meet e envie o convite ao cliente.</p>
+                <button type="button" class="btn small primary" data-act="google-on">Conectar meu Google Agenda</button>`
+              : html`<p class="small muted">A integração com o Google Agenda ainda não foi ativada pelo administrador (Configurações › Integrações). Até lá, a R1 abre o evento já preenchido no Google Agenda para você salvar.</p>`}
+          </div>
         </section>
         <form class="card" id="pf" novalidate>
           <h3>Dados pessoais</h3>
@@ -122,6 +132,31 @@ export async function show(view) {
     }
   });
   on(view, 'click', '[data-act=pw]', () => changePasswordDialog().then((ok) => ok && load()));
+  on(view, 'click', '[data-act=google-on]', async () => {
+    if (window.CRM_PREVIEW) return toastError(new Error('Na versão de teste no navegador a conexão com o Google fica desativada. No CRM instalado ela funciona normalmente.'));
+    try {
+      const r = await post('/api/google/conectar');
+      location.href = r.url;
+    } catch (ex) {
+      toastError(ex);
+    }
+  });
+  on(view, 'click', '[data-act=google-off]', async () => {
+    try {
+      await post('/api/google/desconectar');
+      toast('Google Agenda desconectado.');
+      load();
+    } catch (ex) {
+      toastError(ex);
+    }
+  });
+  // Volta do Google (OAuth): mensagem do resultado
+  const back = new URLSearchParams(location.hash.split('?')[1] || '').get('google');
+  if (back) {
+    const msgs = { ok: 'Google Agenda conectado. As próximas R1 já entram na sua agenda com Google Meet.', cancelado: 'Conexão com o Google cancelada.', expirado: 'O pedido de conexão expirou. Tente de novo.', sem_permissao: 'O Google não devolveu a permissão de acesso contínuo. Tente de novo e aceite todas as permissões.', erro: 'Não foi possível conectar ao Google. Confira a configuração com o administrador.' };
+    toast(msgs[back] || back, back === 'ok' ? 'ok' : 'error');
+    history.replaceState(null, '', '#/meu-cadastro');
+  }
   await load();
 }
 
@@ -157,12 +192,12 @@ function strength(pwd) {
 }
 const STRENGTH = ['Muito fraca', 'Fraca', 'Razoável', 'Boa', 'Forte'];
 
-export function changePasswordDialog() {
+export function changePasswordDialog({ first = false } = {}) {
   return modal({
-    title: 'Alterar senha',
-    submitLabel: 'Confirmar nova senha',
-    body: html`<p class="hint">Por segurança, confirme a senha atual. Ao trocar, as sessões abertas em outros aparelhos são encerradas.</p>
-      ${pwField('current', 'Senha atual', 'current-password')}
+    title: first ? 'Criar minha senha' : 'Alterar senha',
+    submitLabel: first ? 'Salvar e entrar' : 'Confirmar nova senha',
+    body: html`<p class="hint">${first ? 'Informe a senha provisória que você recebeu e crie a sua senha pessoal.' : 'Por segurança, confirme a senha atual. Ao trocar, as sessões abertas em outros aparelhos são encerradas.'}</p>
+      ${pwField('current', first ? 'Senha provisória (recebida do administrador)' : 'Senha atual', 'current-password')}
       ${pwField('password', 'Nova senha', 'new-password')}
       <div class="pw-meter" aria-live="polite"><span data-meter></span><small data-meter-label>Digite a nova senha</small></div>
       ${pwField('confirm', 'Confirmar nova senha', 'new-password')}

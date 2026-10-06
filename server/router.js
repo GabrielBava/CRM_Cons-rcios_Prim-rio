@@ -33,6 +33,7 @@ const profile = require('./services/profile');
 const notifications = require('./services/notifications');
 const postsale = require('./services/postsale');
 const treasury = require('./services/treasury');
+const meetings = require('./services/meetings');
 
 function createRouter(db) {
   const routes = [];
@@ -93,6 +94,8 @@ function createRouter(db) {
   add('POST', '/api/administradoras', ({ user, body }) => ({ id: catalog.saveAdministrator(db, user, body) }));
   add('POST', '/api/administradoras/:id/senha', ({ user, params }) => catalog.revealPortalPassword(db, user, params.id));
   add('GET', '/api/planos', ({ query }) => catalog.listPlans(db, query));
+  // Simulador servido pelo CRM: administradoras e planos ativos (sessão do usuário logado)
+  add('GET', '/api/simulador/planos', () => catalog.simulatorPlans(db));
   add('POST', '/api/planos', ({ user, body }) => ({ id: catalog.savePlan(db, user, body) }));
   add('GET', '/api/planos/:id/verificar-credito', ({ params, query }) => {
     const plan = db.prepare('SELECT * FROM products WHERE id = ?').get(Number(params.id));
@@ -137,6 +140,36 @@ function createRouter(db) {
     return { ...ps, link_url: url, message: url ? sales.presaleMessage(db, ps, url) : null };
   });
   add('POST', '/api/pre-vendas/:id/enviado', ({ user, params, body }) => (sales.markSent(db, user, params.id, body), { ok: true }));
+  // Ficha por e-mail (modelo da Vero, remetente admin@veroconsorciosbr.com.br): envia pelo SMTP ou devolve o e-mail pronto
+  add('POST', '/api/pre-vendas/:id/enviar-email', async ({ user, params, body }) => {
+    const ps = sales.getPreSale(db, user, params.id);
+    const base = /^https?:\/\/[^\s#]+$/.test(body.base || '') ? body.base : '';
+    if (!ps.link_token) throw new HttpError(409, 'O link de cadastro desta pré-venda não está ativo.');
+    return sales.sendFichaEmail(db, user, ps.contact_id, `${base}#/ficha/${ps.link_token}`, { preSaleId: ps.id, logoUrl: body.logo_url });
+  });
+  add('POST', '/api/cadastros/:id/link-cliente/enviar-email', async ({ user, params, body }) => {
+    const c = core.loadContact(db, user, params.id, { write: true });
+    const link = record.activeClientLink(db, c.id);
+    if (!link?.token) throw new HttpError(409, 'Gere o link de cadastro antes de enviar por e-mail.');
+    const base = /^https?:\/\/[^\s#]+$/.test(body.base || '') ? body.base : '';
+    return sales.sendFichaEmail(db, user, c.id, `${base}#/ficha/${link.token}`, { logoUrl: body.logo_url });
+  });
+  add('GET', '/api/cadastros/:id/link-cliente/mensagem', ({ user, params, query }) => {
+    const c = core.loadContact(db, user, params.id);
+    const link = record.activeClientLink(db, c.id);
+    if (!link?.token) return { active: false };
+    const base = /^https?:\/\/[^\s#]+$/.test(query.base || '') ? query.base : '';
+    return { active: true, ...sales.presaleMessage(db, { contact_name: c.name, contact_email: c.email, contact_whatsapp: c.whatsapp, contact_phone: c.phone1, owner_id: c.owner_id }, `${base}#/ficha/${link.token}`) };
+  });
+  /* ---------- E-mail (SMTP) ---------- */
+  add('GET', '/api/email/status', ({ user }) => require('./services/mailer').smtpStatus(db, user));
+  add('PUT', '/api/email/config', ({ user, body }) => require('./services/mailer').saveSmtp(db, user, body));
+  add('POST', '/api/email/teste', async ({ user, body }) => {
+    if (user.role !== 'admin') throw new HttpError(403, 'Apenas o administrador.');
+    const mailer = require('./services/mailer');
+    const mail = mailer.fichaEmail(db, { name: user.name, url: `${/^https?:\/\//.test(body.base || '') ? body.base : ''}#/`, consultant: user.name, logoUrl: body.logo_url });
+    return mailer.sendMail(db, { to: body.to || user.email, subject: `[Teste] ${mail.subject}`, text: mail.text, html: mail.html });
+  });
   add('POST', '/api/pre-vendas/:id/avancar', ({ user, params, body }) => sales.advancePreSale(db, user, params.id, body), { bodyLimit: 12e6 });
   add('POST', '/api/pre-vendas/:id/cotas', ({ user, params, body }) => sales.savePreSaleQuotas(db, user, params.id, body));
   add('POST', '/api/pre-vendas/:id/cancelar', ({ user, params, body }) => (sales.cancelPreSale(db, user, params.id, body), { ok: true }));
@@ -150,7 +183,8 @@ function createRouter(db) {
   add('POST', '/api/comissoes/pagar', ({ user, body }) => sales.payCommissions(db, user, body));
   add('GET', '/api/cancelamentos', ({ user, query }) => (perms.requireModule(user, 'comissoes'), sales.listCancellations(db, user, query)));
   add('GET', '/api/cancelamentos/indicadores', ({ user, query }) => (perms.requireModule(user, 'comissoes'), sales.cancellationIndicators(db, user, query)));
-  add('POST', '/api/publico/ficha/concluir', ({ body }) => record.publicComplete(db, body.token), { public: true });
+  add('POST', '/api/publico/ficha/concluir', ({ body }) => record.publicComplete(db, body.token, body.key), { public: true });
+  add('POST', '/api/publico/ficha/verificar', ({ body }) => record.publicVerify(db, body.token, body), { public: true });
 
   /* ---------- Metas ---------- */
   add('GET', '/api/metas', ({ user, query }) => goals.goalsBoard(db, user, query));
@@ -266,8 +300,8 @@ function createRouter(db) {
   add('GET', '/api/pos-venda/lances/:id/historico', ({ user, params }) => postsale.bidHistory(db, user, params.id));
   add('POST', '/api/pos-venda/:id/responsavel', ({ user, params, body }) => (postsale.setOwner(db, user, params.id, body), { ok: true }));
   add('POST', '/api/cadastros/:id/pos-venda', ({ user, params, body }) => (record.togglePostSale(db, user, params.id, body), { ok: true }));
-  add('GET', '/api/publico/ficha', ({ query }) => record.publicForm(db, query.token), { public: true });
-  add('GET', '/api/publico/cep/:cep', ({ params, query }) => record.publicCep(db, query.token, params.cep), { public: true });
+  add('GET', '/api/publico/ficha', ({ query, req }) => record.publicForm(db, query.token, req.headers['x-ficha-key'] || query.key), { public: true });
+  add('GET', '/api/publico/cep/:cep', ({ params, query, req }) => record.publicCep(db, query.token, params.cep, req.headers['x-ficha-key'] || query.key), { public: true });
   add('POST', '/api/publico/ficha', ({ body }) => record.publicSubmit(db, body.token, body), { public: true });
   add('POST', '/api/publico/ficha/anexo', ({ body }) => record.publicUpload(db, body.token, body), { public: true, bodyLimit: 12e6 });
 
@@ -301,7 +335,27 @@ function createRouter(db) {
   add('POST', '/api/atividades', ({ user, body }) => ({ id: activities.createActivity(db, user, body) }));
   add('GET', '/api/tarefas', ({ user, query }) => tasks.listTasks(db, user, query));
   add('POST', '/api/tarefas', ({ user, body }) => ({ id: tasks.createTask(db, user, body) }));
-  add('PATCH', '/api/tarefas/:id', ({ user, params, body }) => (tasks.updateTask(db, user, params.id, body), { ok: true }));
+  add('PATCH', '/api/tarefas/:id', async ({ user, params, body }) => {
+    tasks.updateTask(db, user, params.id, body);
+    // Reagendou ou cancelou uma R1 sincronizada: o Google Agenda acompanha (e avisa o cliente)
+    const google = body.due_at !== undefined || body.title !== undefined || body.action === 'cancelar' ? await meetings.syncTaskToGoogle(db, params.id) : null;
+    return { ok: true, google };
+  });
+  add('PATCH', '/api/tarefas/:id/link', ({ user, params, body }) => meetings.setMeetingUrl(db, user, params.id, body));
+
+  /* ---------- R1 e Google Agenda ---------- */
+  add('GET', '/api/r1/contexto', ({ user, query, req }) => meetings.r1Context(db, user, query.contact_id, req));
+  add('POST', '/api/r1/agendar', ({ user, body, req }) => meetings.scheduleR1(db, user, body, req));
+  add('GET', '/api/integracao', ({ user }) => require('./services/onboarding').status(db, user));
+  add('POST', '/api/integracao/:step/concluir', ({ user, params }) => require('./services/onboarding').completeStep(db, user, params.step));
+  add('GET', '/api/r1/modelo', ({ user, res, query }) => meetings.serveR1Model(db, user, res, query));
+  add('GET', '/api/r1/modelo-config', ({ user }) => meetings.r1ModelConfig(db, user));
+  add('PUT', '/api/r1/modelo-config', ({ user, body }) => meetings.saveR1ModelConfig(db, user, body), { bodyLimit: 4e6 });
+  add('GET', '/api/google/status', ({ user, req }) => meetings.googleStatus(db, user, req));
+  add('POST', '/api/google/conectar', ({ user, req }) => meetings.connectUrl(db, user, req));
+  add('POST', '/api/google/desconectar', ({ user }) => (meetings.disconnect(db, user), { ok: true }));
+  add('PUT', '/api/google/config', ({ user, body, req }) => (meetings.saveGoogleConfig(db, user, body), meetings.googleStatus(db, user, req)));
+  add('GET', '/api/google/retorno', ({ req, res, query }) => meetings.oauthCallback(db, req, res, query), { public: true });
 
   /* ---------- Simulações, propostas e contratos ---------- */
   add('GET', '/api/simulacoes', ({ user, query }) => sims.listSimulations(db, user, query));
@@ -431,6 +485,8 @@ function createRouter(db) {
       if (!route.opts.public && !route.opts.integration) {
         user = auth.currentUser(db, req);
         if (!user) throw new HttpError(401, 'Sessão expirada. Entre novamente.');
+        // Senha provisória: só a troca de senha e o básico da tela ficam liberados
+        require('./services/onboarding').assertPasswordChanged(user, req.method, url.pathname);
       }
       // Proteção CSRF: requisições de sessão que alteram dados exigem cabeçalho próprio da aplicação
       if (!route.opts.integration && req.method !== 'GET' && req.headers['x-requested-with'] !== 'crm') {

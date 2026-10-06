@@ -35,7 +35,7 @@ function currentUser(db, req) {
   if (!token) return null;
   const s = db.prepare('SELECT * FROM sessions WHERE token_hash = ?').get(sha256(token));
   if (!s || Date.parse(s.expires_at) < Date.now()) return null;
-  const u = db.prepare('SELECT id, name, email, role, team_id, active, modules, photo, job_title FROM users WHERE id = ?').get(s.user_id);
+  const u = db.prepare('SELECT id, name, email, role, team_id, active, modules, photo, job_title, must_change_password FROM users WHERE id = ?').get(s.user_id);
   if (!u || !u.active) return null;
   // Renovação deslizante da sessão
   const remaining = Date.parse(s.expires_at) - Date.now();
@@ -134,7 +134,13 @@ function changePassword(db, req, user, body) {
   const problems = passwordProblems(pwd, u);
   if (problems.length) throw badRequest(`A nova senha precisa ${problems.join(', ')}.`, { problems });
   const now = nowIso();
-  db.prepare('UPDATE users SET password_hash = ?, password_changed_at = ?, updated_at = ? WHERE id = ?').run(hashPassword(pwd), now, now, u.id);
+  // Senha provisória trocada: libera a plataforma e marca a etapa 1 da trilha de integração
+  let ob = {};
+  try {
+    ob = JSON.parse(u.onboarding || '{}') || {};
+  } catch {}
+  if (ob.active) ob.steps = { ...(ob.steps || {}), senha: ob.steps?.senha || now };
+  db.prepare('UPDATE users SET password_hash = ?, password_changed_at = ?, must_change_password = 0, onboarding = ?, updated_at = ? WHERE id = ?').run(hashPassword(pwd), now, JSON.stringify(ob), now, u.id);
   // Mantém só a sessão atual: quem estiver usando a senha antiga em outro aparelho é desconectado
   const token = req ? parseCookies(req.headers.cookie)[COOKIE] : null;
   const ended = db.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?').run(u.id, token ? sha256(token) : '').changes;

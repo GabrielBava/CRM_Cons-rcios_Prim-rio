@@ -4,6 +4,7 @@ import { get } from '../api.js';
 import { html, render, $, $$, on, state, selectOptions, userItems, toItems, can, toastError, K, badge, fmtDateTime, relTime, subnav, empty } from '../ui.js';
 import { taskForm } from '../forms.js';
 import { tasksTable, bindTasks } from './contact.js';
+import { scheduleR1Dialog, meetingLinks } from '../meeting.js';
 
 // Filtros rápidos por tipo de tarefa
 const GROUPS = {
@@ -35,7 +36,7 @@ export async function show(view, { params = {} } = {}) {
   let week = params.semana ? new Date(`${params.semana}T12:00:00`) : startOfWeek();
   render(view, html`<div class="page">
     <div class="page-head"><div><h1>Agenda e tarefas</h1><p class="muted">Tudo o que precisa ser feito, por ordem de urgência. Tarefas de proposta, pré-venda e onboarding são criadas automaticamente.</p></div>
-      ${can.write() ? html`<div class="actions"><button class="btn primary" data-act="new">+ Nova tarefa</button><button class="btn" data-act="new-meeting">+ Agendar R1</button></div>` : ''}</div>
+      ${can.write() ? html`<div class="actions"><button class="btn primary" data-act="new">+ Nova tarefa</button><button class="btn r1" data-act="new-meeting">+ Agendar R1</button></div>` : ''}</div>
     <div id="kpis"></div>
     ${subnav([['#/agenda', 'Hoje', 'hoje'], ['#/agenda?visao=semana', 'Semana', 'semana'], ['#/agenda?visao=urgentes', 'Urgentes', 'urgentes'], ['#/agenda?visao=lista', 'Lista completa', 'lista']], visao)}
     <form class="filters" data-f ${!can.manage() && visao !== 'lista' ? 'hidden' : ''}>
@@ -69,7 +70,7 @@ export async function show(view, { params = {} } = {}) {
     <div class="agenda-time">${time ? hhmm(t.due_at) : ''}</div>
     <div class="agenda-body">${t.priority === 'urgente' ? html`${badge('Urgente', 'danger')} ` : t.priority === 'alta' ? html`${badge('Alta', 'warn')} ` : ''}<strong>${t.title}</strong>
       <br><small>${K('task_types', t.type)}${t.contact_id ? html` · <a href="#/leads/${t.contact_id}">${t.contact_name}</a>` : ''}${can.manage() ? ` · ${t.assigned_name || '—'}` : ''}${late(t) ? html` · <span class="overdue">${relTime(t.due_at)}</span>` : ''}</small>
-      ${t.notes ? html`<br><small class="muted">${t.notes.length > 160 ? `${t.notes.slice(0, 160)}…` : t.notes}</small>` : ''}</div>
+      ${t.notes ? html`<br><small class="muted">${t.notes.length > 160 ? `${t.notes.slice(0, 160)}…` : t.notes}</small>` : ''}${t.type === 'reuniao' ? html`<br>${meetingLinks(t)}` : ''}</div>
     ${t.status === 'pendente' && can.write() ? html`<div class="agenda-acts"><button class="btn small primary" data-task-act="done" data-id="${t.id}">Concluir</button><button class="btn small ghost" data-task-act="edit" data-id="${t.id}" title="Editar ou reagendar">✎</button></div>` : ''}
   </div>`;
 
@@ -147,6 +148,6 @@ export async function show(view, { params = {} } = {}) {
   on(view, 'click', 'a[data-task-act]', (e) => e.preventDefault());
   bindTasks(view, () => rows, load);
   on(view, 'click', '[data-act=new]', async () => (await taskForm({})) && load());
-  on(view, 'click', '[data-act=new-meeting]', async () => (await taskForm({ type: 'reuniao' })) && load());
+  on(view, 'click', '[data-act=new-meeting]', async () => (await scheduleR1Dialog({})) && load());
   await load();
 }

@@ -20,7 +20,8 @@ cai no CRM e é distribuído pela roleta; o especialista gera a proposta no simu
 | Simulador | <http://127.0.0.1:3000/simulador/> | aberto pelo CRM |
 
 Outros usuários da demonstração (mesma senha): `gestora@demo.local` (líder), `consultor1@demo.local` e
-`consultor2@demo.local` (especialistas, participam da roleta), `leitura@demo.local` (somente leitura).
+`consultor2@demo.local` (especialistas, participam da roleta), `leitura@demo.local` (somente leitura) e
+`novo@demo.local` (especialista recém-contratado: troca a senha no primeiro acesso e segue a trilha de integração).
 
 Na primeira execução o banco `data/local.db` é criado com dados fictícios. Para recomeçar do zero, pare o servidor
 (Ctrl+C) e apague `data/local.db` (e `data/local.db.key`). Para começar sem dados de demonstração e criar o seu
@@ -83,7 +84,42 @@ Use dois navegadores (ou uma janela anônima) para ver ao mesmo tempo o administ
    pagamento e comprovante). Com o comprovante, a venda vai para **Vendas** aguardando a alocação; o líder confirma
    e o cliente entra no pós-venda (linha do tempo D+N), com as comissões geradas.
 
-### G. Demais módulos
+### G. Novo especialista (primeiro acesso e integração)
+
+1. Entre como `novo@demo.local` (senha `demo12345`): a plataforma pede a troca da senha provisória antes de tudo.
+2. No Painel inicial aparece "Sua integração na Vero": complete Meu cadastro (foto, WhatsApp e cargo), leia "Conheça a Vero"
+   (posicionamento, cores e tipografia) e o "Kit do especialista" (WhatsApp Business, LinkedIn e a capa com o logo da Vero).
+3. Concluídas as etapas, o treinamento de consórcios (7 módulos) aparece em Treinamentos; ao terminar, a liderança é avisada.
+4. Para criar um especialista de verdade: Usuários › Novo usuário (senha provisória e trilha marcadas por padrão).
+
+### H. R1: agendamento, Google Agenda e modelo
+
+1. No CRM, arraste um card de **Lead qualificado** para **R1**: abre o pop-up "Agendar R1" (cliente, e-mail, data, início e
+   término de 15 em 15 minutos, 30 minutos por padrão, título "[R1] Cliente / Vero Consórcios").
+2. Sem o Google conectado, clique em "Abrir no Google Agenda" (evento já preenchido) e cole o link do Meet.
+   Com o Google configurado (Configurações › Integrações) e conectado (Meu cadastro), o evento sai com Meet e convite.
+3. "Abrir modelo da R1": o roteiro da reunião com seu nome, foto e contato. O administrador troca o modelo em
+   Configurações › Modelo da R1.
+4. Cliente faltou? Mova de **R1** para **R1 bolo** (justificativa opcional) e use "Agendar R1" para remarcar.
+5. No painel lateral (clique no nome do card): botão **Agendar R1**, engrenagem para **trocar o responsável** (com motivo)
+   e **Editar** nas informações de negócio.
+
+### I. Planos, proposta e nova versão
+
+1. Planos: cada plano tem código (ex.: HS-IMV-200) e chave Ativo/Inativo; só os ativos aparecem na proposta e no simulador.
+2. Gerar proposta: no simulador escolha a administradora e o plano (taxa e fundo seguem o plano) ou "Outros" (condições livres).
+3. Na proposta, **Criar nova versão**: o simulador abre com as condições anteriores e o botão **Atualizar proposta**; o PDF
+   e os novos valores entram na mesma proposta como versão 2.
+
+### J. Ficha do cliente (link)
+
+1. Abra o link da ficha numa janela anônima: aparece "Olá, Nome Sobrenome" e o pedido dos 4 últimos dígitos do celular.
+2. Deixe um campo obrigatório vazio e clique em Salvar: ele fica em vermelho e o que foi digitado continua lá.
+3. Documentos obrigatórios: identificação e comprovante de endereço, em foto ou PDF.
+4. Na pré-venda, "Enviar por e-mail" mostra o e-mail visual (sem SMTP) ou envia de `admin@veroconsorciosbr.com.br`
+   (SMTP em Configurações › Integrações › E-mail).
+
+### K. Demais módulos
 
 Painel inicial (funil visual e ranking), Agenda, Metas, Comissões, Pós-venda (NPS e estratégia de lance),
 Financeiro (contas a pagar e a receber), Administradoras (senha do portal), Relatórios, Usuários e Configurações.

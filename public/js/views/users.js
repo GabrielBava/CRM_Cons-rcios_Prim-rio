@@ -71,8 +71,10 @@ function userForm(u, { teams, matrix }) {
         ${field({ name: 'role', label: 'Perfil', type: 'select', options: roleItems, value: role0, allowEmpty: false })}
         ${field({ name: 'team_id', label: 'Equipe', type: 'select', options: teamItems, value: u.team_id, placeholder: 'Sem equipe' })}
         ${field({ name: 'dialer_agent_ref', label: 'ID do agente na discadora', value: u.dialer_agent_ref })}
-        ${field({ name: 'password', label: u.id ? 'Nova senha (deixe vazio para manter)' : 'Senha inicial', type: 'password', required: !u.id, help: 'Mínimo de 8 caracteres.' })}
+        ${field({ name: 'password', label: u.id ? 'Nova senha provisória (deixe vazio para manter)' : 'Senha provisória', type: 'password', required: !u.id, help: 'Mínimo de 8 caracteres. Envie ao usuário por um canal seguro.' })}
         ${u.id ? field({ name: 'active', label: 'Usuário ativo', type: 'checkbox', value: u.active }) : ''}
+        ${field({ name: 'require_password_change', label: 'Exigir a troca da senha no primeiro acesso (recomendado)', type: 'checkbox', value: true, full: true })}
+        ${u.id ? '' : html`<label class="check full" data-ob-box><input type="checkbox" name="onboarding" ${role0 === 'consultor' ? 'checked' : ''}> Trilha de integração do especialista no Painel inicial (marca Vero, kit WhatsApp/LinkedIn e treinamento de consórcios)</label>`}
       </div>
       <p class="hint" data-scope>${matrix.roles.find((r) => r.key === role0)?.scope}</p>
       <h4>Telas liberadas</h4>
@@ -80,6 +82,7 @@ function userForm(u, { teams, matrix }) {
       <div class="mod-boxes" data-mods>${moduleBoxes(matrix, role0, u.modules)}</div>`,
     onMount(form) {
       form.role.addEventListener('change', () => {
+        if (form.onboarding) form.onboarding.checked = form.role.value === 'consultor';
         render($('[data-mods]', form), moduleBoxes(matrix, form.role.value));
         $('[data-scope]', form).textContent = matrix.roles.find((r) => r.key === form.role.value)?.scope || '';
       });

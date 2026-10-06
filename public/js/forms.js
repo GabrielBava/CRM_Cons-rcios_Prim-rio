@@ -7,6 +7,7 @@ import { qualFormFields, bindQualForm } from './qualification.js';
 import { transcriptFlow } from './r1.js';
 import { downloadLeadTemplate } from './lead-import.js';
 import { icon } from './icons.js';
+import { scheduleR1Dialog } from './meeting.js';
 
 const nav = (hash) => (location.hash = hash);
 
@@ -187,7 +188,7 @@ export function taskForm({ contact, opportunity_id, type, task } = {}) {
   return modal({
     title: task ? 'Editar tarefa' : `Nova tarefa${contact ? ` — ${contact.name}` : ''}`,
     body: html`<div class="grid">
-      ${task ? '' : field({ name: 'type', label: 'Tipo', type: 'select', options: toItems(state.meta.constants.task_types), value: type || 'retorno', allowEmpty: false })}
+      ${task ? '' : field({ name: 'type', label: 'Tipo', type: 'select', options: toItems(state.meta.constants.task_types).filter((t) => t.value !== 'reuniao'), value: type && type !== 'reuniao' ? type : 'retorno', allowEmpty: false, help: 'Para a R1, use o botão "Agendar R1" (cliente, horário, Google Agenda e convite).' })}
       ${field({ name: 'title', label: 'Descrição', value: task?.title, placeholder: 'ex.: Retornar com simulação', full: !task })}
       ${field({ name: 'due_at', label: 'Data e hora', type: 'datetime', value: task?.due_at || tomorrow.toISOString(), required: true })}
       ${field({ name: 'assigned_to', label: 'Responsável', type: 'select', options: userItems(), value: task?.assigned_to || state.user.id, allowEmpty: false, disabled: !can.manage() })}
@@ -315,9 +316,26 @@ export function moveStage(opp, stageId) {
         <li>Comprovante anexado e pagamento confirmado → o negócio vai para "${to.name}" e o cadastro vira cliente.</li></ol>`,
     }).then(() => null);
   }
-  let body;
   const from = stageById(opp.stage_id);
-  const backward = !!from && from.kind === 'aberta' && to.kind === 'aberta' && to.position < from.position;
+  if (to.key === 'r1_bolo' && from?.key !== 'r1') {
+    return modal({ title: `Etapa "${to.name}"`, body: html`<p>Só negócios em <strong>R1</strong> vão para <strong>${to.name}</strong>: é a coluna do cliente que agendou a R1 e não compareceu.</p>` }).then(() => null);
+  }
+  // Lead qualificado (ou R1 bolo) → R1: o pop-up de agendamento da R1 abre e move o negócio junto
+  if (to.key === 'r1' && ['qualificado', 'r1_bolo'].includes(from?.key)) {
+    return get('/api/r1/contexto', { contact_id: opp.contact_id })
+      .then((ctx) => {
+        if (ctx.pending.some((t) => new Date(t.due_at) > new Date())) return moveStageDialog(opp, to, from);
+        return scheduleR1Dialog({ contactId: opp.contact_id, oppId: opp.id, moveToR1: true });
+      })
+      .catch((e) => (toastError(e), null));
+  }
+  return moveStageDialog(opp, to, from);
+}
+
+function moveStageDialog(opp, to, from) {
+  let body;
+  const backward = !!from && from.kind === 'aberta' && to.kind === 'aberta' && to.position < from.position && !(from.key === 'r1_bolo' && to.key === 'r1');
+  const bolo = to.key === 'r1_bolo';
   if (to.kind === 'perdido') {
     body = html`<p>Mover <strong>${opp.code}</strong> para <strong>${to.name}</strong>.</p><div class="grid">
       ${field({ name: 'lost_reason', label: 'Motivo da perda', type: 'select', options: opts('motivo_perda'), required: true, full: true })}
@@ -330,9 +348,10 @@ export function moveStage(opp, stageId) {
       ${field({ name: 'return_at', label: 'Retomar o contato em', type: 'datetime', value: d.toISOString(), required: true })}</div>`;
   } else {
     body = html`<p>Mover <strong>${opp.code}</strong>${opp.stage_name ? html` de <strong>${opp.stage_name}</strong>` : ''} para <strong>${to.name}</strong>.</p>
-      ${to.playbook ? html`<p class="hint">${to.playbook}</p>` : ''}
-      ${field({ name: 'reason', label: backward ? 'Motivo para voltar a etapa' : 'Observação (opcional)', type: 'textarea', full: true, required: backward })}
-      ${can.admin() ? field({ name: 'force', label: 'Forçar a passagem mesmo sem os critérios (administrador, exige justificativa na observação)', type: 'checkbox', full: true }) : ''}`;
+      ${to.playbook && !bolo ? html`<p class="hint">${to.playbook}</p>` : ''}
+      ${bolo ? html`<p class="hint">O cliente agendou a R1 e não compareceu. A reunião que já passou do horário é encerrada como "cliente não compareceu". Depois, use "Agendar R1" para remarcar.</p>` : ''}
+      ${field({ name: 'reason', label: backward ? 'Motivo para voltar a etapa' : bolo ? 'Justificativa (opcional)' : 'Observação (opcional)', type: 'textarea', full: true, required: backward })}
+      ${can.admin() && !bolo ? field({ name: 'force', label: 'Forçar a passagem mesmo sem os critérios (administrador, exige justificativa na observação)', type: 'checkbox', full: true }) : ''}`;
   }
   return modal({
     title: 'Mover negócio',
@@ -498,12 +517,63 @@ export function proposalPlanGaps(p) {
   return gaps;
 }
 
+/* Administradora e plano da proposta: só os cadastrados e ativos (guia Planos) ou "Outros" */
+const planOf = (id) => state.meta.products.find((x) => x.id === Number(id));
+const admItems = (p = {}) => (state.meta.administrators || []).filter((a) => a.active || a.id === p.administrator_id).map((a) => ({ value: a.id, label: a.name }));
+function planItems(admId, p = {}) {
+  if (!admId) return [];
+  const list = state.meta.products.filter((x) => x.administrator_id === Number(admId) && (x.active || x.id === p.product_id));
+  return [...list.map((x) => ({ value: x.id, label: `${x.plan_code ? `${x.plan_code} · ` : ''}${x.name}${x.active ? '' : ' (inativo)'}` })), { value: 'outros', label: 'Outros (condições livres)' }];
+}
+/** Liga administradora → planos e aplica as condições do plano cadastrado (taxa e fundo de reserva ficam travados). */
+export function bindPlanFields(form) {
+  if (!form.administrator_id || !form.product_id) return;
+  const lock = () => {
+    const pl = planOf(form.product_id.value);
+    for (const [f, k] of [['admin_fee_pct', 'admin_fee_pct'], ['reserve_fund_pct', 'reserve_fund_pct']]) {
+      if (!form[f]) continue;
+      const fixed = !!pl && pl[k] != null;
+      form[f].readOnly = fixed;
+      form[f].closest('.field')?.classList.toggle('locked', fixed);
+    }
+  };
+  form.administrator_id.addEventListener('change', () => {
+    const items = planItems(form.administrator_id.value);
+    form.product_id.innerHTML = String(html`<option value="">Selecione…</option>${items.map((o) => html`<option value="${o.value}">${o.label}</option>`)}`);
+    lock();
+  });
+  form.product_id.addEventListener('change', () => {
+    const pl = planOf(form.product_id.value);
+    if (pl) {
+      const set = (f, v) => form[f] && v != null && (form[f].value = v);
+      set('admin_fee_pct', pl.admin_fee_pct);
+      set('reserve_fund_pct', pl.reserve_fund_pct);
+      set('insurance_pct', pl.insurance_pct);
+      set('term_months', pl.term_months);
+      if (form.category && pl.category) form.category.value = pl.category;
+      if (form.has_adhesion) {
+        form.has_adhesion.value = pl.adhesion ? 'sim' : 'nao';
+        form.has_adhesion.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      if (pl.adhesion) {
+        set('adhesion_pct', pl.adhesion_pct);
+        set('adhesion_months', pl.adhesion_months);
+      }
+      if (pl.embedded_bid) set('embedded_bid_pct', pl.embedded_bid_pct);
+      if (form.readjustment_index && pl.readjustment_index && [...form.readjustment_index.options].some((o) => o.value === pl.readjustment_index)) form.readjustment_index.value = pl.readjustment_index;
+    }
+    lock();
+  });
+  lock();
+}
+
 function proposalFields(p = {}, simulations = []) {
   const quotas = quotaList(p);
   return html`<div class="grid">
     <h4 class="full qual-form-title">Identificação<small>Plano, crédito e simulação de origem.</small></h4>
     ${simulations.length ? field({ name: 'simulation_id', label: 'Baseada na simulação', type: 'select', options: simulations.map((s) => ({ value: s.id, label: `${s.code} v${s.version} — ${fmtMoney(s.credit_value)}` })), value: p.simulation_id, placeholder: 'Nenhuma', help: 'Campos vazios são preenchidos com os dados da simulação.' }) : ''}
-    ${field({ name: 'product_id', label: 'Plano', type: 'select', options: productItems(), value: p.product_id, help: 'Taxas, adesão e prazo do plano entram automaticamente quando ficam em branco.' })}
+    ${field({ name: 'administrator_id', label: 'Administradora', type: 'select', options: admItems(p), value: p.administrator_id ?? planOf(p.product_id)?.administrator_id, required: true })}
+    ${field({ name: 'product_id', label: 'Plano', type: 'select', options: planItems(p.administrator_id ?? planOf(p.product_id)?.administrator_id, p), value: p.plan_other ? 'outros' : p.product_id, required: true, help: 'Só os planos ativos da guia Planos. "Outros": condições livres, informadas pelo especialista.' })}
     ${field({ name: 'category', label: 'Categoria', type: 'select', options: opts('categoria_credito'), value: p.category })}
     ${field({ name: 'credit_value', label: 'Crédito total (R$)', type: 'money', value: p.credit_value })}
     ${field({ name: 'valid_until', label: 'Validade', type: 'date', value: p.valid_until })}
@@ -541,7 +611,7 @@ function proposalBlocks(p) {
   const quotas = quotaList(p);
   return html`<div class="qual-blocks prop-blocks">
     <div class="qual-block"><h4>Identificação</h4><dl>
-      ${row('Proposta', html`<strong>${p.code}</strong> · versão ${p.version}`)}
+      ${row('Proposta', html`<strong>${String(p.code).replace(/-v\d+$/, '')}</strong> · versão ${p.version}`)}
       ${row('Status', badge(K('proposal_status', p.status), `st-${p.status}`))}
       ${row('Cliente', html`<a href="#/leads/${p.contact_id}">${p.contact_code} — ${p.contact_name}</a>`)}
       ${row('Negócio', html`<a href="#/oportunidades/${p.opportunity_id}">${p.opportunity_code}</a>`)}
@@ -553,7 +623,7 @@ function proposalBlocks(p) {
       ${row('Link', p.link_url ? html`<a href="${p.link_url}" target="_blank" rel="noopener noreferrer">abrir a proposta</a>` : null)}
     </dl></div>
     <div class="qual-block"><h4>Características do plano</h4><dl>
-      ${row('Plano', p.product_name ? html`${p.product_name}${p.plan_code ? html` <small class="muted">${p.plan_code}</small>` : ''}` : null)}
+      ${row('Plano', p.plan_other ? html`Outros <small class="muted">condições informadas pelo especialista</small>` : p.product_name ? html`${p.plan_code ? html`<strong>${p.plan_code}</strong> · ` : ''}${p.product_name}` : null)}
       ${row('Administradora', p.administrator_name)}
       ${row('Categoria', optLabel('categoria_credito', p.category))}
       ${row('Crédito total', fmtMoney(p.credit_value))}
@@ -585,10 +655,11 @@ export function proposalForm(opp, simulations = [], { simulation_id } = {}) {
   return modal({
     title: `Nova proposta — ${opp.code}`,
     wide: true,
-    body: html`${proposalFields({ simulation_id, product_id: opp.product_id, quotas: opp.quotas, strategy: opp.strategy, credit_value: opp.credit_value, payment_modality: opp.payment_modality }, simulations)}
+    body: html`${proposalFields({ simulation_id, product_id: planOf(opp.product_id)?.active ? opp.product_id : null, quotas: opp.quotas, strategy: opp.strategy, credit_value: opp.credit_value, payment_modality: opp.payment_modality }, simulations)}
       ${field({ name: 'status', label: 'Salvar como', type: 'select', options: [{ value: 'rascunho', label: 'Rascunho' }, { value: 'apresentada', label: 'Apresentada ao cliente' }], value: 'rascunho', allowEmpty: false })}`,
     onMount(form) {
       bindQualForm(form);
+      bindPlanFields(form);
     },
     async onSubmit(d) {
       const r = await post('/api/propostas', { ...d, opportunity_id: opp.id });
@@ -622,10 +693,10 @@ export async function proposalDetail(id, onChange) {
       <label class="st-extra st-recusada" hidden>Detalhe <input name="refusal_notes" placeholder="O que o cliente disse?"></label>
       <label class="st-extra st-recusada" hidden>Retomar contato em <input type="date" name="retake_at"></label>
       <button type="button" class="btn small" data-act="apply-status">Aplicar</button></div>` : ''}
-    ${p.status !== 'substituida' && can.write() ? html`<p><button type="button" class="btn small" data-act="new-version">Criar nova versão</button> <small class="muted">A versão atual será marcada como substituída (se ainda estiver em aberto) e preservada no histórico.</small></p>` : ''}
+    ${p.status !== 'substituida' && can.write() ? html`<p><button type="button" class="btn small" data-act="new-version">Criar nova versão</button> <small class="muted">Abre o simulador com as condições desta proposta; ao clicar em "Atualizar proposta", o PDF e os novos valores entram na versão ${p.version + 1}. A versão atual fica no histórico.</small></p>` : ''}
     <details class="prop-history"><summary>Versões e histórico de alterações</summary>
     <h4>Versões</h4>
-    <ul class="versions">${p.versions.map((v) => html`<li class="${v.current ? 'current' : ''}"><a href="#" data-proposal="${v.id}">${v.code} · v${v.version}</a> — ${K('proposal_status', v.status)} · ${fmtDateTime(v.created_at)}</li>`)}</ul>
+    <ul class="versions">${p.versions.map((v) => html`<li class="${v.current ? 'current' : ''}"><a href="#" data-proposal="${v.id}">${String(v.code).replace(/-v\d+$/, '')} · v${v.version}</a> — ${K('proposal_status', v.status)} · ${fmtDateTime(v.created_at)}</li>`)}</ul>
     <h4>Histórico de alterações</h4>
     <ul class="audit">${p.history.map((h) => html`<li>${fmtDateTime(h.created_at)} · ${h.user_name || 'Sistema'} · ${h.action}${h.changes ? html` <code>${JSON.stringify(h.changes)}</code>` : ''}</li>`)}</ul></details>`;
   return modal({
@@ -643,7 +714,10 @@ export async function proposalDetail(id, onChange) {
         }
       : undefined,
     onMount(form, close) {
-      if (editable) bindQualForm(form);
+      if (editable) {
+        bindQualForm(form);
+        bindPlanFields(form);
+      }
       on(form, 'click', '[data-act=save-notes]', async () => {
         try {
           await patch(`/api/propostas/${p.id}`, { notes: form.notes_edit.value });
@@ -682,13 +756,21 @@ export async function proposalDetail(id, onChange) {
         }
       });
       on(form, 'click', '[data-act=new-version]', async () => {
+        // A nova versão abre no simulador com as condições atuais e o botão "Atualizar proposta"
+        const w = window.open('about:blank', '_blank');
         try {
           const r = await post(`/api/propostas/${p.id}/nova-versao`, {});
-          toast(`Versão ${r.version} criada (${r.code}).`);
+          if (r.url && w) {
+            w.opener = null;
+            w.location.href = r.url;
+          } else if (w) w.close();
+          toast(`Versão ${r.version} da proposta ${String(r.code).replace(/-v\d+$/, '')} criada${r.url ? ': ajuste no simulador e clique em "Atualizar proposta"' : ''}.`);
           close(true);
           onChange?.();
+          if (!w && r.url) await modal({ title: 'Abrir simulador', body: html`<p>O navegador bloqueou a nova janela.</p><p><a class="btn primary" href="${r.url}" target="_blank" rel="noopener noreferrer">Abrir simulador</a></p>` });
           proposalDetail(r.id, onChange);
         } catch (e) {
+          if (w) w.close();
           toastError(e);
         }
       });
@@ -706,7 +788,7 @@ export async function proposalDetail(id, onChange) {
 export function contractForm(contact, contract) {
   const k = contract || {};
   const oppItems = (contact?.opportunities || []).map((o) => ({ value: o.id, label: `${o.code} — ${o.stage_name}` }));
-  const propItems = (contact?.proposals || []).map((p) => ({ value: p.id, label: `${p.code} v${p.version} — ${K('proposal_status', p.status)}` }));
+  const propItems = (contact?.proposals || []).map((p) => ({ value: p.id, label: `${String(p.code).replace(/-v\d+$/, '')} v${p.version} — ${K('proposal_status', p.status)}` }));
   return modal({
     title: contract ? `Produto contratado ${k.code}` : `Registrar produto contratado — ${contact.name}`,
     wide: true,

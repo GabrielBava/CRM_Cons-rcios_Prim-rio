@@ -134,7 +134,7 @@ function board(rows, summary) {
 function overview(rows) {
   return html`<section class="card">${table(
     [
-      { label: 'Proposta', render: (p) => html`<a href="#" data-prop="${p.id}">${p.code}</a> <small>v${p.version}</small>` },
+      { label: 'Proposta', render: (p) => html`<a href="#" data-prop="${p.id}">${String(p.code).replace(/-v\d+$/, '')}</a> <small>v${p.version}</small>` },
       { label: 'Cliente', render: (p) => html`<a href="#/leads/${p.contact_id}">${p.contact_name}</a><br><small>${p.contact_code}</small>` },
       { label: 'Categoria', render: (p) => optLabel('categoria_credito', p.category) },
       { label: 'Crédito', render: (p) => html`${fmtMoney(p.credit_value)}${p.initial_installment ? html`<br><small>parcela ${fmtMoney(p.initial_installment)}</small>` : ''}`, cls: 'num' },

@@ -4,8 +4,8 @@ ERP/CRM para a venda de consórcios contratados do zero, do primeiro contato ao 
 
 1. Painel inicial
 2. Prospects e leads (distribuição com roleta)
-3. CRM (funil em 10 etapas com regras de passagem, qualificação em 5 blocos, ordenação, ações em massa e painel lateral de consulta)
-4. Agenda e tarefas
+3. CRM (funil com regras de passagem e a coluna R1 bolo, qualificação em 5 blocos, ordenação, ações em massa e painel lateral com Agendar R1, troca de responsável e informações de negócio editáveis)
+4. Agenda e tarefas (Agendar R1 com Google Agenda, Google Meet e convite ao cliente; modelo da R1 com os dados do especialista)
 5. Simulador
 6. Propostas (esteira de propostas D0–D10, características do plano com adesão, divisão das cotas, aceitas e recusadas com motivo)
 7. Clientes
@@ -14,7 +14,7 @@ ERP/CRM para a venda de consórcios contratados do zero, do primeiro contato ao 
 10. Vendas (aguardando a alocação da cota; o especialista informa a alocação e o time confirma)
 11. Pós-venda (funil de farm com linha do tempo D+N e alertas, satisfação NPS e estratégias de lance com histórico)
 12. Comissões e cancelamentos
-13. Treinamentos
+13. Treinamentos (inclui a trilha de integração do especialista: marca Vero, kit WhatsApp Business/LinkedIn e treinamento de consórcios)
 14. Administradoras
 15. Planos
 16. Relatórios
@@ -77,7 +77,8 @@ O comando cria os usuários de demonstração:
 - `admin@demo.local` (administrador);
 - `gestora@demo.local` (líder de equipe);
 - `consultor1@demo.local` e `consultor2@demo.local` (especialistas);
-- `leitura@demo.local` (somente leitura).
+- `leitura@demo.local` (somente leitura);
+- `novo@demo.local` (especialista recém-contratado: troca a senha provisória no primeiro acesso e segue a trilha de integração).
 
 Também cria dados fictícios:
 
@@ -175,8 +176,18 @@ test/api.test.js
 docs/
 ```
 
+## Novo especialista, R1 e ficha do cliente
+
+- **Primeiro acesso:** o usuário criado pelo administrador recebe uma senha provisória; a plataforma só abre depois da troca. Especialistas seguem a trilha do Painel inicial (Meu cadastro, Conheça a Vero, Kit do especialista) e, no fim, o treinamento de consórcios é liberado em Treinamentos.
+- **Agendar R1:** o mesmo pop-up no funil (Lead qualificado → R1), no painel lateral, na ficha e na Agenda: cliente e e-mail, horários de 15 em 15 minutos, 30 minutos por padrão, título "[R1] Cliente / Vero Consórcios". Com o Google Agenda conectado (Meu cadastro), o evento sai com Google Meet e convite ao cliente.
+- **Modelo da R1:** HTML único da empresa, aberto pela reunião com nome, foto e contato do especialista. O administrador troca o modelo em Configurações › Modelo da R1 (campos `{{...}}`).
+- **Planos:** a proposta e o simulador usam só as administradoras e os planos ativos (pelo código), mais a opção "Outros" com condições livres.
+- **Ficha do cliente:** abre só com os 4 últimos dígitos do celular; campos obrigatórios vazios ficam em vermelho sem perder o que foi digitado; documentos obrigatórios: identificação e comprovante de endereço (foto ou PDF). Envio por WhatsApp (modelo) ou por e-mail visual (SMTP, remetente `admin@veroconsorciosbr.com.br`).
+
 ## Produção
 
 - Rode a aplicação atrás de um proxy HTTPS (Nginx, Caddy ou o balanceador da nuvem) com `HOST=0.0.0.0`.
 - Faça backup periódico do arquivo definido em `CRM_DB`, junto com os arquivos `-wal` e `-shm` e a chave `<banco>.key` (sem ela, as senhas de portal guardadas não podem ser abertas).
 - Tokens de integração são exibidos uma única vez. No banco fica apenas o hash.
+- **Google Agenda (R1 com Meet):** defina `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET` (ou configure em Configurações › Integrações) e `PUBLIC_URL` com o endereço público do CRM. Cadastre no Google Cloud o URI de retorno `PUBLIC_URL/api/google/retorno`.
+- **E-mail da ficha:** configure o SMTP em Configurações › Integrações › E-mail (ou `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`, `SMTP_USER`, `SMTP_PASSWORD`). Remetente padrão: `admin@veroconsorciosbr.com.br`.

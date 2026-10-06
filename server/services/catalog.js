@@ -171,6 +171,7 @@ function listPlans(db, q = {}) {
     params.push(Number(q.administrator_id));
   }
   if (q.active === '1') where.push('p.active = 1');
+  if (q.active === '0') where.push('p.active = 0');
   return db
     .prepare(`SELECT p.*, a.name AS administrator_name, a.code AS administrator_code FROM products p LEFT JOIN administrators a ON a.id = p.administrator_id
       WHERE ${where.join(' AND ')} ORDER BY p.active DESC, a.name, p.name`)
@@ -257,6 +258,12 @@ function savePlan(db, user, data) {
     o.portal_password_updated_at = now;
     o.portal_password_updated_by = user.id;
   }
+  // Código do plano: identifica o plano na proposta e no simulador (único por administradora)
+  if (o.plan_code) {
+    const admId = o.administrator_id !== undefined ? o.administrator_id : db.prepare('SELECT administrator_id FROM products WHERE id = ?').get(Number(data.id) || 0)?.administrator_id;
+    const dup = db.prepare('SELECT id, plan_code FROM products WHERE plan_code = ? COLLATE NOCASE AND COALESCE(administrator_id, 0) = COALESCE(?, 0) AND id <> ?').get(o.plan_code, admId ?? null, Number(data.id) || 0);
+    if (dup) throw badRequest(`Já existe um plano com o código ${dup.plan_code} nesta administradora.`);
+  }
   if (data.id) {
     const p = db.prepare('SELECT * FROM products WHERE id = ?').get(Number(data.id));
     if (!p) throw notFound('Plano não encontrado.');
@@ -270,6 +277,28 @@ function savePlan(db, user, data) {
   const r = db.prepare(`INSERT INTO products (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...cols.map((c) => row[c] ?? null));
   audit(db, user, 'product', Number(r.lastInsertRowid), 'criado', { nome: o.name });
   return Number(r.lastInsertRowid);
+}
+
+const SIM_INDEX = { pre5: 'pre5', pre6: 'pre6', ipca: 'IPCA', incc: 'INCC', inpc: 'INPC', outro: 'outro' };
+/**
+ * Planos para o simulador de propostas: só administradoras e planos ativos (guia Planos). O simulador mostra as
+ * administradoras do CRM e, em cada uma, os planos pelo código + a opção "Outros" (condições livres).
+ */
+function simulatorPlans(db) {
+  const adms = db.prepare('SELECT id, name, code FROM administrators WHERE active = 1 ORDER BY name').all();
+  const plans = db.prepare(`SELECT p.*, a.name AS adm_name FROM products p JOIN administrators a ON a.id = p.administrator_id
+    WHERE p.active = 1 AND a.active = 1 ORDER BY a.name, p.plan_code, p.name`).all();
+  return {
+    administradoras: adms.map((a) => ({ id: a.id, nome: a.name, codigo: a.code })),
+    planos: plans.map((p) => ({
+      id: String(p.id), codigo: p.plan_code || null, administradora: p.adm_name, administradora_id: p.administrator_id,
+      nome: [p.plan_code, p.name].filter(Boolean).join(' · '), categoria: p.category, creditoMinimo: p.credit_min, creditoMaximo: p.credit_max,
+      incremento: p.credit_step, prazo: p.term_months, prazos: p.term_options, taxaAdm: p.admin_fee_pct, fundoReserva: p.reserve_fund_pct,
+      seguro: p.insurance_pct, embutidoPct: p.embedded_bid ? p.embedded_bid_pct : null, fixoPct: p.fixed_bid ? p.fixed_bid_pct : null,
+      adesao: !!p.adhesion, adesaoPct: p.adhesion ? p.adhesion_pct : null, adesaoMeses: p.adhesion ? p.adhesion_months : null,
+      indice: SIM_INDEX[p.readjustment_index] || null,
+    })),
+  };
 }
 
 /**
@@ -306,5 +335,6 @@ function chargebackPolicy(db, administratorId) {
 }
 
 module.exports = {
+  simulatorPlans,
   INDEXES, normalizeSchedule, scheduleTotal, listAdministrators, saveAdministrator, listPlans, savePlan, creditError, commissionScheduleFor, chargebackPolicy, decoratePlan, revealPortalPassword,
 };

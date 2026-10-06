@@ -904,6 +904,7 @@ const DEFAULT_STAGES = [
   ['Tentativa de contato', 'aberta', 'tentativa', 3, 'Cadência de tentativas por ligação e WhatsApp até conseguir falar com o lead.'],
   ['Lead qualificado', 'aberta', 'qualificado', 5, 'Conversa realizada. Objetivo: entender objetivo, crédito, parcela possível e prazo, e agendar a R1.'],
   ['R1', 'aberta', 'r1', 7, 'Reunião de diagnóstico (R1). Objetivo: apresentar o consórcio, validar a estratégia e o decisor.'],
+  ['R1 bolo', 'aberta', 'r1_bolo', 3, 'O cliente agendou a R1 e não compareceu. Objetivo: entender o motivo e reagendar a reunião (Agendar R1).'],
   ['Negociação', 'aberta', 'negociacao', 5, 'Montar e apresentar a proposta no simulador com base na R1.'],
   ['Follow-up', 'aberta', 'follow_up', 10, 'Proposta enviada. Seguir a esteira de follow-up (D0 a D10) até o aceite ou a decisão.'],
   ['Venda', 'ganho', 'venda', null, 'Venda confirmada com o pagamento da primeira parcela. Entra automaticamente pela tela de Vendas.'],
@@ -992,10 +993,20 @@ const DEFAULT_SETTINGS = {
   proposal_simulator_url: '/simulador/index.html',
   // Landing page: origens que podem enviar leads de outro domínio (vazio = só o próprio CRM; "*" = qualquer site)
   lp_allowed_origins: ['*'],
+  // Google Agenda (OAuth do Google Cloud): ID do cliente, chave cifrada e endereço público do CRM para o retorno
+  google_client_id: '',
+  google_client_secret_enc: null,
+  public_url: '',
+  // R1: título do evento ({cliente}, {empresa}) e duração padrão em minutos
+  r1_title_template: '[R1] {cliente} / {empresa}',
+  r1_duration_min: 30,
+  // Documentos obrigatórios da ficha: identificação e comprovante de endereço (foto ou PDF)
   doc_checklist: {
-    PF: ['identificacao', 'comprovante_endereco', 'comprovante_renda', 'comprovante_estado_civil'],
-    PJ: ['contrato_social', 'cartao_cnpj', 'comprovante_endereco', 'faturamento', 'doc_representante'],
+    PF: ['identificacao', 'comprovante_endereco'],
+    PJ: ['doc_representante', 'comprovante_endereco'],
   },
+  // E-mail (SMTP) para enviar a ficha ao cliente; remetente padrão admin@veroconsorciosbr.com.br
+  smtp: null,
 };
 
 function seedDefaults(db) {
@@ -1102,6 +1113,50 @@ function seedDefaults(db) {
     db.prepare("UPDATE settings SET value = ? WHERE key = 'proposal_simulator_url' AND value = ?").run(JSON.stringify('/simulador/index.html'), JSON.stringify('https://claude.ai/artifact/Fk7ApKUi2U4BqAfvzfGgpd'));
     db.prepare("INSERT INTO settings (key, value) VALUES ('migr_v6_lp', 'true')").run();
   }
+  // v7: coluna "R1 bolo" (entre R1 e Negociação) e regras de passagem revisadas
+  if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_v7_funil'").get()) {
+    const r1 = db.prepare("SELECT * FROM pipeline_stages WHERE key = 'r1'").get();
+    if (r1 && !db.prepare("SELECT 1 FROM pipeline_stages WHERE key = 'r1_bolo'").get()) {
+      const [name, kind, key, rot, playbook] = DEFAULT_STAGES.find((x) => x[2] === 'r1_bolo');
+      db.prepare('UPDATE pipeline_stages SET position = position + 1 WHERE position > ?').run(r1.position);
+      db.prepare('INSERT INTO pipeline_stages (name, position, kind, key, rot_days, playbook, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(name, r1.position + 1, kind, key, rot, playbook, now);
+    }
+    // Regras personalizadas: Tentativa de contato sem restrição; Lead qualificado com objetivo, categoria, crédito e prazo
+    const rules = getSetting(db, 'stage_rules');
+    if (rules && typeof rules === 'object') {
+      rules.tentativa = [];
+      rules.qualificado = ['qualificacao'];
+      rules.r1_bolo = [];
+      db.prepare("UPDATE settings SET value = ? WHERE key = 'stage_rules'").run(JSON.stringify(rules));
+    }
+    db.prepare("INSERT INTO settings (key, value) VALUES ('migr_v7_funil', 'true')").run();
+  }
+  // v8: trilha de integração do especialista (temas novos e treinamento de consórcios)
+  if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_v8_trilha'").get()) {
+    for (const [value, label] of [['cultura', 'Cultura e marca Vero'], ['metodologia', 'Metodologia de reuniões (R1)']]) {
+      if (!db.prepare("SELECT 1 FROM options WHERE list = 'categoria_treinamento' AND value = ?").get(value)) {
+        const pos = db.prepare("SELECT COALESCE(MAX(position), -1) AS p FROM options WHERE list = 'categoria_treinamento'").get().p + 1;
+        db.prepare("INSERT INTO options (list, value, label, position, flags) VALUES ('categoria_treinamento', ?, ?, ?, '{}')").run(value, label, pos);
+      }
+    }
+    if (!db.prepare("SELECT 1 FROM trainings WHERE track = 'consorcios'").get()) {
+      const { TRAININGS } = require('./services/onboarding-content');
+      const ins = db.prepare("INSERT INTO trainings (title, category, description, kind, content, required_roles, due_days, quiz, pass_score, duration_min, position, active, track, created_at, updated_at) VALUES (?, ?, ?, 'texto', ?, '[\"consultor\"]', 30, ?, 70, ?, ?, 1, 'consorcios', ?, ?)");
+      TRAININGS.forEach((t, i) => ins.run(t.title, t.category, t.description, t.content, JSON.stringify(t.quiz || []), t.duration_min, i, now, now));
+    }
+    db.prepare("INSERT INTO settings (key, value) VALUES ('migr_v8_trilha', 'true')").run();
+  }
+  // v9: documentos obrigatórios só identificação e comprovante de endereço (quando a lista ainda era a padrão anterior)
+  if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_v9_docs'").get()) {
+    const cur = getSetting(db, 'doc_checklist');
+    const OLD = { PF: ['identificacao', 'comprovante_endereco', 'comprovante_renda', 'comprovante_estado_civil'], PJ: ['contrato_social', 'cartao_cnpj', 'comprovante_endereco', 'faturamento', 'doc_representante'] };
+    if (cur && JSON.stringify(cur.PF) === JSON.stringify(OLD.PF)) {
+      const next = { ...cur, PF: DEFAULT_SETTINGS.doc_checklist.PF };
+      if (JSON.stringify(cur.PJ) === JSON.stringify(OLD.PJ)) next.PJ = DEFAULT_SETTINGS.doc_checklist.PJ;
+      db.prepare("UPDATE settings SET value = ? WHERE key = 'doc_checklist'").run(JSON.stringify(next));
+    }
+    db.prepare("INSERT INTO settings (key, value) VALUES ('migr_v9_docs', 'true')").run();
+  }
   // Nome oficial da empresa: Vero Consórcios (só preenche quando ainda não foi definido)
   if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_marca_vero'").get()) {
     db.prepare("UPDATE settings SET value = ? WHERE key = 'company_name' AND value IN (?, 'null')").run(JSON.stringify('Vero Consórcios'), JSON.stringify(''));
@@ -1172,10 +1227,18 @@ const ADDED_COLUMNS = {
     ['modules', "TEXT NOT NULL DEFAULT '{}'"], ['phone', 'TEXT'], ['whatsapp', 'TEXT'], ['job_title', 'TEXT'], ['birth_date', 'TEXT'],
     ['photo', 'TEXT'], ['bio', 'TEXT'], ['specialties', "TEXT NOT NULL DEFAULT '[]'"], ['pix_key', 'TEXT'], ['professional_reg', 'TEXT'],
     ['password_changed_at', 'TEXT'],
+    // Primeiro acesso: troca obrigatória da senha provisória e trilha de integração (onboarding) do especialista
+    ['must_change_password', 'INTEGER NOT NULL DEFAULT 0'], ['onboarding', "TEXT NOT NULL DEFAULT '{}'"],
+    // Google Agenda do usuário (OAuth): token de atualização cifrado
+    ['google_refresh_token_enc', 'TEXT'], ['google_email', 'TEXT'], ['google_connected_at', 'TEXT'],
   ],
   teams: [['leader_id', 'INTEGER REFERENCES users(id)']],
   pipeline_stages: [['key', 'TEXT'], ['playbook', 'TEXT'], ['rot_days', 'INTEGER'], ['training_id', 'INTEGER']],
-  tasks: [['priority', "TEXT NOT NULL DEFAULT 'normal'"], ['proposal_id', 'INTEGER REFERENCES proposals(id)'], ['cadence_step', 'TEXT'], ['pre_sale_id', 'INTEGER'], ['sale_id', 'INTEGER']],
+  tasks: [
+    ['priority', "TEXT NOT NULL DEFAULT 'normal'"], ['proposal_id', 'INTEGER REFERENCES proposals(id)'], ['cadence_step', 'TEXT'], ['pre_sale_id', 'INTEGER'], ['sale_id', 'INTEGER'],
+    // Reuniões (R1): término, convidado, link da videoconferência e evento no Google Agenda
+    ['ends_at', 'TEXT'], ['attendee_email', 'TEXT'], ['meeting_url', 'TEXT'], ['google_event_id', 'TEXT'], ['calendar_status', 'TEXT'],
+  ],
   products: [
     ['administrator_id', 'INTEGER REFERENCES administrators(id)'], ['plan_code', 'TEXT'], ['admin_fee_pct', 'REAL'], ['reserve_fund_pct', 'REAL'],
     ['term_months', 'INTEGER'], ['term_options', 'TEXT'], ['embedded_bid', 'INTEGER NOT NULL DEFAULT 0'], ['embedded_bid_pct', 'REAL'],
@@ -1184,7 +1247,11 @@ const ADDED_COLUMNS = {
     ['credit_min', 'REAL'], ['credit_max', 'REAL'], ['credit_step', 'REAL'], ['commission_schedule', 'TEXT'], ['notes', 'TEXT'],
   ],
 
-  client_links: [['token', 'TEXT'], ['first_used_at', 'TEXT'], ['access_count', 'INTEGER NOT NULL DEFAULT 0'], ['revoked_by', 'INTEGER'], ['revoke_reason', 'TEXT']],
+  client_links: [
+    ['token', 'TEXT'], ['first_used_at', 'TEXT'], ['access_count', 'INTEGER NOT NULL DEFAULT 0'], ['revoked_by', 'INTEGER'], ['revoke_reason', 'TEXT'],
+    // Ficha protegida pelos 4 últimos dígitos do celular: chave de acesso temporária, tentativas e bloqueio
+    ['verify_hash', 'TEXT'], ['verify_expires_at', 'TEXT'], ['verify_fails', 'INTEGER NOT NULL DEFAULT 0'], ['verify_locked_until', 'TEXT'], ['verified_at', 'TEXT'],
+  ],
   opportunities: [
     ['objective_type', 'TEXT'], ['product_type', 'TEXT'], ['credit_purpose', 'TEXT'], ['financial_moment', 'TEXT'],
     ['employment_type', 'TEXT'], ['has_fgts', 'TEXT'], ['decision_maker', 'TEXT'], ['existing_products', 'TEXT'],
@@ -1202,6 +1269,8 @@ const ADDED_COLUMNS = {
     ['has_adhesion', 'INTEGER'], ['adhesion_pct', 'REAL'], ['adhesion_months', 'INTEGER'], ['reducer_pct', 'REAL'], ['readjustment_rate', 'REAL'],
     ['bid_deduction', 'TEXT'], ['contemplation_month', 'INTEGER'], ['embedded_bid_pct', 'REAL'], ['quotas', 'INTEGER'],
     ['quota_split_strategy', 'TEXT'], ['quota_values', 'TEXT'], ['quota_split_notes', 'TEXT'],
+    // Administradora da proposta e plano "Outros" (condições livres, quando o plano não está cadastrado)
+    ['administrator_id', 'INTEGER REFERENCES administrators(id)'], ['plan_other', 'INTEGER NOT NULL DEFAULT 0'],
   ],
   pre_sales: [
     ['payment_method', 'TEXT'], ['payment_sent_at', 'TEXT'], ['payment_date', 'TEXT'], ['payment_attachment_id', 'INTEGER'],
@@ -1221,6 +1290,8 @@ const ADDED_COLUMNS = {
     ['contemplation_credit', 'REAL'], ['net_to_pay', 'REAL'], ['client_choice', 'TEXT'],
   ],
   administrators: [['portal_password_enc', 'TEXT'], ['portal_password_updated_at', 'TEXT'], ['portal_password_updated_by', 'INTEGER']],
+  // Trilha a que o treinamento pertence (ex.: "consorcios" = etapa 5 da integração do especialista)
+  trainings: [['track', 'TEXT']],
 };
 
 const EXTRA_SCHEMA = `

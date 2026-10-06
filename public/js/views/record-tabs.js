@@ -6,6 +6,7 @@ import {
 import { qualBlocks, qualProgress, tempBadge } from '../qualification.js';
 import { timelineList, bindTimeline } from '../postsale-timeline.js';
 import { opportunityForm, contractForm } from '../forms.js';
+import { sendFichaEmail } from '../ficha-send.js';
 
 const ro = (c) => !can.write() || !!c.anonymized_at;
 const catLabel = (k) => optLabel('categoria_credito', k.category || state.meta.products.find((p) => p.id === k.product_id)?.category);
@@ -699,13 +700,26 @@ export async function clientLinkDialog(c, reload) {
     if (!ok) return;
     created = true;
   }
+  const msg = link.token ? await get(`/api/cadastros/${c.id}/link-cliente/mensagem`, { base: location.href.split('#')[0] }).catch(() => null) : null;
   await modal({
     title: created ? 'Link de cadastro gerado' : 'Link de cadastro ativo',
-    body: html`<p>Envie este link ao cliente. Válido até <strong>${fmtDateTime(link.expires_at)}</strong>.</p>
+    body: html`<p>Envie este link ao cliente. Válido até <strong>${fmtDateTime(link.expires_at)}</strong>. Por segurança, a ficha só abre com os <strong>4 últimos dígitos do celular</strong> do cliente.</p>
       ${link.token ? copyBox(pageUrl(`ficha/${link.token}`)) : html`<p class="warn-text">O endereço deste link não está disponível. Revogue-o na aba Pré-venda e gere outro.</p>`}
+      ${msg?.active ? html`<div class="inline-actions send-ficha">
+        ${msg.whatsapp_url ? html`<a class="btn primary" href="${msg.whatsapp_url}" target="_blank" rel="noopener noreferrer">Enviar por WhatsApp</a>` : ''}
+        ${msg.email_to ? html`<button type="button" class="btn" data-send-email>Enviar por e-mail</button>` : html`<span class="small muted">Sem e-mail no cadastro.</span>`}
+      </div>
+      <details class="small"><summary>Mensagem do WhatsApp</summary><pre class="code msg-preview">${msg.text}</pre></details>` : ''}
       <div class="kv">${kv('Acessos', link.access_count || 0)}${kv('Último acesso', link.last_used_at ? fmtDateTime(link.last_used_at) : 'ainda não acessado')}</div>
       <p class="hint">Enquanto este link estiver ativo não é possível gerar outro. Para encerrar o acesso, use "Revogar link" na aba Pré-venda.</p>`,
-    onMount: (form) => bindCopy(form),
+    onMount: (form) => {
+      bindCopy(form);
+      on(form, 'click', '[data-send-email]', async (e, b) => {
+        b.disabled = true;
+        await sendFichaEmail(`/api/cadastros/${c.id}/link-cliente/enviar-email`);
+        b.disabled = false;
+      });
+    },
   });
   reload();
 }

@@ -574,7 +574,7 @@ function getContact(db, user, id) {
   const origins = db.prepare('SELECT * FROM contact_origins WHERE contact_id = ? ORDER BY created_at').all(c.id);
   const opportunities = db
     .prepare(
-      `SELECT o.*, s.name AS stage_name, s.kind AS stage_kind, p.name AS product_name, u.name AS owner_name
+      `SELECT o.*, s.name AS stage_name, s.kind AS stage_kind, s.key AS stage_key, p.name AS product_name, u.name AS owner_name
        FROM opportunities o JOIN pipeline_stages s ON s.id = o.stage_id LEFT JOIN products p ON p.id = o.product_id
        LEFT JOIN users u ON u.id = o.owner_id WHERE o.contact_id = ? ORDER BY o.created_at DESC`,
     )

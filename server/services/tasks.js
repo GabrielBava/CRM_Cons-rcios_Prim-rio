@@ -120,6 +120,8 @@ function updateTask(db, user, id, data) {
   if (data.due_at !== undefined) {
     upd.due_at = toIso(data.due_at);
     if (!upd.due_at) throw badRequest('Data inválida.');
+    // Reunião reagendada mantém a duração
+    if (t.ends_at) upd.ends_at = new Date(Date.parse(upd.due_at) + Math.max(0, Date.parse(t.ends_at) - Date.parse(t.due_at))).toISOString();
   }
   if (data.assigned_to !== undefined) {
     assertAssignable(db, user, Number(data.assigned_to));

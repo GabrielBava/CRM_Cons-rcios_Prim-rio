@@ -1,7 +1,7 @@
 -- =====================================================================
 -- Vero Consórcios (ERP/CRM) — DDL completo do banco (SQLite)
 -- Gerado por scripts/ddl.js a partir de um banco novo, com todas as migrações aplicadas.
--- 62 tabelas · 174 chaves estrangeiras declaradas · 43 índices
+-- 62 tabelas · 176 chaves estrangeiras declaradas · 43 índices
 --
 -- Observações
 --  - O SQLite verifica as chaves estrangeiras na gravação (PRAGMA foreign_keys = ON), não na criação:
@@ -39,7 +39,12 @@ CREATE TABLE IF NOT EXISTS users (
   specialties TEXT NOT NULL DEFAULT '[]',
   pix_key TEXT,
   professional_reg TEXT,
-  password_changed_at TEXT
+  password_changed_at TEXT,
+  must_change_password INTEGER NOT NULL DEFAULT 0,
+  onboarding TEXT NOT NULL DEFAULT '{}',
+  google_refresh_token_enc TEXT,
+  google_email TEXT,
+  google_connected_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS teams (
@@ -326,7 +331,12 @@ CREATE TABLE IF NOT EXISTS client_links (
   first_used_at TEXT,
   access_count INTEGER NOT NULL DEFAULT 0,
   revoked_by INTEGER,
-  revoke_reason TEXT
+  revoke_reason TEXT,
+  verify_hash TEXT,
+  verify_expires_at TEXT,
+  verify_fails INTEGER NOT NULL DEFAULT 0,
+  verify_locked_until TEXT,
+  verified_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS attachments (
@@ -537,7 +547,12 @@ CREATE TABLE IF NOT EXISTS tasks (
   proposal_id INTEGER REFERENCES proposals(id),
   cadence_step TEXT,
   pre_sale_id INTEGER,
-  sale_id INTEGER
+  sale_id INTEGER,
+  ends_at TEXT,
+  attendee_email TEXT,
+  meeting_url TEXT,
+  google_event_id TEXT,
+  calendar_status TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(status, due_at);
 
@@ -712,6 +727,10 @@ CREATE TABLE IF NOT EXISTS proposals (
   created_by INTEGER REFERENCES users(id),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
+  simulator_token_hash TEXT,
+  simulator_token_expires_at TEXT,
+  generated_at TEXT,
+  pdf_attachment_id INTEGER REFERENCES attachments(id),
   accepted_at TEXT,
   accepted_channel TEXT,
   accepted_by INTEGER REFERENCES users(id),
@@ -734,7 +753,9 @@ CREATE TABLE IF NOT EXISTS proposals (
   quotas INTEGER,
   quota_split_strategy TEXT,
   quota_values TEXT,
-  quota_split_notes TEXT
+  quota_split_notes TEXT,
+  administrator_id INTEGER REFERENCES administrators(id),
+  plan_other INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_prop_opp ON proposals(opportunity_id);
 
@@ -1063,7 +1084,8 @@ CREATE TABLE IF NOT EXISTS trainings (
   active INTEGER NOT NULL DEFAULT 1,
   created_by INTEGER REFERENCES users(id),
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  track TEXT
 );
 
 CREATE TABLE IF NOT EXISTS training_progress (

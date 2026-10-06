@@ -29,6 +29,7 @@ import * as users from './views/users.js';
 import * as profileView from './views/profile.js';
 import * as postsaleView from './views/postsale.js';
 import * as treasuryView from './views/treasury.js';
+import * as onboardingView from './views/onboarding.js';
 import { icon } from './icons.js';
 
 // Menu lateral: [rota, rótulo, tela, módulo de permissão, grupo]
@@ -63,6 +64,7 @@ const EXTRA = {
   financeiro: [treasuryView, 'financeiro', 'financeiro'],
   produtos: [plans, 'planos', 'planos'],
   'meu-cadastro': [profileView, null, null],
+  integracao: [onboardingView, null, 'painel'],
 };
 // Ícone de cada item do menu (manual de identidade, Iconografia)
 const NAV_ICON = { painel: 'painel', entrada: 'leads', funil: 'crm', agenda: 'agenda', simulador: 'simulador', propostas: 'propostas', clientes: 'clientes', metas: 'metas', prevenda: 'prevenda', vendas: 'vendas', posvenda: 'posvenda', comissoes: 'comissoes', treinamentos: 'treinamentos', administradoras: 'administradoras', planos: 'planos', relatorios: 'relatorios', usuarios: 'usuarios', configuracoes: 'configuracoes' };
@@ -111,6 +113,19 @@ async function boot() {
     if (s.needs_setup) return showSetup();
     state.meta = await get('/api/meta');
     state.user = state.meta.user;
+    // Senha provisória: primeiro a troca obrigatória
+    if (state.user.must_change_password) {
+      return onboardingView.firstPasswordScreen(app, {
+        onDone: () => {
+          location.hash = '#/painel';
+          boot();
+        },
+        onLogout: async () => {
+          await post('/api/logout').catch(() => {});
+          showLogin();
+        },
+      });
+    }
     shell();
     route();
   } catch (e) {

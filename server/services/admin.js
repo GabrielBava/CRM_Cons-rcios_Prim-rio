@@ -50,7 +50,8 @@ function saveUser(db, user, data) {
     db.prepare('UPDATE users SET name = ?, email = ?, role = ?, team_id = ?, dialer_agent_ref = ?, active = ?, phone = ?, modules = COALESCE(?, modules), updated_at = ? WHERE id = ?').run(name, email, data.role, teamId, agent ?? null, active, phone ?? null, modules ?? null, now, u.id);
     if (data.password) {
       validatePassword(data.password);
-      db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(data.password), u.id);
+      // Senha definida pelo administrador é provisória: o usuário troca no próximo acesso
+      db.prepare('UPDATE users SET password_hash = ?, must_change_password = ? WHERE id = ?').run(hashPassword(data.password), data.require_password_change === false ? 0 : 1, u.id);
       db.prepare('DELETE FROM sessions WHERE user_id = ?').run(u.id);
     }
     if (!active) db.prepare('DELETE FROM sessions WHERE user_id = ?').run(u.id);
@@ -58,10 +59,13 @@ function saveUser(db, user, data) {
     return u.id;
   }
   validatePassword(data.password);
+  // Novo usuário: senha provisória (troca obrigatória no primeiro acesso) e, para especialistas, a trilha de integração
+  const mustChange = data.require_password_change === false ? 0 : 1;
+  const onboarding = data.onboarding !== undefined ? !!data.onboarding : data.role === 'consultor';
   const r = db
-    .prepare('INSERT INTO users (name, email, password_hash, role, team_id, dialer_agent_ref, phone, modules, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(name, email, hashPassword(data.password), data.role, teamId, agent ?? null, phone ?? null, modules ?? '{}', now, now);
-  audit(db, user, 'user', Number(r.lastInsertRowid), 'criado', { email, perfil: data.role });
+    .prepare('INSERT INTO users (name, email, password_hash, role, team_id, dialer_agent_ref, phone, modules, must_change_password, onboarding, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(name, email, hashPassword(data.password), data.role, teamId, agent ?? null, phone ?? null, modules ?? '{}', mustChange, JSON.stringify(onboarding ? { active: true, started_at: now, steps: {} } : {}), now, now);
+  audit(db, user, 'user', Number(r.lastInsertRowid), 'criado', { email, perfil: data.role, troca_de_senha: !!mustChange, integracao: onboarding });
   return Number(r.lastInsertRowid);
 }
 
@@ -361,13 +365,13 @@ function meta(db, user) {
     (options[o.list] ||= []).push({ ...o, flags: JSON.parse(o.flags || '{}') });
   }
   return {
-    user: { id: user.id, name: user.name, email: user.email, role: user.role, role_label: ROLES[user.role], team_id: user.team_id, modules: perms.userModules(user), fin_responsible: require('./treasury').hasResponsibilities(db, user), photo: user.photo || null, job_title: user.job_title || null },
+    user: { id: user.id, name: user.name, email: user.email, role: user.role, role_label: ROLES[user.role], team_id: user.team_id, modules: perms.userModules(user), fin_responsible: require('./treasury').hasResponsibilities(db, user), photo: user.photo || null, job_title: user.job_title || null, must_change_password: !!user.must_change_password },
     modules: perms.MODULES,
     roles: ROLES,
     options,
     list_labels: LIST_LABELS,
     stages: db.prepare('SELECT * FROM pipeline_stages WHERE active = 1 ORDER BY position').all(),
-    products: db.prepare('SELECT id, name, category, administrator, administrator_id, credit_min, credit_max, credit_step, term_months, active FROM products ORDER BY active DESC, name').all(),
+    products: db.prepare('SELECT id, name, plan_code, category, administrator, administrator_id, credit_min, credit_max, credit_step, term_months, admin_fee_pct, reserve_fund_pct, insurance_pct, readjustment_index, adhesion, adhesion_pct, adhesion_months, embedded_bid, embedded_bid_pct, active FROM products ORDER BY active DESC, plan_code, name').all(),
     administrators: db.prepare('SELECT id, code, name, active FROM administrators ORDER BY active DESC, name').all(),
     users: listUsers(db, user).filter((u) => u.active),
     teams: listTeams(db),
@@ -392,6 +396,7 @@ function meta(db, user) {
       formalization_sla_days: Number(getSetting(db, 'formalization_sla_days')) || 5,
       postsale_referral_min_nps: getSetting(db, 'postsale_referral_min_nps') ?? 9,
       postsale_days: require('./postsale').postsaleDays(db),
+      r1_duration_min: Number(getSetting(db, 'r1_duration_min')) || 30,
     },
     simulator: simulatorAvailability(db),
     constants: {

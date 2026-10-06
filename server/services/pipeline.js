@@ -5,6 +5,9 @@
  * - Cada etapa tem critérios de entrada verificados no servidor (configuráveis em Configurações › Funil).
  * - Voltar etapas é permitido com justificativa. Nutrição e Perdido podem ser usados a qualquer momento, com motivo.
  * - "Venda" só é alcançada pela confirmação do pagamento na tela de Vendas.
+ * - Prospect e Lead vão direto para "Tentativa de contato", sem restrição (a etapa Lead pode ser pulada).
+ * - "R1 bolo" (cliente agendou a R1 e não compareceu) recebe só negócios que estão em R1; dali o negócio volta
+ *   para R1 (nova reunião agendada) ou segue para Negociação. Para o resto do funil, R1 bolo ocupa o lugar da R1.
  */
 const { ATTEMPT_TYPES } = require('../constants');
 const { getSetting } = require('../db');
@@ -37,14 +40,15 @@ const RULES = {
     },
   },
   qualificacao: {
-    label: 'Qualificação: objetivo, crédito desejado, parcela máxima e prioridade do crédito',
-    hint: 'Preencha a qualificação em "4. Negócio".',
-    check: (db, o) => !!(o.objective_type && o.credit_value && o.installment_max && o.urgency),
+    label: 'Qualificação: objetivo, categoria de interesse, crédito desejado e prioridade (curto, médio ou longo prazo)',
+    hint: 'Preencha em "Informações de negócio" (painel lateral) ou em "4. Negócio".',
+    check: (db, o) => !!(o.objective_type && o.credit_category && o.credit_value && o.urgency),
   },
   r1_agendada: {
-    label: 'R1 agendada (tarefa de reunião)',
-    hint: 'Agende a R1 em "Nova tarefa" › Reunião (R1).',
-    check: (db, o, c) => !!db.prepare("SELECT 1 FROM tasks WHERE contact_id = ? AND type = 'reuniao' AND status <> 'cancelada' LIMIT 1").get(c.id),
+    label: 'R1 agendada',
+    hint: 'Clique em "Agendar R1" e escolha data e horário da reunião.',
+    // Reunião pendente ou já realizada (uma R1 em que o cliente faltou não conta: agende outra)
+    check: (db, o, c) => !!db.prepare("SELECT 1 FROM tasks WHERE contact_id = ? AND type = 'reuniao' AND (status = 'pendente' OR (status = 'concluida' AND outcome = 'realizada')) LIMIT 1").get(c.id),
   },
   r1_realizada: {
     label: 'R1 realizada',
@@ -74,9 +78,10 @@ const RULES = {
 const DEFAULT_STAGE_RULES = {
   prospect: [],
   lead: ['contato_valido', 'origem'],
-  tentativa: ['tentativa_registrada'],
-  qualificado: ['contato_efetivo', 'qualificacao'],
+  tentativa: [],
+  qualificado: ['qualificacao'],
   r1: ['r1_agendada'],
+  r1_bolo: [],
   negociacao: ['r1_realizada', 'dados_r1'],
   follow_up: ['proposta_apresentada'],
   venda: ['venda_confirmada'],
@@ -101,11 +106,22 @@ function evaluate(db, opp, contact, stage) {
 }
 
 const openStages = (db) => db.prepare("SELECT * FROM pipeline_stages WHERE active = 1 AND kind = 'aberta' ORDER BY position").all();
+/** Etapas que podem ser puladas sem critérios (Prospect → Tentativa de contato direto). */
+const SKIPPABLE = new Set(['lead']);
+/** Sequência do funil sem a etapa lateral "R1 bolo" (que ocupa o lugar da R1). */
+const mainStages = (db) => openStages(db).filter((s) => s.key !== 'r1_bolo');
+/** Posição do negócio na sequência principal (R1 bolo conta como R1). */
+function seqIndex(db, seq, stage) {
+  if (!stage) return -1;
+  if (stage.key === 'r1_bolo') return seq.findIndex((s) => s.key === 'r1');
+  return seq.findIndex((s) => s.id === stage.id);
+}
 
 /** Próxima etapa aberta depois da atual (ou null). */
 function nextStage(db, opp) {
-  const seq = openStages(db);
-  const i = seq.findIndex((s) => s.id === opp.stage_id);
+  const seq = mainStages(db);
+  const cur = db.prepare('SELECT * FROM pipeline_stages WHERE id = ?').get(opp.stage_id);
+  const i = seqIndex(db, seq, cur);
   if (i >= 0 && i < seq.length - 1) return seq[i + 1];
   if (i === seq.length - 1) return db.prepare("SELECT * FROM pipeline_stages WHERE active = 1 AND kind = 'ganho' LIMIT 1").get();
   return null;
@@ -125,9 +141,14 @@ function validateMove(db, user, opp, from, to, data = {}, opts = {}) {
   if (to.kind === 'perdido' || to.kind === 'nutricao') return {};
   const force = !!data.force && user.role === 'admin';
   if (force && !String(data.reason || '').trim()) throw badRequest('Para forçar a passagem, informe a justificativa.');
-  const seq = openStages(db);
+  // R1 bolo: só a partir da R1 (o cliente agendou e não compareceu); a justificativa é opcional
+  if (to.key === 'r1_bolo') {
+    if (from?.key !== 'r1') throw badRequest(`Só negócios em "R1" podem ir para "${to.name}" (cliente que agendou a R1 e não compareceu).`);
+    return {};
+  }
+  const seq = mainStages(db);
   const iTo = seq.findIndex((s) => s.id === to.id);
-  const iFrom = from ? seq.findIndex((s) => s.id === from.id) : -1;
+  const iFrom = seqIndex(db, seq, from);
   const sequential = getSetting(db, 'funnel_sequential') !== false;
   // Voltar etapas: permitido, com justificativa
   if (iFrom >= 0 && iTo < iFrom) {
@@ -137,10 +158,12 @@ function validateMove(db, user, opp, from, to, data = {}, opts = {}) {
   // Etapas a verificar: a de destino e, quando o negócio é retomado (nutrição/perdido) ou pula etapas, as anteriores
   let toCheck = [to];
   if (iFrom >= 0 && iTo > iFrom + 1) {
-    if (sequential && !force) {
+    const skipped = seq.slice(iFrom + 1, iTo);
+    const free = skipped.every((s) => SKIPPABLE.has(s.key));
+    if (sequential && !force && !free) {
       throw badRequest(`Não é possível pular etapas. A próxima etapa deste negócio é "${seq[iFrom + 1].name}".`, { next_stage_id: seq[iFrom + 1].id });
     }
-    toCheck = seq.slice(iFrom + 1, iTo + 1);
+    toCheck = seq.slice(iFrom + 1, iTo + 1).filter((s) => !(free && SKIPPABLE.has(s.key)));
   } else if (iFrom < 0) {
     toCheck = seq.slice(0, iTo + 1);
   }
@@ -152,4 +175,4 @@ function validateMove(db, user, opp, from, to, data = {}, opts = {}) {
   return { forced: force && missing.length > 0 };
 }
 
-module.exports = { RULES, DEFAULT_STAGE_RULES, stageRules, evaluate, nextStage, validateMove, openStages };
+module.exports = { RULES, DEFAULT_STAGE_RULES, stageRules, evaluate, nextStage, validateMove, openStages, mainStages };

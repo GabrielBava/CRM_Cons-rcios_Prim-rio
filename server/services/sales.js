@@ -225,20 +225,37 @@ function getPreSale(db, user, id) {
   return row;
 }
 
-/** Mensagem e links para enviar o cadastro ao cliente (WhatsApp ou e-mail). */
+/** Mensagem e links para enviar o cadastro ao cliente (WhatsApp ou e-mail), no modelo da Vero. */
 function presaleMessage(db, ps, url) {
-  const company = getSetting(db, 'company_name') || 'nossa equipe';
-  const first = String(ps.contact_name || '').split(/\s+/)[0] || '';
-  const text =
-    `Olá, ${first}! Para darmos sequência à sua adesão ao consórcio, preencha o seu cadastro neste link seguro:\n${url}\n\n` +
-    'Leva cerca de 10 minutos. Tenha em mãos: documento de identificação, comprovante de endereço e comprovante de renda. ' +
-    `Seus dados são usados apenas para formalizar a adesão junto à administradora, conforme a LGPD. Qualquer dúvida, fale comigo. — ${company}`;
+  const mailer = require('./mailer');
+  const owner = ps.owner_id ? db.prepare('SELECT name, whatsapp, phone FROM users WHERE id = ?').get(ps.owner_id) : null;
+  const text = mailer.fichaWhatsapp(db, { name: ps.contact_name, url, consultant: owner?.name });
+  const email = mailer.fichaEmail(db, { name: ps.contact_name, url, consultant: owner?.name, consultantPhone: owner?.whatsapp || owner?.phone });
   const phone = String(ps.contact_whatsapp || ps.contact_phone || '').replace(/\D/g, '');
   return {
     text,
     whatsapp_url: phone ? `https://wa.me/${phone.length <= 11 ? `55${phone}` : phone}?text=${encodeURIComponent(text)}` : null,
-    email_url: ps.contact_email ? `mailto:${ps.contact_email}?subject=${encodeURIComponent(getSetting(db, 'presale_email_subject') || 'Seu cadastro para a adesão ao consórcio')}&body=${encodeURIComponent(text)}` : null,
+    email_url: ps.contact_email ? `mailto:${ps.contact_email}?subject=${encodeURIComponent(email.subject)}&body=${encodeURIComponent(email.text)}` : null,
+    email_to: ps.contact_email || null,
+    email_subject: email.subject,
+    email_configured: require('./mailer').smtpStatus(db, { role: 'consultor' }).configured,
   };
+}
+
+/** Envia a ficha por e-mail (SMTP da empresa, remetente admin@veroconsorciosbr.com.br) ou devolve o e-mail pronto. */
+async function sendFichaEmail(db, user, contactId, url, { preSaleId = null, logoUrl = null } = {}) {
+  const c = loadContact(db, user, contactId, { write: true });
+  if (!c.email) throw badRequest('Cadastre o e-mail do cliente para enviar a ficha por e-mail.');
+  const mailer = require('./mailer');
+  const owner = c.owner_id ? db.prepare('SELECT name, whatsapp, phone FROM users WHERE id = ?').get(c.owner_id) : null;
+  const mail = mailer.fichaEmail(db, { name: c.name, url, consultant: owner?.name || user.name, consultantPhone: owner?.whatsapp || owner?.phone, logoUrl });
+  const r = await mailer.sendMail(db, { to: c.email, ...mail });
+  if (r.sent) {
+    insertActivity(db, { contact_id: c.id, type: 'cadastro', notes: `Ficha de adesão enviada por e-mail para ${c.email} (remetente ${r.from}).`, user_id: user.id });
+    audit(db, user, 'contact', c.id, 'ficha_enviada_email', { para: c.email, de: r.from }, c.id);
+    if (preSaleId) markSent(db, user, preSaleId, { via: 'email' });
+  }
+  return { ...r, to: c.email, subject: mail.subject, html: mail.html, text: mail.text, mailto: `mailto:${c.email}?subject=${encodeURIComponent(mail.subject)}&body=${encodeURIComponent(mail.text)}` };
 }
 
 function markSent(db, user, id, data) {
@@ -998,7 +1015,7 @@ function cancellationIndicators(db, user, q = {}) {
 }
 
 module.exports = {
-  PRESALE_STEPS, PRESALE_STATUS, stepsFor, PAYMENT_METHODS, isFirstSale, openPreSale, listPreSales, getPreSale, presaleMessage, markSent, onClientLink, advancePreSale,
+  PRESALE_STEPS, PRESALE_STATUS, stepsFor, PAYMENT_METHODS, isFirstSale, openPreSale, listPreSales, getPreSale, presaleMessage, markSent, onClientLink, advancePreSale, sendFichaEmail,
   savePreSaleQuotas, cancelPreSale, presaleSweep, listSales, getSale, registerAllocation, confirmSale, cancelPendingSale, allocationSweep, quotasOf, generateCommissions, commissionSweep, listCommissions, commissionSummary, payCommissions,
   registerCancellation, listCancellations, cancellationIndicators, addTask, nextBusinessDay, addMonths, addDays, ownerScope, assertOwnerVisible, round2,
 };

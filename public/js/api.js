@@ -10,8 +10,8 @@ export class ApiError extends Error {
 let onUnauthorized = () => {};
 export const setUnauthorizedHandler = (fn) => (onUnauthorized = fn);
 
-export async function api(method, url, body) {
-  const opts = { method, headers: { 'X-Requested-With': 'crm' }, credentials: 'same-origin' };
+export async function api(method, url, body, headers = {}) {
+  const opts = { method, headers: { 'X-Requested-With': 'crm', ...headers }, credentials: 'same-origin' };
   if (body !== undefined) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
@@ -36,17 +36,18 @@ export async function api(method, url, body) {
   return data;
 }
 
-export const get = (url, params) => {
+export const get = (url, params, headers) => {
   if (params) {
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== '') q.set(k, v);
     const s = q.toString();
     if (s) url += (url.includes('?') ? '&' : '?') + s;
   }
-  return api('GET', url);
+  return api('GET', url, undefined, headers);
 };
 export const post = (url, body = {}) => api('POST', url, body);
 export const patch = (url, body = {}) => api('PATCH', url, body);
+export const put = (url, body = {}) => api('PUT', url, body);
 
 /** Baixa um arquivo (CSV) respeitando a sessão. */
 export async function download(url, params) {

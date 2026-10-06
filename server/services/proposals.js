@@ -164,12 +164,29 @@ function normalize(db, data, contactId) {
     assertOption(db, 'indice_reajuste', o.readjustment_index, 'índice de reajuste');
   }
   if (data.valid_until !== undefined) o.valid_until = toDateOnly(data.valid_until);
-  if (data.product_id !== undefined) {
+  // Administradora e plano: só os cadastrados e ativos no CRM (guia Planos), ou "Outros" com condições livres
+  if (data.administrator_id !== undefined) {
+    o.administrator_id = data.administrator_id ? Number(data.administrator_id) : null;
+    if (o.administrator_id && !db.prepare('SELECT 1 FROM administrators WHERE id = ? AND active = 1').get(o.administrator_id)) throw badRequest('Administradora inválida ou inativa.');
+  }
+  const other = data.plan_other === true || data.plan_other === 'true' || data.plan_other === 1 || data.plan_other === '1' || data.product_id === 'outros';
+  if (other) {
+    o.plan_other = 1;
+    o.product_id = null;
+    if (data.administrator_id !== undefined && !o.administrator_id) throw badRequest('No plano "Outros", informe a administradora.');
+  } else if (data.product_id !== undefined) {
     o.product_id = data.product_id ? Number(data.product_id) : null;
+    o.plan_other = 0;
     const plan = o.product_id && db.prepare('SELECT * FROM products WHERE id = ?').get(o.product_id);
     if (o.product_id && !plan) throw badRequest('Plano inválido.');
     if (plan) {
+      if (!plan.active && !data.keep_inactive_plan) throw badRequest(`O plano ${plan.plan_code || plan.name} está inativo. Escolha um plano ativo ou "Outros".`);
+      if (o.administrator_id && plan.administrator_id && o.administrator_id !== plan.administrator_id) throw badRequest('O plano escolhido não é desta administradora.');
+      if (plan.administrator_id) o.administrator_id = plan.administrator_id;
       if (!o.category && plan.category) o.category = plan.category;
+      // Condições do plano cadastrado valem para a proposta (nada fora do escopo do plano)
+      for (const f of ['admin_fee_pct', 'reserve_fund_pct']) if (plan[f] != null) o[f] = plan[f];
+      if (plan.readjustment_index && db.prepare("SELECT 1 FROM options WHERE list = 'indice_reajuste' AND value = ?").get(plan.readjustment_index)) o.readjustment_index = plan.readjustment_index;
       const credit = o.credit_value !== undefined ? o.credit_value : toNumber(data.credit_value);
       const err = require('./catalog').creditError(plan, credit);
       if (err) throw badRequest(err);
@@ -228,7 +245,7 @@ function planDefaults(db, o) {
 
 function insertProposal(db, user, row) {
   const now = nowIso();
-  const full = { status: 'rascunho', version: 1, ...row, code: nextCode(db, 'proposal', 'PR'), owner_id: row.owner_id ?? user.id, created_by: user.id, created_at: now, updated_at: now };
+  const full = { status: 'rascunho', version: 1, ...row, code: row.code || nextCode(db, 'proposal', 'PR'), owner_id: row.owner_id ?? user.id, created_by: user.id, created_at: now, updated_at: now };
   if (full.status === 'apresentada') full.presented_at = now;
   const cols = Object.keys(full);
   const r = db.prepare(`INSERT INTO proposals (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...cols.map((c) => full[c] ?? null));
@@ -345,6 +362,17 @@ function changeStatus(db, user, id, data) {
   });
 }
 
+/** Condições da proposta no formato do link do simulador (nova versão abre já preenchida). */
+function simulatorPrefill(db, p) {
+  const adm = p.administrator_id ? db.prepare('SELECT name FROM administrators WHERE id = ?').get(p.administrator_id)?.name : null;
+  return {
+    plano: p.product_id || (p.plan_other ? 'outros' : null), adm, categoria: p.category, credito: p.credit_value, prazo: p.term_months,
+    taxa_adm: p.admin_fee_pct, fundo_reserva: p.reserve_fund_pct, seguro_pct: p.insurance_pct, mes_contemplacao: p.contemplation_month,
+    adesao_pct: p.has_adhesion ? p.adhesion_pct : null, adesao_meses: p.has_adhesion ? p.adhesion_months : null,
+    modalidade: p.payment_modality === 'parcela_integral' ? 'integral' : null, redutor_pct: p.reducer_pct, versao: p.version,
+  };
+}
+
 function newVersion(db, user, id, data) {
   const p = loadProposal(db, user, id, true);
   if (p.status === 'substituida') throw badRequest('Esta versão já foi substituída. Use a versão mais recente.');
@@ -352,7 +380,9 @@ function newVersion(db, user, id, data) {
   if (child) throw badRequest(`Já existe uma versão mais recente (${child.code}).`);
   const o = normalize(db, data || {}, p.contact_id);
   const base = {};
-  for (const f of [...COMMERCIAL_FIELDS, 'link_url']) base[f] = p[f];
+  for (const f of [...COMMERCIAL_FIELDS, 'link_url', 'category', 'administrator_id', 'plan_other']) base[f] = p[f];
+  // A nova versão continua sendo a mesma proposta: mesmo código com o número da versão (PR-000011-v2)
+  const root = String(p.code).replace(/-v\d+$/, '');
   return tx(db, () => {
     const res = insertProposal(db, user, {
       ...base,
@@ -363,6 +393,7 @@ function newVersion(db, user, id, data) {
       previous_id: p.id,
       status: 'rascunho',
       owner_id: p.owner_id,
+      code: `${root}-v${p.version + 1}`,
     });
     if (!FINAL.includes(p.status)) {
       db.prepare("UPDATE proposals SET status = 'substituida', updated_at = ? WHERE id = ?").run(nowIso(), p.id);
@@ -379,6 +410,18 @@ function newVersion(db, user, id, data) {
     });
     audit(db, user, 'proposal', res.id, 'nova_versao', { anterior: p.code }, p.contact_id);
     audit(db, user, 'proposal', p.id, 'substituida', { nova: res.code }, p.contact_id);
+    // Link do simulador da nova versão: abre com as condições da anterior e o botão "Atualizar proposta"
+    if (data?.open_simulator !== false) {
+      try {
+        const token = randomToken(32);
+        db.prepare('UPDATE proposals SET simulator_token_hash = ?, simulator_token_expires_at = ? WHERE id = ?').run(sha256(token), new Date(Date.now() + 72 * 3600000).toISOString(), res.id);
+        const row = db.prepare('SELECT * FROM proposals WHERE id = ?').get(res.id);
+        const link = require('./record').proposalSimulatorLink(db, user, p.contact_id, { opportunity_id: p.opportunity_id, proposal_code: res.code, crm_token: token, prefill: { ...simulatorPrefill(db, row), acao: 'atualizar' } });
+        res.url = link.url;
+      } catch (e) {
+        res.url_error = e.message;
+      }
+    }
     return res;
   });
 }
@@ -403,7 +446,7 @@ function getProposal(db, user, id) {
     .prepare(`SELECT pr.*, c.name AS contact_name, c.code AS contact_code, o.code AS opportunity_code, pd.name AS product_name, s.code AS simulation_code, u.name AS owner_name,
       COALESCE(ad.name, pd.administrator) AS administrator_name, pd.plan_code
       FROM proposals pr JOIN contacts c ON c.id = pr.contact_id JOIN opportunities o ON o.id = pr.opportunity_id LEFT JOIN products pd ON pd.id = pr.product_id
-      LEFT JOIN administrators ad ON ad.id = pd.administrator_id
+      LEFT JOIN administrators ad ON ad.id = COALESCE(pr.administrator_id, pd.administrator_id)
       LEFT JOIN simulations s ON s.id = pr.simulation_id LEFT JOIN users u ON u.id = pr.owner_id WHERE pr.id = ?`)
     .get(p.id);
   // Cadeia de versões (anteriores e posteriores)
@@ -495,7 +538,7 @@ function startProposal(db, user, data) {
   // Token de uso único desta proposta: o simulador devolve os valores e o PDF ao CRM quando a proposta é gerada
   const token = randomToken(32);
   db.prepare('UPDATE proposals SET simulator_token_hash = ?, simulator_token_expires_at = ? WHERE id = ?').run(sha256(token), new Date(Date.now() + 72 * 3600000).toISOString(), res.id);
-  const link = require('./record').proposalSimulatorLink(db, user, c.id, { opportunity_id: opp.id, proposal_code: res.code, crm_token: token });
+  const link = require('./record').proposalSimulatorLink(db, user, c.id, { opportunity_id: opp.id, proposal_code: res.code, crm_token: token, prefill: { plano: opp.product_id || null } });
   return { ...res, url: link.url };
 }
 
@@ -530,6 +573,12 @@ function receiveFromSimulator(db, data) {
   };
   for (const k of Object.keys(fields)) if (fields[k] === undefined || Number.isNaN(fields[k])) delete fields[k];
   if (data.categoria && ['imovel', 'veiculo', 'servico'].includes(data.categoria)) fields.category = data.categoria;
+  // Plano escolhido no simulador: o cadastrado no CRM (id) ou "Outros" da administradora
+  const admId = data.administradora_id ? Number(data.administradora_id) : data.administradora ? db.prepare('SELECT id FROM administrators WHERE active = 1 AND (name = ? COLLATE NOCASE OR code = ? COLLATE NOCASE)').get(clean(data.administradora), clean(data.administradora))?.id : null;
+  if (data.plano_outros) Object.assign(fields, { plan_other: true, administrator_id: admId || null });
+  else if (data.plano_id && /^\d+$/.test(String(data.plano_id))) Object.assign(fields, { product_id: Number(data.plano_id) });
+  else if (admId) fields.administrator_id = admId;
+  if (fields.plan_other && !fields.administrator_id) delete fields.plan_other;
   const o = normalize(db, fields, p.contact_id);
   if (fields.category) o.category = fields.category;
   const now = nowIso();

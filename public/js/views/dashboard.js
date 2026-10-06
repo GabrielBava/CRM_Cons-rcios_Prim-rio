@@ -3,6 +3,7 @@ import { get } from '../api.js';
 import { html, render, $, on, state, selectOptions, userItems, fmtMoney, fmtMoneyShort, fmtDateTime, fmtDate, relTime, badge, empty, toastError, K, monthLabel, avatar } from '../ui.js';
 import { tempBadge } from '../qualification.js';
 import { icon } from '../icons.js';
+import { onboardingCard } from './onboarding.js';
 
 const LEVEL = { alta: ['Alta', 'ok'], media: ['Média', 'warn'], baixa: ['Baixa', 'danger'] };
 export const probBadge = (p) => badge(`${LEVEL[p.level]?.[0] || '—'} · ${p.probability}%`, LEVEL[p.level]?.[1] || '');
@@ -22,8 +23,9 @@ export async function show(view) {
   const manager = ['admin', 'gestor', 'leitura'].includes(state.user.role);
   const load = async () => {
     let d;
+    let ob = null;
     try {
-      d = await get('/api/inicio', selected ? { user_id: selected } : {});
+      [d, ob] = await Promise.all([get('/api/inicio', selected ? { user_id: selected } : {}), get('/api/integracao').catch(() => null)]);
     } catch (e) {
       toastError(e);
       return;
@@ -40,6 +42,7 @@ export async function show(view) {
     render(view, html`<div class="page">
       <div class="page-head"><div><h1>${hello}, ${state.user.name.split(' ')[0]}!</h1><p class="muted">${new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })} · ${d.scope.name ? `visão de ${d.scope.name}` : d.scope.all ? 'visão de toda a empresa' : 'visão da sua equipe'}</p></div>
         ${manager ? html`<label class="inline">Ver<select data-user>${selectOptions(userItems(), selected, { placeholder: state.user.role === 'admin' ? 'Toda a empresa' : 'Minha equipe' })}</select></label>` : ''}</div>
+      ${onboardingCard(ob)}
 
       <div class="kpis home-kpis">
         <a class="kpi" href="#/leads">${kpiIco('leads')}<div class="kpi-label">Leads recebidos no mês</div><div class="kpi-value">${d.leads.mes}</div><div class="kpi-sub">${d.leads.hoje} hoje${d.no_contact ? html` · <span class="overdue">${d.no_contact} sem contato</span>` : ''}</div></a>

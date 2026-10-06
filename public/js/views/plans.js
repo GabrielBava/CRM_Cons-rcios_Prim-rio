@@ -26,7 +26,7 @@ export function creditRange(p) {
 }
 
 export async function show(view, { params = {} } = {}) {
-  let filter = { administrator_id: params.administradora || '' };
+  let filter = { administrator_id: params.administradora || '', active: '' };
   let rows = [];
   let adms = [];
   const admin = can.admin();
@@ -40,10 +40,14 @@ export async function show(view, { params = {} } = {}) {
       <div class="page-head"><div><h1>Planos</h1><p class="muted">Condições de cada plano por administradora. A faixa de crédito e o incremento são conferidos nas propostas e no termo de adesão.</p></div>
         ${admin ? html`<div class="actions"><button class="btn primary" data-act="new" ${adms.length ? '' : 'disabled'}>+ Novo plano</button></div>` : ''}</div>
       ${admin && !adms.length ? html`<div class="alert warn">Cadastre primeiro uma administradora em <a href="#/administradoras">Administradoras</a>.</div>` : ''}
-      <form class="filters" data-f><label>Administradora<select name="administrator_id">${selectOptions(adms.map((a) => ({ value: a.id, label: a.name })), filter.administrator_id, { placeholder: 'Todas' })}</select></label></form>
+      <form class="filters" data-f><label>Administradora<select name="administrator_id">${selectOptions(adms.map((a) => ({ value: a.id, label: a.name })), filter.administrator_id, { placeholder: 'Todas' })}</select></label>
+        <label>Situação<select name="active">${selectOptions([{ value: '1', label: 'Ativos' }, { value: '0', label: 'Inativos' }], filter.active, { placeholder: 'Todos' })}</select></label></form>
+      <p class="hint">Só os planos <strong>ativos</strong> aparecem na proposta e no simulador, identificados pelo código (ex.: HS1 · Imóvel 200). Em toda administradora existe também a opção <strong>Outros</strong>, para condições que não estão cadastradas.</p>
       <section class="card">${table(
         [
-          { label: 'Plano', render: (p) => html`<strong>${p.name}</strong>${p.plan_code ? html` <small class="muted">${p.plan_code}</small>` : ''}${p.active ? '' : html` ${badge('Inativo', 'muted')}`}<br><small>${p.administrator_name || p.administrator || '—'} · ${optLabel('categoria_credito', p.category)}</small>` },
+          { label: 'Código', render: (p) => (p.plan_code ? html`<strong class="plan-code">${p.plan_code}</strong>` : html`<span class="warn-text small">sem código</span>`) },
+          { label: 'Plano', render: (p) => html`<strong>${p.name}</strong><br><small>${p.administrator_name || p.administrator || '—'} · ${optLabel('categoria_credito', p.category)}</small>` },
+          { label: 'Situação', render: (p) => (admin ? html`<label class="switch" title="${p.active ? 'Desativar o plano' : 'Ativar o plano'}"><input type="checkbox" data-toggle="${p.id}" ${p.active ? 'checked' : ''}><span>${p.active ? 'Ativo' : 'Inativo'}</span></label>` : badge(p.active ? 'Ativo' : 'Inativo', p.active ? 'ok' : 'muted')) },
           { label: 'Taxa adm.', render: (p) => p2(p.admin_fee_pct), cls: 'num' },
           { label: 'Fundo reserva', render: (p) => p2(p.reserve_fund_pct), cls: 'num' },
           { label: 'Prazo', render: (p) => html`${p.term_months ? `${p.term_months} meses` : '—'}${p.term_options ? html`<br><small>opções: ${p.term_options}</small>` : ''}` },
@@ -85,9 +89,9 @@ export async function show(view, { params = {} } = {}) {
       body: html`<div class="grid three">
           ${field({ name: 'administrator_id', label: 'Administradora', type: 'select', options: adms.filter((a) => a.active || a.id === p.administrator_id).map((a) => ({ value: a.id, label: a.name })), value: p.administrator_id ?? filter.administrator_id, required: true })}
           ${field({ name: 'name', label: 'Nome do plano', value: p.name, required: true, placeholder: 'Ex.: HS Imóvel 200' })}
-          ${field({ name: 'plan_code', label: 'Código na administradora', value: p.plan_code })}
+          ${field({ name: 'plan_code', label: 'Código do plano', value: p.plan_code, required: true, placeholder: 'Ex.: HS1', help: 'Identifica o plano na proposta e no simulador.' })}
           ${field({ name: 'category', label: 'Categoria', type: 'select', options: opts('categoria_credito'), value: p.category })}
-          ${p.id ? field({ name: 'active', label: 'Ativo', type: 'checkbox', value: p.active }) : ''}
+          ${field({ name: 'active', label: 'Plano ativo (aparece na proposta e no simulador)', type: 'checkbox', value: p.active ?? 1 })}
         </div>
         <h4>Taxas e prazo</h4><div class="grid three">
           ${field({ name: 'admin_fee_pct', label: 'Taxa de administração (%)', type: 'number', step: '0.01', min: 0, value: p.admin_fee_pct })}
@@ -132,6 +136,17 @@ export async function show(view, { params = {} } = {}) {
       },
     });
   on(view, 'click', '[data-act=new]', async () => (await form()) && load());
+  on(view, 'change', '[data-toggle]', async (e, c) => {
+    try {
+      await post('/api/planos', { id: Number(c.dataset.toggle), active: c.checked });
+      toast(c.checked ? 'Plano ativado: já aparece na proposta e no simulador.' : 'Plano desativado: deixa de aparecer em novas propostas.');
+      await refreshMeta();
+      load();
+    } catch (ex) {
+      c.checked = !c.checked;
+      toastError(ex);
+    }
+  });
   on(view, 'click', '[data-edit]', async (e, b) => (await form(rows.find((p) => p.id === Number(b.dataset.edit)))) && load());
   if (admin) bindOptionList(view, load);
   await load();

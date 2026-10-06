@@ -774,6 +774,9 @@ button.botao-whats:disabled { opacity: .7; cursor: progress; }
   .pdf-pagina { border: 0; box-shadow: none; }
 }
 
+
+/* Campo definido pelo plano cadastrado no CRM (só o plano "Outros" permite editar) */
+input.travado { opacity: .72; cursor: not-allowed; }
 </style>
 <div class="app">
 
@@ -1033,8 +1036,10 @@ button.botao-whats:disabled { opacity: .7; cursor: progress; }
 window.CONFIG_SIMULADOR = {
   // Endereço do CRM que recebe a proposta gerada (vazio = o mesmo servidor que abriu o simulador)
   crmUrl: '',
-  whatsappEspecialista: '',
-  planosUrl: '',
+  // Botão "Falar no WhatsApp" do PDF: WhatsApp da Vero Consórcios (51) 98912-1113
+  whatsappEspecialista: '5551989121113',
+  // Servido pelo CRM: administradoras e planos ativos da guia Planos (sessão do usuário). Na versão on-line, a lista abaixo.
+  planosUrl: window.MODO_ARTIFACT ? '' : '/api/simulador/planos',
   planos: [
     { id: 'EX-IMOVEL', exemplo: true, administradora: 'HS', nome: 'Imóvel 240 meses', categoria: 'imovel', creditoMinimo: 200000, prazo: 240, taxaAdm: 20, fundoReserva: 2, embutidoPct: 25, fixoPct: 50, indice: 'INCC' },
     { id: 'EX-VEICULO', exemplo: true, administradora: 'HS', nome: 'Veículo 100 meses', categoria: 'veiculo', creditoMinimo: 80000, prazo: 100, taxaAdm: 13, fundoReserva: 2, embutidoPct: 25, fixoPct: 50, indice: 'IPCA' }
@@ -2063,14 +2068,31 @@ window.LOGO_VERO = {
 
   // Planos cadastrados: vêm do CRM (CONFIG_SIMULADOR.planosUrl) ou da lista em js/config.js
   let planos = [];
-  function definirPlanos(lista) {
+  // Administradoras cadastradas no CRM (quando os planos vêm do CRM, só elas aparecem na seleção)
+  let admsCrm = null;
+  function definirPlanos(lista, adms) {
     planos = (Array.isArray(lista) ? lista : []).map(C.normalizarPlano).filter(Boolean);
+    if (Array.isArray(adms)) admsCrm = adms.map((a) => String(a.nome || a.name || a)).filter(Boolean);
   }
+  const PLANO_OUTROS = 'outros';
   const planoPorId = (id) => planos.find((x) => x.id === String(id)) || null;
+  /** Plano do CRM selecionado: taxas, fundo de reserva e índice seguem o plano (só "Outros" deixa editar). */
+  function travarPlano() {
+    const pl = estado && planoPorId(estado.plano.planoId);
+    const travar = !!(admsCrm && pl && !pl.exemplo);
+    [['#f-taxaAdm', pl && pl.taxaAdm], ['#f-fundoReserva', pl && pl.fundoReserva]].forEach(([sel, v]) => {
+      const el = $(sel);
+      if (!el) return;
+      const t = travar && C.isNum(v);
+      el.readOnly = t;
+      el.classList.toggle('travado', t);
+      el.title = t ? 'Definido pelo plano cadastrado. Para outras condições, escolha o plano "Outros".' : '';
+    });
+  }
 
   function preencherSelects() {
     $$('.sel-indice').forEach((s) => { s.innerHTML = Object.entries(C.INDICES).map(([k, v]) => '<option value="' + k + '">' + esc(v.nome) + '</option>').join(''); });
-    const adms = C.ADMINISTRADORAS.concat(planos.map((x) => x.administradora).filter((a) => !C.ADMINISTRADORAS.includes(a)));
+    const adms = admsCrm ? admsCrm.slice() : C.ADMINISTRADORAS.concat(planos.map((x) => x.administradora).filter((a) => !C.ADMINISTRADORAS.includes(a)));
     const atual = estado && estado.plano.administradora;
     if (atual && !adms.includes(atual)) adms.push(atual);
     $$('.sel-administradora').forEach((s) => { s.innerHTML = '<option value="">Selecione</option>' + adms.map((a) => '<option value="' + esc(a) + '">' + esc(a) + '</option>').join(''); });
@@ -2084,13 +2106,17 @@ window.LOGO_VERO = {
     const adm = estado ? estado.plano.administradora : '';
     const daAdm = planos.filter((x) => x.administradora === adm);
     let ops;
+    // Planos do CRM: os cadastrados (pelo código) e "Outros", com as condições livres, em toda administradora
+    const outros = admsCrm ? '<option value="' + PLANO_OUTROS + '">Outros (condições informadas pelo especialista)</option>' : '';
     if (!adm) ops = '<option value="">Selecione a administradora</option>';
-    else if (!daAdm.length) ops = '<option value="">Nenhum plano cadastrado</option>';
-    else ops = '<option value="">Selecione o plano</option>' + daAdm.map((x) => '<option value="' + esc(x.id) + '">' + esc(x.nome + (x.categoria ? ' · ' + C.CATEGORIAS[x.categoria].nome : '') + (x.exemplo ? ' (exemplo)' : '')) + '</option>').join('');
+    else if (!daAdm.length && !outros) ops = '<option value="">Nenhum plano cadastrado</option>';
+    else ops = '<option value="">Selecione o plano</option>' + daAdm.map((x) => '<option value="' + esc(x.id) + '">' + esc(x.nome + (x.categoria ? ' · ' + C.CATEGORIAS[x.categoria].nome : '') + (x.exemplo ? ' (exemplo)' : '')) + '</option>').join('') + outros;
     sel.innerHTML = ops;
-    sel.disabled = !daAdm.length;
-    sel.value = estado && daAdm.some((x) => x.id === estado.plano.planoId) ? estado.plano.planoId : '';
+    sel.disabled = !daAdm.length && !outros;
+    const atual = estado ? estado.plano.planoId : '';
+    sel.value = atual && (atual === PLANO_OUTROS ? !!outros : daAdm.some((x) => x.id === atual)) ? atual : '';
     notaPlano();
+    travarPlano();
   }
 
   function notaPlano() {
@@ -2114,7 +2140,7 @@ window.LOGO_VERO = {
       const resp = await fetch(url, { headers: { Accept: 'application/json' } });
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       const dados = await resp.json();
-      definirPlanos(Array.isArray(dados) ? dados : dados && dados.planos);
+      definirPlanos(Array.isArray(dados) ? dados : dados && dados.planos, dados && dados.administradoras);
       return true;
     } catch (e) {
       avisar('Não foi possível buscar os planos no CRM; usando os planos do js/config.js.');
@@ -2123,6 +2149,7 @@ window.LOGO_VERO = {
   }
 
   function selecionarPlano(id) {
+    if (String(id) === PLANO_OUTROS && admsCrm) { estado.plano.planoId = PLANO_OUTROS; estado.plano.creditoMinimo = null; return true; }
     const pl = planoPorId(id);
     if (!pl) { estado.plano.planoId = ''; estado.plano.creditoMinimo = null; return false; }
     C.aplicarPlanoCadastrado(estado, pl);
@@ -2200,7 +2227,8 @@ window.LOGO_VERO = {
         preencherPlanos();
       } else if (el.dataset.k === 'plano.planoId') {
         // Plano cadastrado: crédito mínimo, prazo, taxas, lances e índice preenchidos automaticamente
-        if (selecionarPlano(estado.plano.planoId)) avisar('Plano aplicado: crédito, prazo, taxas, lances e índice atualizados.');
+        if (estado.plano.planoId === PLANO_OUTROS && selecionarPlano(PLANO_OUTROS)) avisar('Plano "Outros": informe taxa de administração, fundo de reserva, prazo e demais condições.');
+        else if (selecionarPlano(estado.plano.planoId)) avisar('Plano aplicado: crédito, prazo, taxas, lances e índice atualizados.');
         escreverCampos();
         preencherPlanos();
       }
@@ -2774,8 +2802,7 @@ window.LOGO_VERO = {
     // Página 2: panorama de venda e alavancagem
     const f = (x) => (C.isNum(x) ? C.fmtBRL(x) : '—');
     const cor = (x) => (C.isNum(x) ? (x >= 0 ? 'positivo' : 'negativo') : '');
-    let p2 = '<header class="pdf-topo menor"><p class="eyebrow">Cenários de venda</p><h1>Panorama de <span class="acento">Alavancagem</span></h1>' +
-      '<p class="pdf-ident">Venda da carta contemplada estimada em ' + C.REGRAS.vendaPct + '% do crédito disponível. Aporte: parcelas pagas até o mês.</p></header>';
+    let p2 = '<header class="pdf-topo menor"><p class="eyebrow">Cenários de venda</p><h1>Panorama de <span class="acento">Alavancagem</span></h1></header>';
     r.alavancagem.forEach((a) => {
       p2 += '<div class="pdf-bloco">' + pdfTitulo('Alavancagem via', a.nome) +
         '<table class="pdf-tab"><thead><tr><th>Mês</th><th>Crédito</th><th>Parcela atual</th><th>Aporte</th><th>Vl. venda</th><th>Lucro (R$)</th><th>Rentab. a.m.</th></tr></thead><tbody>' +
@@ -2804,7 +2831,7 @@ window.LOGO_VERO = {
     // Bônus Fidelidade (quando habilitado): abaixo da aquisição e antes do contato com o especialista
     if (fid.length) {
       p3 += '<div class="pdf-bloco pdf-fid">' + pdfTitulo('Bônus', 'Fidelidade') +
-        '<p class="pdf-ident">Extra · Lance 100% embutido liberado a partir da parcela de cada opção, sem recursos próprios; percentual sobre o crédito atualizado no mês da contemplação.</p>' +
+        '<p class="pdf-ident">Extra · Lance 100% embutido, sem recursos próprios, liberado a partir do mês indicado em cada quadro; percentual sobre o crédito atualizado no mês da contemplação. Em caso de inadimplência, a contagem do período é reiniciada.</p>' +
         '<div class="pdf-grade c' + fid.length + '">' + fid.map((x) => pdfCartaoForma(x.nucleo, 'fidelidade', x.nome,
         'A partir da ' + (C.isNum(x.parcela) ? x.parcela + 'ª' : '—') + ' parcela · ' + (C.isNum(x.pct) ? C.fmtNum(x.pct, Number.isInteger(x.pct) ? 0 : 2) + '%' : '—') + ' de embutido')).join('') + '</div></div>';
     }
@@ -2812,7 +2839,8 @@ window.LOGO_VERO = {
     const msg = encodeURIComponent('Olá! Recebi a proposta de consórcio' + (p.lead ? ' de ' + p.lead : '') + ' e gostaria de conversar.');
     p3 += '<div class="pdf-cta"><div><h3>Vamos dar o próximo passo?</h3><p>Fale com o especialista para tirar dúvidas e seguir com a proposta.</p></div>' +
       (wa ? '<a class="pdf-botao" href="https://wa.me/' + wa + '?text=' + msg + '">Falar no WhatsApp</a>' : '<span class="pdf-botao inativo">Falar no WhatsApp</span>') + '</div>';
-    p3 += '<div class="pdf-disclaimer"><b>Importante</b><p>' + esc(AVISO) + ' Mês de contemplação projetado, sem garantia de ocorrência. Valores de venda e CET são estimativas baseadas nas premissas informadas e no índice de reajuste estimado.</p></div>';
+    p3 += '<div class="pdf-disclaimer"><b>Importante</b><p>' + esc(AVISO) + ' Mês de contemplação projetado, sem garantia de ocorrência. Valores de venda e CET são estimativas baseadas nas premissas informadas e no índice de reajuste estimado.</p>' +
+      '<p>O cancelamento em até 7 dias da data de pagamento e até a primeira assembleia (o que ocorrer primeiro) garante o reembolso integral. As simulações variam de acordo com as vagas dos grupos cotados. O indexador e os reajustes das parcelas podem variar de acordo com as projeções futuras; as projeções foram feitas com base nos valores atuais.</p></div>';
 
     const html = [p1, p2, p3].map((c, i) => pdfPagina(i + 1, total, s, c)).join('');
     return { html, data, semWhatsapp: !wa };
@@ -2833,13 +2861,14 @@ window.LOGO_VERO = {
     if (!lead) { avisar('Informe o nome completo do cliente antes de gerar a proposta.'); $('#f-lead').focus(); return; }
     const foneCliente = numeroWhatsapp(s.contato && s.contato.cliente);
     if (foneCliente.length < 12) { avisar('Informe o contato (WhatsApp) do cliente com DDD antes de gerar a proposta.'); $('#f-contato').focus(); return; }
+    if (crmToken && admsCrm && (!s.plano.administradora || !s.plano.planoId)) { avisar('Selecione a administradora e o plano cadastrado (ou "Outros") antes de gerar a proposta.'); const sel = $(s.plano.administradora ? '#f-plano' : '#f-administradora'); if (sel) sel.focus(); return; }
     const erros = r.validacoes.filter((v) => v.nivel === 'erro');
     const prop = montarProposta(s, r);
     $('#proposta').innerHTML = prop.html;
     const nota = (erros.length ? '<p class="aviso">Há ' + erros.length + ' erro(s) de preenchimento. Os itens afetados aparecem como "Não calculado".</p>' : '') +
       (prop.semWhatsapp ? '<p class="aviso">O botão "Falar no WhatsApp" da página 3 está sem número: informe o WhatsApp do especialista em js/config.js.</p>' : '');
-    const envio = '<div class="envio"><div><b>Enviar ao cliente</b><p>Clique em <b>Gerar proposta</b>: o PDF é baixado e a mensagem para o WhatsApp de ' + esc(s.contato.cliente) + ' fica pronta para copiar.</p></div>' +
-      '<button type="button" class="botao-whats" data-gerar-proposta>Gerar proposta</button></div>' +
+    const envio = '<div class="envio"><div><b>Enviar ao cliente</b><p>Clique em <b>' + ROTULO_GERAR + '</b>: o PDF é baixado' + (crmToken ? ', a proposta ' + esc(propostaCrm) + ' é atualizada no CRM' : '') + ' e a mensagem para o WhatsApp de ' + esc(s.contato.cliente) + ' fica pronta para copiar.</p></div>' +
+      '<button type="button" class="botao-whats" data-gerar-proposta>' + ROTULO_GERAR + '</button></div>' +
       '<div class="mensagem-envio" hidden><div class="mensagem-topo"><b>Mensagem para o WhatsApp</b><button type="button" class="botao-copiar" data-copiar-msg>Copiar mensagem</button></div>' +
       '<textarea readonly rows="12" aria-label="Mensagem para o WhatsApp">' + esc(mensagemWhatsapp(s, r)) + '</textarea></div>';
     const fundo = janela('<h2>Prévia da proposta</h2>' + nota + envio + '<div class="previa">' + prop.html + '</div>', [{ texto: 'Fechar' }], true);
@@ -2863,7 +2892,7 @@ window.LOGO_VERO = {
         else avisar('Não foi possível baixar o PDF nesta versão on-line. Use o arquivo index.html do simulador.');
       }
       botao.disabled = false;
-      botao.textContent = 'Gerar proposta';
+      botao.textContent = ROTULO_GERAR;
       copiarMensagem(texto, true);
     });
   }
@@ -2880,6 +2909,7 @@ window.LOGO_VERO = {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           token: crmToken, proposta: propostaCrm, categoria: p.categoria, administradora: p.administradora || null,
+          plano_id: p.planoId && p.planoId !== PLANO_OUTROS ? p.planoId : null, plano_outros: p.planoId === PLANO_OUTROS,
           credito: v(R.credito), prazo: v(R.prazo), parcela_inicial: v(R.parcelaInicial),
           taxa_adm_pct: C.isNum(Number(p.taxaAdm)) ? Number(p.taxaAdm) : null, fundo_reserva_pct: C.isNum(Number(p.fundoReserva)) ? Number(p.fundoReserva) : null,
           seguro: !!p.seguroAtivo, seguro_pct: p.seguroPct, adesao: !!p.adesaoAtiva, adesao_pct: p.adesaoPct, adesao_meses: p.adesaoMeses,
@@ -3034,6 +3064,8 @@ window.LOGO_VERO = {
   let planoCrm = '';
   // Proposta iniciada no CRM (Gerar proposta): o PDF e os valores voltam para o CRM automaticamente
   var crmToken = '', propostaCrm = '';
+  // Nova versão da proposta (CRM › Criar nova versão): abre com as condições da versão anterior e o botão "Atualizar proposta"
+  var ROTULO_GERAR = 'Gerar proposta', prefillCrm = null;
   // Menu Simulador do CRM (?modo=simulacao): só simula; o botão de gerar proposta fica inativo
   var modoSimulacao = false;
   definirPlanos((window.CONFIG_SIMULADOR || {}).planos);
@@ -3046,6 +3078,11 @@ window.LOGO_VERO = {
     crmToken = pegar('crm_token');
     propostaCrm = pegar('proposta');
     planoCrm = pegar('plano');
+    if (pegar('acao').toLowerCase() === 'atualizar') ROTULO_GERAR = 'Atualizar proposta';
+    const pf = {};
+    [['adm', 'administradora'], ['credito', 'credito'], ['prazo', 'prazo'], ['taxa_adm', 'taxaAdm'], ['fundo_reserva', 'fundoReserva'], ['mes_contemplacao', 'mesContemplacao'],
+      ['seguro_pct', 'seguroPct'], ['adesao_pct', 'adesaoPct'], ['adesao_meses', 'adesaoMeses'], ['categoria', 'categoria']].forEach(([k, campo]) => { const v = pegar(k); if (v) pf[campo] = v; });
+    if (Object.keys(pf).length) prefillCrm = pf;
     let fone = pegar('contato').replace(/\D/g, '');
     if (fone.length > 11 && fone.startsWith('55')) fone = fone.slice(2);
     if (nome) estado.plano.lead = nome.slice(0, 80);
@@ -3064,6 +3101,24 @@ window.LOGO_VERO = {
   document.querySelectorAll('img[data-logo]').forEach((img) => { img.src = LOGO[img.dataset.logo] || ''; });
   preencherSelects();
   let planoAplicado = aplicarPlanoCrm(!comUrlCrm);
+  /** Condições da versão anterior (nova versão pelo CRM): aplicadas depois do plano, sem mudar o que o plano define. */
+  const aplicarPrefill = () => {
+    if (!prefillCrm) return;
+    const p = estado.plano;
+    const n = (v) => Number(String(v).replace(',', '.'));
+    if (prefillCrm.categoria && C.CATEGORIAS[prefillCrm.categoria]) p.categoria = prefillCrm.categoria;
+    if (prefillCrm.administradora && !p.administradora) p.administradora = prefillCrm.administradora;
+    for (const k of ['credito', 'prazo', 'mesContemplacao']) if (C.isNum(n(prefillCrm[k]))) p[k] = n(prefillCrm[k]);
+    const pl = planoPorId(p.planoId);
+    for (const k of ['taxaAdm', 'fundoReserva']) if (C.isNum(n(prefillCrm[k])) && !(pl && C.isNum(pl[k]))) p[k] = n(prefillCrm[k]);
+    if (C.isNum(n(prefillCrm.seguroPct))) { p.seguroAtivo = true; p.seguroPct = n(prefillCrm.seguroPct); }
+    if (C.isNum(n(prefillCrm.adesaoPct))) { p.adesaoAtiva = true; p.adesaoPct = n(prefillCrm.adesaoPct); if (C.isNum(n(prefillCrm.adesaoMeses))) p.adesaoMeses = n(prefillCrm.adesaoMeses); }
+  };
+  aplicarPrefill();
+  if (ROTULO_GERAR !== 'Gerar proposta') {
+    const bPdf0 = document.querySelector('[data-acao="pdf"]');
+    if (bPdf0) bPdf0.lastChild.textContent = 'Atualizar proposta (PDF)';
+  }
   ligarMenu();
   if (modoSimulacao) {
     const bPdf = document.querySelector('[data-acao="pdf"]');
@@ -3084,6 +3139,7 @@ window.LOGO_VERO = {
   carregarPlanosCrm().then((ok) => {
     if (!ok) { if (comUrlCrm && !planoAplicado) aplicarPlanoCrm(true); return; }
     if (!planoAplicado && planoCrm) { planoAplicado = aplicarPlanoCrm(true); if (planoAplicado) avisar('Plano preenchido pelo CRM.'); }
+    aplicarPrefill();
     preencherSelects();
     escreverCampos();
     atualizar();

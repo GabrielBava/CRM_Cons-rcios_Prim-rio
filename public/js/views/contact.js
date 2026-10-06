@@ -9,6 +9,7 @@ import {
 } from '../forms.js';
 import { nextActionCell } from './leads.js';
 import * as RT from './record-tabs.js';
+import { scheduleR1Dialog, meetingLinks, R1_STAGES } from '../meeting.js';
 
 const TABS = [
   ['resumo', 'Resumo'],
@@ -51,6 +52,7 @@ export async function show(view, { id, sub }) {
     const openOpps = c.opportunities.filter((o) => ['aberta', 'pausada'].includes(o.status));
     const referral = c.referred_by || c.origin === 'indicacao';
     const w = can.write() && !c.anonymized_at;
+    const r1Opp = openOpps.find((o) => o.status === 'aberta' && R1_STAGES.includes(o.stage_key));
     render(view, html`<div class="page">
       <div class="record-head">
         <div class="crumbs"><a href="#/${base}">${c.relationship === 'cliente' ? 'Clientes' : 'CRM › Leads'}</a> / ${c.code}</div>
@@ -67,6 +69,7 @@ export async function show(view, { id, sub }) {
         ${c.optouts.length || c.finance_summary.qtd_atrasado || c.anonymized_at ? html`<div class="badges">${optoutBadge(c.optouts)} ${c.finance_summary.qtd_atrasado ? badge(`Financeiro: ${c.finance_summary.qtd_atrasado} em atraso`, 'danger') : ''} ${c.anonymized_at ? badge('Anonimizado', 'danger') : ''}</div>` : ''}
         ${w
           ? html`<div class="actions record-actions">
+            ${r1Opp ? html`<button class="btn r1" data-act="r1-schedule" title="Agenda a reunião de diagnóstico no CRM e no Google Agenda">Agendar R1</button>` : ''}
             <button class="btn primary" data-act="activity">Registrar atividade</button>
             <button class="btn" data-act="task">Nova tarefa</button>
             <button class="btn" data-act="opp">Novo negócio</button>
@@ -104,7 +107,15 @@ export async function show(view, { id, sub }) {
     if (await activityForm(c, { opportunity_id: b.dataset.opp, type: b.dataset.type })) reload();
   });
   on(view, 'click', '[data-act=task]', async (e, b) => {
+    if (b.dataset.type === 'reuniao') {
+      if (await scheduleR1Dialog({ contactId: c.id, oppId: b.dataset.opp })) reload();
+      return;
+    }
     if (await taskForm({ contact: c, opportunity_id: b.dataset.opp, type: b.dataset.type })) reload();
+  });
+  on(view, 'click', '[data-act=r1-schedule]', async () => {
+    const o = c.opportunities.find((x) => x.status === 'aberta' && R1_STAGES.includes(x.stage_key));
+    if (await scheduleR1Dialog({ contactId: c.id, oppId: o?.id, moveToR1: ['qualificado', 'r1_bolo'].includes(o?.stage_key) })) reload();
   });
   on(view, 'click', '[data-act=opp]', async () => {
     const r = await opportunityForm(c);
@@ -382,7 +393,7 @@ const TAB_RENDER = {
 
   async tarefas(box, c, reload) {
     render(box, html`<section class="card">
-      <div class="section-head"><h3>Tarefas e retornos</h3>${can.write() ? html`<span><button class="btn" data-act="task">+ Nova tarefa</button> <button class="btn" data-act="task" data-type="reuniao">+ Agendar reunião</button></span>` : ''}</div>
+      <div class="section-head"><h3>Tarefas e retornos</h3>${can.write() ? html`<span><button class="btn" data-act="task">+ Nova tarefa</button> <button class="btn r1" data-act="task" data-type="reuniao">+ Agendar R1</button></span>` : ''}</div>
       ${tasksTable(c.tasks)}</section>`);
     bindTasks(box, c.tasks, reload);
   },
@@ -409,7 +420,7 @@ const TAB_RENDER = {
         <p class="hint">"Gerar proposta" abre o simulador com o nome completo e o contato do cliente preenchidos. Ao gerar o PDF, a proposta é atualizada aqui sozinha (valores e PDF em Documentos); use "Registrar proposta gerada" só para propostas feitas fora do simulador.</p>
         ${table(
           [
-            { label: 'Código', render: (p) => html`<a href="#" data-prop="${p.id}">${p.code}</a> <small>v${p.version}</small>` },
+            { label: 'Código', render: (p) => html`<a href="#" data-prop="${p.id}">${String(p.code).replace(/-v\d+$/, '')}</a> <small>v${p.version}</small>` },
             { label: 'Oportunidade', render: (p) => p.opportunity_code },
             { label: 'Produto', render: (p) => p.product_name || '—' },
             { label: 'Crédito', render: (p) => fmtMoney(p.credit_value), cls: 'num' },
@@ -731,7 +742,7 @@ export function tasksTable(tasks, { showContact = false } = {}) {
   return table(
     [
       { label: 'Prazo', render: (t) => html`<span class="${t.status === 'pendente' && new Date(t.due_at) < new Date() ? 'overdue' : ''}">${fmtDateTime(t.due_at)}<br><small>${relTime(t.due_at)}</small></span>` },
-      { label: 'Tarefa', render: (t) => html`${t.priority && t.priority !== 'normal' ? html`${badge(t.priority === 'urgente' ? 'Urgente' : 'Alta', t.priority === 'urgente' ? 'danger' : 'warn')} ` : ''}<strong>${t.title}</strong><br><small>${K('task_types', t.type)}${t.opportunity_code ? ` · ${t.opportunity_code}` : ''}</small>${t.notes ? html`<br><small class="muted">${t.notes}</small>` : ''}` },
+      { label: 'Tarefa', render: (t) => html`${t.priority && t.priority !== 'normal' ? html`${badge(t.priority === 'urgente' ? 'Urgente' : 'Alta', t.priority === 'urgente' ? 'danger' : 'warn')} ` : ''}<strong>${t.title}</strong><br><small>${K('task_types', t.type)}${t.opportunity_code ? ` · ${t.opportunity_code}` : ''}${t.ends_at ? ` · até ${new Date(t.ends_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : ''}</small>${t.notes ? html`<br><small class="muted">${t.notes}</small>` : ''}${t.status === 'pendente' ? html`<br>${meetingLinks(t)}` : ''}` },
       ...(showContact ? [{ label: 'Cadastro', render: (t) => (t.contact_id ? html`<a href="#/leads/${t.contact_id}">${t.contact_name}</a> ${optoutBadge(t.contact_optouts)}` : '—') }] : []),
       { label: 'Responsável', render: (t) => t.assigned_name || '—' },
       { label: 'Status', render: (t) => html`${badge(t.status === 'pendente' ? 'Pendente' : t.status === 'concluida' ? 'Concluída' : 'Cancelada', t.status === 'pendente' ? 'warn' : t.status === 'concluida' ? 'ok' : 'muted')}${t.outcome ? html`<br><small>${K('meeting_outcomes', t.outcome)}</small>` : ''}` },

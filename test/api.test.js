@@ -27,6 +27,12 @@ const login = async (who, email, password) => {
   sessions[who] = r.cookie.split(';')[0];
 };
 const integ = (token) => ({ Authorization: `Bearer ${token}` });
+/** Ficha do cliente: confirma os 4 últimos dígitos do celular e devolve a chave de acesso. */
+async function fichaKey(token, phone) {
+  const r = await call(null, 'POST', '/api/publico/ficha/verificar', { token, digits: String(phone).replace(/\D/g, '').slice(-4) });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  return r.data.key;
+}
 
 before(async () => {
   ({ server, db: appDb } = createApp({ dbFile: ':memory:' }));
@@ -41,7 +47,7 @@ before(async () => {
     ['Cons 2', 'c2@t.com', 'consultor', null],
     ['Leitor', 'l@t.com', 'leitura', team.data.id],
   ]) {
-    const u = await call('admin', 'POST', '/api/usuarios', { name, email, role, team_id, password: 'senha1234', dialer_agent_ref: email === 'c1@t.com' ? 'ramal-1' : undefined });
+    const u = await call('admin', 'POST', '/api/usuarios', { name, email, role, team_id, password: 'senha1234', require_password_change: false, onboarding: false, dialer_agent_ref: email === 'c1@t.com' ? 'ramal-1' : undefined });
     assert.equal(u.status, 200, JSON.stringify(u.data));
   }
   await login('gestor', 'gestor@t.com', 'senha1234');
@@ -391,13 +397,26 @@ test('link do cliente: atualiza dados externos, recebe documentos e pode ser rev
   const l = await call('c1', 'POST', `/api/cadastros/${c.data.id}/link-cliente`);
   assert.equal(l.status, 200);
   const tok = l.data.token;
-  const form = await call(null, 'GET', `/api/publico/ficha?token=${encodeURIComponent(tok)}`);
+  // Antes dos 4 dígitos do celular: só a saudação, nenhum dado
+  const gate = await call(null, 'GET', `/api/publico/ficha?token=${encodeURIComponent(tok)}`);
+  assert.equal(gate.status, 200);
+  assert.equal(gate.data.needs_verification, true);
+  assert.equal(gate.data.greeting, 'Cliente Link');
+  assert.equal(gate.data.values, undefined, 'nenhum dado antes da verificação');
+  assert.equal((await call(null, 'POST', '/api/publico/ficha', { token: tok, values: { rg: '1' } })).status, 401, 'não grava sem a verificação');
+  const wrong = await call(null, 'POST', '/api/publico/ficha/verificar', { token: tok, digits: '1234' });
+  assert.equal(wrong.status, 400);
+  assert.match(wrong.data.error, /4 tentativa/);
+  const key = await fichaKey(tok, '11 95555-0002');
+  const form = await call(null, 'GET', `/api/publico/ficha?token=${encodeURIComponent(tok)}`, undefined, { 'X-Ficha-Key': key });
   assert.equal(form.status, 200);
   assert.equal(form.data.values.name, 'Cliente Link');
   assert.ok(form.data.values.initial_notes === undefined, 'só campos externos');
-  const sub = await call(null, 'POST', '/api/publico/ficha', { token: tok, values: { rg: '998877', mother_name: 'Mãe do Cliente', owner_id: 1 }, address: { cep: '20040020', street: 'Av. Rio Branco', number: '10', district: 'Centro', city: 'Rio de Janeiro', state: 'RJ' } });
+  assert.ok(form.data.required.fields.includes('doc'));
+  assert.deepEqual(form.data.documents.map((x) => x.type), ['identificacao', 'comprovante_endereco'], 'só identificação e comprovante de endereço');
+  const sub = await call(null, 'POST', '/api/publico/ficha', { token: tok, key, values: { rg: '998877', mother_name: 'Mãe do Cliente', owner_id: 1 }, address: { cep: '20040020', street: 'Av. Rio Branco', number: '10', district: 'Centro', city: 'Rio de Janeiro', state: 'RJ' } });
   assert.equal(sub.status, 200, JSON.stringify(sub.data));
-  const up = await call(null, 'POST', '/api/publico/ficha/anexo', { token: tok, doc_type: 'identificacao', filename: 'rg.pdf', content_base64: PDF });
+  const up = await call(null, 'POST', '/api/publico/ficha/anexo', { token: tok, key, doc_type: 'identificacao', filename: 'rg.jpg', mime: 'image/jpeg', content_base64: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 74, 70, 73, 70]).toString('base64') });
   assert.equal(up.status, 200);
   const d = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data;
   assert.equal(d.rg, '998877');
@@ -457,8 +476,9 @@ test('link de cadastro: um ativo por vez, registra acessos e é revogado ao inat
   const l = await call('c1', 'POST', `/api/cadastros/${id}/link-cliente`);
   assert.equal(l.status, 200);
   assert.equal((await call('c1', 'POST', `/api/cadastros/${id}/link-cliente`)).status, 409, 'não gera outro com um ativo');
-  await call(null, 'GET', `/api/publico/ficha?token=${encodeURIComponent(l.data.token)}`);
-  await call(null, 'GET', `/api/publico/ficha?token=${encodeURIComponent(l.data.token)}`);
+  const k1 = await fichaKey(l.data.token, '11 95555-0101');
+  await call(null, 'GET', `/api/publico/ficha?token=${encodeURIComponent(l.data.token)}`, undefined, { 'X-Ficha-Key': k1 });
+  await call(null, 'GET', `/api/publico/ficha?token=${encodeURIComponent(l.data.token)}`, undefined, { 'X-Ficha-Key': k1 });
   let d = (await call('c1', 'GET', `/api/cadastros/${id}`)).data;
   assert.equal(d.client_link.token, l.data.token, 'a equipe pode copiar o link ativo novamente');
   assert.equal(d.client_link.access_count, 1, 'recarregar em seguida não conta novo acesso');
@@ -496,7 +516,8 @@ test('documentos: equipe aprova direto, cliente aguarda validação, reprovaçã
   const foreignOpp = (await call('c2', 'GET', `/api/cadastros/${other.data.id}`)).data.opportunities[0].id;
   assert.equal((await call('c1', 'POST', `/api/cadastros/${id}/anexos`, { doc_type: 'outro', filename: 'x.pdf', content_base64: PDF, opportunity_ids: [foreignOpp] })).status, 400);
   const l = await call('c1', 'POST', `/api/cadastros/${id}/link-cliente`);
-  await call(null, 'POST', '/api/publico/ficha/anexo', { token: l.data.token, doc_type: 'identificacao', filename: 'rg.pdf', content_base64: PDF });
+  const lk = await fichaKey(l.data.token, d.phone1 || d.whatsapp);
+  await call(null, 'POST', '/api/publico/ficha/anexo', { token: l.data.token, key: lk, doc_type: 'identificacao', filename: 'rg.pdf', content_base64: PDF });
   d = (await call('c1', 'GET', `/api/cadastros/${id}`)).data;
   const fromTeam = d.attachments.find((a) => a.id === team.data.id);
   const fromClient = d.attachments.find((a) => a.source === 'cliente');
@@ -510,16 +531,19 @@ test('documentos: equipe aprova direto, cliente aguarda validação, reprovaçã
   assert.equal((await call('c1', 'PATCH', `/api/anexos/${fromClient.id}`, { status: 'recusado', notes: 'Foto ilegível' })).status, 200);
   d = (await call('c1', 'GET', `/api/cadastros/${id}`)).data;
   assert.equal(d.sale_checklist.items.find((i) => i.key === 'doc:identificacao').status, 'recusado');
-  const again = await call(null, 'POST', '/api/publico/ficha/anexo', { token: l.data.token, doc_type: 'identificacao', filename: 'rg2.pdf', content_base64: PDF });
+  const again = await call(null, 'POST', '/api/publico/ficha/anexo', { token: l.data.token, key: lk, doc_type: 'identificacao', filename: 'rg2.pdf', content_base64: PDF });
   assert.equal(again.status, 200);
   const newest = (await call('c1', 'GET', `/api/cadastros/${id}`)).data.attachments.find((a) => a.filename === 'rg2.pdf');
   assert.equal((await call('c1', 'PATCH', `/api/anexos/${newest.id}`, { status: 'aprovado' })).status, 200);
   d = (await call('c1', 'GET', `/api/cadastros/${id}`)).data;
   assert.equal(d.sale_checklist.items.find((i) => i.key === 'doc:identificacao').ok, true);
+  // Documentos obrigatórios: só identificação e comprovante de endereço
+  assert.deepEqual(d.sale_checklist.items.filter((i) => i.group === 'Documentos').map((i) => i.key), ['doc:identificacao', 'doc:comprovante_endereco']);
   // vencido não conta
-  await call('c1', 'POST', `/api/cadastros/${id}/anexos`, { doc_type: 'comprovante_renda', filename: 'renda.pdf', content_base64: PDF, valid_until: '2020-01-01' });
+  const old = d.attachments.find((a) => a.id === team.data.id);
+  assert.equal((await call('c1', 'PATCH', `/api/anexos/${old.id}`, { valid_until: '2020-01-01' })).status, 200);
   d = (await call('c1', 'GET', `/api/cadastros/${id}`)).data;
-  assert.equal(d.sale_checklist.items.find((i) => i.key === 'doc:comprovante_renda').status, 'vencido');
+  assert.equal(d.sale_checklist.items.find((i) => i.key === 'doc:comprovante_endereco').status, 'vencido');
 });
 
 test('pós-venda: pesquisa NPS por link com histórico, cancelamento justificado e estratégia de lance', async () => {
@@ -590,20 +614,16 @@ test('funil: passagem sequencial com critérios de entrada; voltar exige motivo;
   const skip = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('negociacao').id });
   assert.equal(skip.status, 400);
   assert.match(skip.data.error, /pular etapas/);
-  // Tentativa de contato exige registro de tentativa
-  const t1 = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('tentativa').id });
-  assert.equal(t1.status, 400);
-  assert.ok(t1.data.details.missing.some((m) => m.key === 'tentativa_registrada'));
+  // Lead → Tentativa de contato: sem restrição
   const crit = await call('c1', 'GET', `/api/oportunidades/${opp.id}/criterios`);
   assert.equal(crit.data.next_stage.key, 'tentativa');
-  assert.equal(crit.data.criteria[0].ok, false);
-  const act = await call('c1', 'POST', '/api/atividades', { contact_id: c.data.id, opportunity_id: opp.id, type: 'ligacao_realizada', result: 'nao_atendida' });
-  assert.equal(act.status, 200, JSON.stringify(act.data));
+  assert.equal(crit.data.criteria.length, 0);
   assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('tentativa').id })).status, 200);
-  // Qualificado exige conversa efetiva e qualificação
+  // Lead qualificado exige objetivo, categoria de interesse, crédito desejado e prioridade (curto, médio ou longo prazo)
   const q = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('qualificado').id });
   assert.equal(q.status, 400);
-  assert.deepEqual(q.data.details.missing.map((m) => m.key).sort(), ['contato_efetivo', 'qualificacao']);
+  assert.deepEqual(q.data.details.missing.map((m) => m.key), ['qualificacao']);
+  assert.match(q.data.details.missing[0].label, /objetivo, categoria de interesse, crédito desejado e prioridade/);
   // Voltar exige motivo
   assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('lead').id })).status, 400);
   assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('lead').id, reason: 'Registrado por engano' })).status, 200);
@@ -614,6 +634,149 @@ test('funil: passagem sequencial com critérios de entrada; voltar exige motivo;
   assert.equal(f.status, 200, JSON.stringify(f.data));
   // Nutrição exige motivo e data de retorno
   assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('nutricao').id })).status, 400);
+});
+
+test('funil: Prospect vai direto para Tentativa; R1 bolo só a partir da R1; R1 agendada pelo pop-up move o negócio', async () => {
+  const stages = (await call('c1', 'GET', '/api/meta')).data.stages;
+  const st = (k) => stages.find((s) => s.key === k);
+  assert.ok(st('r1_bolo'), 'coluna R1 bolo existe');
+  assert.ok(st('r1_bolo').position > st('r1').position && st('r1_bolo').position < st('negociacao').position, 'R1 bolo fica entre R1 e Negociação');
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Prospect Direto', phone1: '11 94444-1010', origin: 'indicacao', relationship: 'prospect' });
+  const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
+  assert.equal(opp.stage_id, st('prospect').id);
+  assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('tentativa').id })).status, 200, 'Prospect → Tentativa sem restrição');
+  // R1 bolo só a partir da R1
+  const bolo1 = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('r1_bolo').id });
+  assert.equal(bolo1.status, 400);
+  assert.match(bolo1.data.error, /Só negócios em "R1"/);
+  await call('c1', 'PATCH', `/api/oportunidades/${opp.id}`, { objective_type: 'aquisicao', credit_category: 'imovel', credit_value: 300000, urgency: 'curto' });
+  assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('qualificado').id })).status, 200);
+  // Sem R1 agendada não entra em R1
+  assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('r1').id })).status, 400);
+  // Pop-up "Agendar R1": cliente, e-mail, horário (30 min) e move para R1
+  const ctx = await call('c1', 'GET', `/api/r1/contexto?contact_id=${c.data.id}`);
+  assert.equal(ctx.status, 200, JSON.stringify(ctx.data));
+  assert.equal(ctx.data.title, '[R1] Prospect Direto / Vero Consórcios');
+  assert.equal(ctx.data.duration_min, 30);
+  assert.equal(ctx.data.google.configured, false);
+  const start = new Date(Date.now() + 2 * 86400000);
+  start.setUTCHours(17, 0, 0, 0);
+  const bad = await call('c1', 'POST', '/api/r1/agendar', { contact_id: c.data.id, start_at: start.toISOString(), end_at: start.toISOString() });
+  assert.equal(bad.status, 400, 'término depois do início');
+  const r = await call('c1', 'POST', '/api/r1/agendar', { contact_id: c.data.id, opportunity_id: opp.id, start_at: start.toISOString(), end_at: new Date(start.getTime() + 30 * 60000).toISOString(), email: 'prospect.direto@exemplo.com', video: true, move_to_r1: true });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal(r.data.moved, true);
+  assert.equal(r.data.google.synced, false);
+  assert.equal(r.data.google.reason, 'nao_configurado');
+  assert.match(r.data.calendar_link, /^https:\/\/calendar\.google\.com\/calendar\/render\?action=TEMPLATE/);
+  assert.match(r.data.calendar_link, /add=prospect.direto%40exemplo.com/);
+  const after = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data;
+  assert.equal(after.email, 'prospect.direto@exemplo.com', 'e-mail informado no agendamento completa o cadastro');
+  assert.equal(after.opportunities[0].stage_id, st('r1').id);
+  const task = after.tasks.find((t) => t.id === r.data.task_id);
+  assert.equal(task.type, 'reuniao');
+  assert.equal(Date.parse(task.ends_at) - Date.parse(task.due_at), 30 * 60000);
+  // Modelo da R1 em HTML: nome, foto e contato do especialista + nome do cliente
+  await call('c1', 'PATCH', '/api/perfil', { whatsapp: '51 98912-1113', job_title: 'Especialista em consórcios' });
+  const page = await fetch(`${base}/api/r1/modelo?task_id=${r.data.task_id}`, { headers: { Cookie: sessions.c1 } });
+  assert.equal(page.status, 200);
+  assert.match(page.headers.get('content-type'), /text\/html/);
+  const htmlText = await page.text();
+  assert.match(htmlText, /Cons 1/);
+  assert.match(htmlText, /Prospect Direto/);
+  assert.match(htmlText, /\(51\) 98912-1113/);
+  assert.match(htmlText, /https:\/\/wa\.me\/5551989121113/);
+  assert.match(htmlText, /data:image\/svg\+xml;base64/, 'sem foto: iniciais');
+  assert.doesNotMatch(htmlText, /\{\{especialista_/);
+  const js = await call('c1', 'GET', `/api/r1/modelo?task_id=${r.data.task_id}&formato=json`);
+  assert.equal(js.data.specialist, 'Cons 1');
+  // Modelo personalizado pelo administrador
+  assert.equal((await call('c1', 'PUT', '/api/r1/modelo-config', { html: '<html>x</html>' })).status, 403);
+  assert.equal((await call('admin', 'PUT', '/api/r1/modelo-config', { html: 'sem tag' })).status, 400);
+  assert.equal((await call('admin', 'PUT', '/api/r1/modelo-config', { html: '<html><body>{{especialista_nome}} · {{cliente_nome}} <script>alert(1)</script></body></html>' })).status, 200);
+  const custom = await call('c1', 'GET', `/api/r1/modelo?task_id=${r.data.task_id}&formato=json`);
+  assert.match(custom.data.html, /Cons 1 · Prospect Direto/);
+  assert.equal((await call('admin', 'PUT', '/api/r1/modelo-config', { html: '' })).data.custom, false);
+  // Link da reunião informado à mão
+  assert.equal((await call('c1', 'PATCH', `/api/tarefas/${task.id}/link`, { meeting_url: 'http://x' })).status, 400);
+  assert.equal((await call('c1', 'PATCH', `/api/tarefas/${task.id}/link`, { meeting_url: 'https://meet.google.com/abc-defg-hij' })).status, 200);
+  // Cliente não compareceu: R1 → R1 bolo (justificativa opcional); de R1 bolo volta para R1 com nova reunião
+  assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('r1_bolo').id, reason: 'Não entrou na chamada' })).status, 200);
+  const back = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('r1').id });
+  assert.equal(back.status, 200, 'a R1 pendente (futura) continua valendo');
+});
+
+test('Google Agenda: configuração pelo administrador, conexão do especialista e R1 com Google Meet e convite ao cliente', async () => {
+  assert.equal((await call('c1', 'PUT', '/api/google/config', { client_id: 'x.apps.googleusercontent.com', client_secret: 's' })).status, 403);
+  assert.equal((await call('admin', 'PUT', '/api/google/config', { client_id: 'abc' })).status, 400);
+  const cfg = await call('admin', 'PUT', '/api/google/config', { client_id: '123-abc.apps.googleusercontent.com', client_secret: 'segredo', public_url: 'https://crm.vero.test' });
+  assert.equal(cfg.status, 200, JSON.stringify(cfg.data));
+  assert.equal(cfg.data.configured, true);
+  assert.equal(cfg.data.redirect_uri, 'https://crm.vero.test/api/google/retorno');
+  const st = await call('c1', 'GET', '/api/google/status');
+  assert.equal(st.data.client_id, undefined, 'especialista não vê o ID do cliente OAuth');
+  assert.equal(st.data.connected, false);
+  const con = await call('c1', 'POST', '/api/google/conectar');
+  const authUrl = new URL(con.data.url);
+  assert.equal(authUrl.host, 'accounts.google.com');
+  assert.match(authUrl.searchParams.get('scope'), /calendar\.events/);
+  assert.equal(authUrl.searchParams.get('access_type'), 'offline');
+  // Google simulado: troca do código, token de acesso e criação do evento com Meet
+  const realFetch = globalThis.fetch;
+  const seen = [];
+  globalThis.fetch = async (url, opts = {}) => {
+    const u = String(url);
+    if (u.startsWith('https://oauth2.googleapis.com/token')) {
+      seen.push(['token', String(opts.body)]);
+      const idt = `x.${Buffer.from(JSON.stringify({ email: 'consultor@gmail.com' })).toString('base64url')}.y`;
+      return new Response(JSON.stringify({ access_token: 'at', refresh_token: 'rt', expires_in: 3600, id_token: idt }), { status: 200 });
+    }
+    if (u.startsWith('https://www.googleapis.com/calendar/v3/calendars/primary/events')) {
+      seen.push([opts.method, u, opts.body ? JSON.parse(opts.body) : null]);
+      return new Response(JSON.stringify({ id: 'evt1', hangoutLink: 'https://meet.google.com/aaa-bbbb-ccc', htmlLink: 'https://calendar.google.com/event?eid=1' }), { status: 200 });
+    }
+    return realFetch(url, opts);
+  };
+  try {
+    const cb = await fetch(`${base}/api/google/retorno?code=abc&state=${authUrl.searchParams.get('state')}`, { redirect: 'manual' });
+    assert.equal(cb.status, 302);
+    assert.equal(cb.headers.get('location'), '/#/meu-cadastro?google=ok');
+    const st2 = await call('c1', 'GET', '/api/google/status');
+    assert.equal(st2.data.connected, true);
+    assert.equal(st2.data.google_email, 'consultor@gmail.com');
+    const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Meet', phone1: '11 94444-1020', email: 'cliente.meet@exemplo.com', origin: 'indicacao' });
+    const start = new Date(Date.now() + 3 * 86400000);
+    start.setUTCHours(17, 15, 0, 0);
+    const r = await call('c1', 'POST', '/api/r1/agendar', { contact_id: c.data.id, start_at: start.toISOString(), end_at: new Date(start.getTime() + 45 * 60000).toISOString(), video: true });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.equal(r.data.google.synced, true);
+    assert.equal(r.data.google.invited, true);
+    assert.equal(r.data.meeting_url, 'https://meet.google.com/aaa-bbbb-ccc');
+    const [method, url, ev] = seen.find((x) => x[0] === 'POST');
+    assert.match(url, /conferenceDataVersion=1&sendUpdates=all/);
+    assert.equal(ev.summary, '[R1] Cliente Meet / Vero Consórcios');
+    assert.equal(ev.attendees[0].email, 'cliente.meet@exemplo.com');
+    assert.equal(ev.conferenceData.createRequest.conferenceSolutionKey.type, 'hangoutsMeet');
+    assert.equal(Date.parse(ev.end.dateTime) - Date.parse(ev.start.dateTime), 45 * 60000);
+    const task = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.tasks.find((t) => t.id === r.data.task_id);
+    assert.equal(task.meeting_url, 'https://meet.google.com/aaa-bbbb-ccc');
+    assert.equal(task.google_event_id, 'evt1');
+    // Reagendar no CRM leva a mudança ao Google (mantém a duração)
+    const later = new Date(start.getTime() + 86400000).toISOString();
+    const up = await call('c1', 'PATCH', `/api/tarefas/${task.id}`, { due_at: later });
+    assert.equal(up.data.google.synced, true);
+    const patchCall = seen.find((x) => x[0] === 'PATCH');
+    assert.match(patchCall[1], /events\/evt1/);
+    assert.equal(Date.parse(patchCall[2].end.dateTime) - Date.parse(patchCall[2].start.dateTime), 45 * 60000);
+    // Cancelar a R1 remove o evento (e o Google avisa o cliente)
+    await call('c1', 'PATCH', `/api/tarefas/${task.id}`, { action: 'cancelar' });
+    assert.ok(seen.some((x) => x[0] === 'DELETE' && /sendUpdates=all/.test(x[1])));
+    assert.equal((await call('c1', 'POST', '/api/google/desconectar')).status, 200);
+    assert.equal((await call('c1', 'GET', '/api/google/status')).data.connected, false);
+  } finally {
+    globalThis.fetch = realFetch;
+    await call('admin', 'PUT', '/api/google/config', { client_id: '', client_secret: '', public_url: '' });
+  }
 });
 
 test('planos e administradoras: faixa de crédito com incremento, comissão em parcelas e visão restrita ao administrador', async () => {
@@ -779,12 +942,15 @@ test('ficha do cliente: acesso e conclusão pelo link atualizam a pré-venda; co
   let d = (await call('c1', 'GET', `/api/pre-vendas/${ps.data.id}`)).data;
   assert.equal(d.status, 'link_gerado');
   const token = d.link_url.split('/ficha/')[1];
-  assert.equal((await call(null, 'GET', `/api/publico/ficha?token=${token}`)).status, 200);
+  const key = await fichaKey(token, '11 94444-4004');
+  assert.equal((await call(null, 'GET', `/api/publico/ficha?token=${token}`, undefined, { 'X-Ficha-Key': key })).status, 200);
   d = (await call('c1', 'GET', `/api/pre-vendas/${ps.data.id}`)).data;
   assert.equal(d.status, 'acessado');
-  assert.equal((await call(null, 'POST', '/api/publico/ficha/concluir', { token })).status, 400, 'ficha incompleta');
+  const inc = await call(null, 'POST', '/api/publico/ficha/concluir', { token, key });
+  assert.equal(inc.status, 400, 'ficha incompleta');
+  assert.ok(inc.data.details.missing.some((m) => m.key === 'doc'), 'lista os campos que faltam (destacados em vermelho na ficha)');
   await completeForSale(c.data.id);
-  assert.equal((await call(null, 'POST', '/api/publico/ficha/concluir', { token })).status, 200);
+  assert.equal((await call(null, 'POST', '/api/publico/ficha/concluir', { token, key })).status, 200);
   d = (await call('c1', 'GET', `/api/pre-vendas/${ps.data.id}`)).data;
   assert.equal(d.status, 'preenchido');
 });
@@ -822,6 +988,55 @@ test('alterar senha: confere a atual, exige confirmação e política mínima e 
   assert.equal((await call(null, 'POST', '/api/login', { email: 'senha@t.com', password: 'inicial123' })).status, 401);
   const n = (await call('pw1', 'GET', '/api/notificacoes')).data;
   assert.ok(n.rows.some((x) => x.kind === 'seguranca'));
+});
+
+test('novo especialista: troca obrigatória da senha provisória, trilha de integração e treinamento de consórcios liberado no fim', async () => {
+  const cr = await call('admin', 'POST', '/api/usuarios', { name: 'Novo Especialista', email: 'novo.esp@t.com', role: 'consultor', password: 'provisoria1' });
+  assert.equal(cr.status, 200, JSON.stringify(cr.data));
+  await login('novo', 'novo.esp@t.com', 'provisoria1');
+  const meta = (await call('novo', 'GET', '/api/meta')).data;
+  assert.equal(meta.user.must_change_password, true);
+  const blocked = await call('novo', 'GET', '/api/funil');
+  assert.equal(blocked.status, 403, 'plataforma bloqueada até trocar a senha');
+  assert.equal(blocked.data.details.code, 'troca_senha');
+  let st = (await call('novo', 'GET', '/api/integracao')).data;
+  assert.equal(st.active, true);
+  assert.equal(st.steps[0].key, 'senha');
+  assert.equal(st.steps[0].done, false);
+  const ch = await call('novo', 'POST', '/api/me/senha', { current: 'provisoria1', password: 'Vero-Consorcio-2026', confirm: 'Vero-Consorcio-2026' });
+  assert.equal(ch.status, 200, JSON.stringify(ch.data));
+  assert.equal((await call('novo', 'GET', '/api/funil')).status, 200, 'liberado depois da troca');
+  st = (await call('novo', 'GET', '/api/integracao')).data;
+  assert.deepEqual(st.steps.map((x) => [x.key, x.done]), [['senha', true], ['perfil', false], ['marca', false], ['configuracao', false], ['consorcios', false]]);
+  assert.equal(st.trainings_unlocked, false);
+  // Treinamento de consórcios oculto até concluir as etapas 1 a 4
+  const before = (await call('novo', 'GET', '/api/treinamentos')).data.items;
+  assert.ok(!before.some((t) => t.track === 'consorcios'));
+  assert.equal(st.trainings.length, 7);
+  assert.equal((await call('novo', 'POST', '/api/integracao/marca/concluir')).status, 400, 'etapas em ordem: falta Meu cadastro');
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  await call('novo', 'POST', '/api/perfil/foto', { photo: png });
+  await call('novo', 'PATCH', '/api/perfil', { whatsapp: '(51) 98888-7777', job_title: 'Especialista em consórcios' });
+  assert.equal((await call('novo', 'POST', '/api/integracao/marca/concluir')).status, 200);
+  assert.equal((await call('novo', 'POST', '/api/integracao/senha/concluir')).status, 400, 'etapa automática');
+  st = (await call('novo', 'POST', '/api/integracao/configuracao/concluir')).data;
+  assert.equal(st.trainings_unlocked, true);
+  const after = (await call('novo', 'GET', '/api/treinamentos')).data.items.filter((t) => t.track === 'consorcios');
+  assert.equal(after.length, 7);
+  assert.ok(after.every((t) => t.required), 'obrigatórios para especialistas');
+  // Conclui a trilha: notifica a liderança
+  for (const t of after) {
+    const full = (await call('novo', 'GET', `/api/treinamentos/${t.id}`)).data;
+    const quiz = (await call('admin', 'GET', `/api/treinamentos/${t.id}`)).data.quiz;
+    const r = await call('novo', 'POST', `/api/treinamentos/${t.id}/concluir`, { answers: quiz.map((q) => q.correct) });
+    assert.equal(r.data.passed, true, full.title);
+  }
+  st = (await call('novo', 'GET', '/api/integracao')).data;
+  assert.equal(st.complete, true);
+  const n = (await call('admin', 'GET', '/api/notificacoes')).data.rows;
+  assert.ok(n.some((x) => /Novo Especialista concluiu a integração/.test(x.title)));
+  // Usuário antigo (sem trilha) vê os treinamentos normalmente
+  assert.ok((await call('c1', 'GET', '/api/treinamentos')).data.items.some((t) => t.track === 'consorcios'));
 });
 
 test('notificações: lead distribuído avisa o especialista; leitura individual e geral', async () => {
@@ -1286,4 +1501,153 @@ test('landing page: simulador (aquisição ou alavancagem) e mecanismo de alavan
   assert.equal(pr.credit_value, 120000);
   assert.equal(pr.initial_installment, 1780.5);
   assert.ok(pr.generated_at && pr.pdf_attachment_id);
+});
+
+test('planos na proposta: só administradoras e planos ativos (pelo código) ou "Outros"; nova versão abre o simulador e atualiza a mesma proposta (v2)', async () => {
+  const plan = await ensurePlan();
+  // Código do plano único por administradora
+  assert.equal((await call('admin', 'POST', '/api/planos', { id: plan.id, plan_code: 'HS1' })).status, 200);
+  const dup = await call('admin', 'POST', '/api/planos', { administrator_id: plan.administrator_id, name: 'Outro HS', plan_code: 'hs1' });
+  assert.equal(dup.status, 400);
+  assert.match(dup.data.error, /código HS1/);
+  const inactive = await call('admin', 'POST', '/api/planos', { administrator_id: plan.administrator_id, name: 'Imóvel 400', plan_code: 'HS2', category: 'imovel', admin_fee_pct: 21, reserve_fund_pct: 1, active: false });
+  assert.equal(inactive.status, 200, JSON.stringify(inactive.data));
+  assert.equal((await call('admin', 'GET', '/api/planos?active=0')).data.some((p) => p.id === inactive.data.id), true);
+  // Simulador: só administradoras e planos ativos
+  const sp = (await call('c1', 'GET', '/api/simulador/planos')).data;
+  assert.ok(sp.administradoras.some((a) => a.nome === 'Adm Teste'));
+  const hs1 = sp.planos.find((p) => p.id === String(plan.id));
+  assert.equal(hs1.nome, 'HS1 · HS Imóvel');
+  assert.equal(hs1.taxaAdm, 18);
+  assert.equal(hs1.indice, 'INCC');
+  assert.ok(!sp.planos.some((p) => p.id === String(inactive.data.id)), 'plano inativo fora do simulador');
+  // Proposta com plano inativo é recusada; plano de outra administradora também
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Planos', phone1: '11 94444-3030', origin: 'indicacao', relationship: 'lead' });
+  const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
+  const bad = await call('c1', 'POST', '/api/propostas', { opportunity_id: opp.id, product_id: inactive.data.id, credit_value: 200000 });
+  assert.equal(bad.status, 400);
+  assert.match(bad.data.error, /inativo/);
+  // Plano cadastrado: taxa e fundo de reserva seguem o plano
+  const ok = await call('c1', 'POST', '/api/propostas', { opportunity_id: opp.id, administrator_id: plan.administrator_id, product_id: plan.id, credit_value: 200000, admin_fee_pct: 12, reserve_fund_pct: 9 });
+  assert.equal(ok.status, 200, JSON.stringify(ok.data));
+  let pr = (await call('c1', 'GET', `/api/propostas/${ok.data.id}`)).data;
+  assert.equal(pr.admin_fee_pct, 18);
+  assert.equal(pr.reserve_fund_pct, 2);
+  assert.equal(pr.administrator_name, 'Adm Teste');
+  // "Outros": condições livres, com a administradora
+  assert.equal((await call('c1', 'POST', '/api/propostas', { opportunity_id: opp.id, product_id: 'outros', administrator_id: '', credit_value: 150000 })).status, 400);
+  const other = await call('c1', 'POST', '/api/propostas', { opportunity_id: opp.id, product_id: 'outros', administrator_id: plan.administrator_id, credit_value: 155000, admin_fee_pct: 20, reserve_fund_pct: 2 });
+  assert.equal(other.status, 200, JSON.stringify(other.data));
+  pr = (await call('c1', 'GET', `/api/propostas/${other.data.id}`)).data;
+  assert.equal(pr.plan_other, 1);
+  assert.equal(pr.admin_fee_pct, 20);
+  assert.equal(pr.product_id, null);
+  // Nova versão: mesmo código com a versão, simulador com as condições e "Atualizar proposta"
+  const nv = await call('c1', 'POST', `/api/propostas/${ok.data.id}/nova-versao`, {});
+  assert.equal(nv.status, 200, JSON.stringify(nv.data));
+  assert.equal(nv.data.version, 2);
+  assert.equal(nv.data.code, `${pr.code.replace(/-v\d+$/, '').replace(/.*/, (x) => x)}`.length ? nv.data.code : '');
+  const v1 = (await call('c1', 'GET', `/api/propostas/${ok.data.id}`)).data;
+  assert.equal(nv.data.code, `${v1.code}-v2`);
+  assert.equal(v1.status, 'substituida');
+  const u = new URL(nv.data.url, 'http://localhost');
+  const q = u.searchParams;
+  assert.equal(q.get('acao'), 'atualizar');
+  assert.equal(q.get('plano'), String(plan.id));
+  assert.equal(q.get('credito'), '200000');
+  assert.equal(q.get('taxa_adm'), '18');
+  const token = new URLSearchParams(u.hash.slice(1)).get('crm_token');
+  assert.ok(token);
+  // O simulador devolve os novos valores na mesma proposta (versão 2)
+  const r = await fetch(`${base}/api/publico/simulador/proposta`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, plano_id: String(plan.id), administradora: 'Adm Teste', credito: 250000, prazo: 200, parcela_inicial: 1500, taxa_adm_pct: 18, fundo_reserva_pct: 2, pdf_nome: 'v2.pdf', pdf_base64: PDF }) });
+  assert.equal(r.status, 200, await r.text());
+  const v2 = (await call('c1', 'GET', `/api/propostas/${nv.data.id}`)).data;
+  assert.equal(v2.version, 2);
+  assert.equal(v2.credit_value, 250000);
+  assert.equal(v2.product_id, plan.id);
+  assert.ok(v2.pdf_attachment_id);
+  assert.ok(Date.parse(v2.created_at) >= Date.parse(v1.created_at));
+  // Simulador com "Outros"
+  const st = await call('c1', 'POST', '/api/propostas/iniciar', { contact_id: c.data.id });
+  const t2 = new URLSearchParams(new URL(st.data.url, 'http://localhost').hash.slice(1)).get('crm_token');
+  const r2 = await fetch(`${base}/api/publico/simulador/proposta`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: t2, plano_outros: true, administradora: 'Adm Teste', credito: 180000, prazo: 180, taxa_adm_pct: 22, fundo_reserva_pct: 1 }) });
+  assert.equal(r2.status, 200, await r2.text());
+  const p3 = (await call('c1', 'GET', `/api/propostas/${st.data.id}`)).data;
+  assert.equal(p3.plan_other, 1);
+  assert.equal(p3.admin_fee_pct, 22);
+  assert.equal(p3.administrator_name, 'Adm Teste');
+});
+
+test('ficha por e-mail: modelo da Vero enviado pelo SMTP (remetente admin@veroconsorciosbr.com.br) ou devolvido pronto sem SMTP', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Email Ficha', phone1: '11 94321-6006', email: 'cliente.ficha@exemplo.com' });
+  assert.equal(c.status, 200, JSON.stringify(c.data));
+  const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
+  const ps = await call('c1', 'POST', '/api/pre-vendas', { opportunity_id: opp.id });
+  // Sem SMTP: devolve o e-mail pronto (HTML com o passo a passo e o botão) e o link mailto
+  const off = await call('c1', 'POST', `/api/pre-vendas/${ps.data.id}/enviar-email`, { base: 'https://crm.vero.test/' });
+  assert.equal(off.status, 200, JSON.stringify(off.data));
+  assert.equal(off.data.sent, false);
+  assert.equal(off.data.reason, 'nao_configurado');
+  assert.equal(off.data.from, 'admin@veroconsorciosbr.com.br');
+  assert.match(off.data.html, /Acessar minha ficha/);
+  assert.match(off.data.html, /4 últimos dígitos do seu celular/);
+  assert.match(off.data.html, /https:\/\/crm\.vero\.test\/#\/ficha\//);
+  assert.match(off.data.mailto, /^mailto:cliente\.ficha@exemplo\.com\?subject=/);
+  // WhatsApp segue o modelo (4 dígitos e documentos)
+  const pv = (await call('c1', 'GET', `/api/pre-vendas/${ps.data.id}?base=https://crm.vero.test/`)).data;
+  assert.match(pv.message.text, /4 últimos dígitos do seu celular/);
+  assert.match(pv.message.text, /comprovante de endereço/);
+  assert.match(pv.message.whatsapp_url, /^https:\/\/wa\.me\/5511943216006\?text=/);
+  // SMTP de teste (servidor local)
+  const net = require('node:net');
+  const got = [];
+  const smtp = net.createServer((sock) => {
+    let data = false;
+    let buf = '';
+    sock.write('220 teste ESMTP\r\n');
+    sock.on('data', (chunk) => {
+      buf += chunk.toString();
+      let i;
+      while ((i = buf.indexOf('\r\n')) >= 0) {
+        const line = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        if (data) {
+          if (line === '.') {
+            data = false;
+            sock.write('250 OK queued\r\n');
+          } else got.push(line);
+          continue;
+        }
+        got.push(line);
+        if (/^EHLO/.test(line)) sock.write('250-teste\r\n250 AUTH PLAIN LOGIN\r\n');
+        else if (/^AUTH PLAIN/.test(line)) sock.write('235 ok\r\n');
+        else if (/^(MAIL|RCPT)/.test(line)) sock.write('250 ok\r\n');
+        else if (line === 'DATA') {
+          data = true;
+          sock.write('354 go\r\n');
+        } else if (line === 'QUIT') sock.end('221 bye\r\n');
+      }
+    });
+  });
+  await new Promise((r) => smtp.listen(0, '127.0.0.1', r));
+  try {
+    assert.equal((await call('c1', 'PUT', '/api/email/config', { host: '127.0.0.1' })).status, 403);
+    const cfg = await call('admin', 'PUT', '/api/email/config', { host: '127.0.0.1', port: smtp.address().port, security: 'none', user: 'admin@veroconsorciosbr.com.br', password: 'segredo', from_name: 'Vero Consórcios' });
+    assert.equal(cfg.status, 200, JSON.stringify(cfg.data));
+    assert.equal(cfg.data.configured, true);
+    assert.equal(cfg.data.from_email, 'admin@veroconsorciosbr.com.br');
+    const sent = await call('c1', 'POST', `/api/pre-vendas/${ps.data.id}/enviar-email`, { base: 'https://crm.vero.test/' });
+    assert.equal(sent.status, 200, JSON.stringify(sent.data));
+    assert.equal(sent.data.sent, true, JSON.stringify(sent.data));
+    assert.ok(got.includes('MAIL FROM:<admin@veroconsorciosbr.com.br>'));
+    assert.ok(got.includes('RCPT TO:<cliente.ficha@exemplo.com>'));
+    assert.ok(got.some((l) => /^Subject: =\?UTF-8\?B\?/.test(l)));
+    const html = Buffer.from(got.join('\n').split('Content-Type: text/html; charset=utf-8')[1].split('\n\n')[1].split('--vero')[0].replace(/\s/g, ''), 'base64').toString('utf8');
+    assert.match(html, /Acessar minha ficha/);
+    const after = (await call('c1', 'GET', `/api/pre-vendas/${ps.data.id}`)).data;
+    assert.equal(after.sent_via, 'email');
+  } finally {
+    smtp.close();
+    await call('admin', 'PUT', '/api/email/config', { host: '', user: '', password: '', clear_password: true });
+  }
 });

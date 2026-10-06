@@ -3,6 +3,7 @@
 import { get, post } from '../api.js';
 import { html, raw, render, $, $$, on, state, selectOptions, userItems, table, badge, fmtMoney, fmtDate, fmtDateTime, relTime, modal, field, toast, toastError, empty, can, opts, fmtMoneyInput, moneyValue, todayLocal } from '../ui.js';
 import { fileToBase64 } from './record-tabs.js';
+import { sendFichaEmail } from '../ficha-send.js';
 
 const PAY = { pix: 'Pix', boleto: 'Boleto' };
 
@@ -228,12 +229,12 @@ async function openPreSale(id, reload) {
         <p class="small">O cliente recebe o link com as instruções de preenchimento e o aviso de privacidade (LGPD). Acesso: ${ps.accessed_at ? `primeiro acesso em ${fmtDateTime(ps.accessed_at)}` : 'ainda não acessado'} · ${ps.link_access_count || 0} acesso(s).</p>
         <div class="inline-actions">
           ${msg?.whatsapp_url ? html`<a class="btn small primary" href="${msg.whatsapp_url}" target="_blank" rel="noopener noreferrer" data-sent="whatsapp">Enviar por WhatsApp</a>` : ''}
-          ${msg?.email_url ? html`<a class="btn small" href="${msg.email_url}" data-sent="email">Enviar por e-mail</a>` : html`<span class="small muted">Sem e-mail no cadastro.</span>`}
+          ${msg?.email_url ? html`<button type="button" class="btn small" data-send-email>Enviar por e-mail</button>` : html`<span class="small muted">Sem e-mail no cadastro.</span>`}
           <button type="button" class="btn small" data-copy-msg>Copiar mensagem</button>
           ${window.CRM_PREVIEW ? html`<a class="btn small" href="${ps.link_url.slice(ps.link_url.indexOf('#'))}">Testar como cliente</a>` : ''}
         </div>
         <pre class="code msg-preview">${msg?.text || ''}</pre>
-        <p class="hint">O envio automático por e-mail (sem abrir o seu programa de e-mail) é uma integração pendente: depende de configurar um serviço de envio (SMTP).</p></section>` : ''}
+        <p class="hint">${msg?.email_configured ? 'O e-mail sai do endereço da empresa, com o modelo visual da Vero e o botão "Acessar minha ficha".' : 'Sem o envio automático configurado (Configurações › Integrações › E-mail), o CRM mostra o e-mail pronto para você copiar ou abrir no seu programa de e-mail.'} A ficha só abre com os 4 últimos dígitos do celular do cliente.</p></section>` : ''}
       ${ps.quotas?.length ? html`<section class="card inner"><div class="section-head"><h4>Cotas do termo de adesão (${ps.quotas.length})</h4>${can.write() && ps.step >= 4 && !['concluida', 'cancelada'].includes(ps.status) ? html`<button type="button" class="btn small" data-edit-quotas>Editar cotas</button>` : ''}</div>
         ${table([{ label: '', render: (q) => `${q.position}ª` }, { label: 'Grupo', render: (q) => q.group_code || '—' }, { label: 'Cota', render: (q) => q.quota_code || '—' }, { label: 'Nº do contrato', render: (q) => q.contract_number || '—' }, { label: 'Crédito', render: (q) => fmtMoney(q.credit_value), cls: 'num' }], ps.quotas)}</section>` : ''}
       ${missing.length && !['concluida', 'cancelada', 'pagamento_comprovado'].includes(ps.status) ? html`<div class="alert warn"><strong>Pendências da ficha (${missing.length}):</strong> ${missing.slice(0, 8).map((m) => m.label).join('; ')}${missing.length > 8 ? '…' : ''}</div>` : ''}
@@ -273,6 +274,11 @@ async function openPreSale(id, reload) {
         }
       });
       on(form, 'click', '[data-sent]', (e, a) => post(`/api/pre-vendas/${ps.id}/enviado`, { via: a.dataset.sent }).catch(() => {}));
+      on(form, 'click', '[data-send-email]', async (e, b) => {
+        b.disabled = true;
+        await sendFichaEmail(`/api/pre-vendas/${ps.id}/enviar-email`);
+        b.disabled = false;
+      });
       on(form, 'click', '[data-copy-msg]', async () => {
         try {
           await navigator.clipboard.writeText(msg.text);

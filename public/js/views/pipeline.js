@@ -9,6 +9,7 @@ import { qualBlocks, qualProgress, tempBadge, tempPanel } from '../qualification
 import { transcriptFlow, downloadR1Template } from '../r1.js';
 import { moveStage, opportunityForm, activityForm, taskForm, simulationForm, proposalForm, proposalDetail, quickSimulation, openProposalSimulator } from '../forms.js';
 import { timeline, tasksTable, bindTasks } from './contact.js';
+import { scheduleR1Dialog, R1_STAGES } from '../meeting.js';
 
 let saved = {};
 let sortBy = 'next_action';
@@ -250,7 +251,7 @@ export async function show(view, { key, id, params }) {
 
 function board(d, bulk, selected) {
   return html`<div class="kanban ${bulk ? 'bulk' : ''}">${d.stages.map(
-    (s) => html`<section class="column kind-${s.kind}" data-stage="${s.id}">
+    (s) => html`<section class="column kind-${s.kind}" data-stage="${s.id}" data-key="${s.key || ''}">
       <header>${bulk && s.cards.length ? html`<input type="checkbox" data-sel-col="${s.id}" aria-label="Selecionar todos de ${s.name}" ${s.cards.every((c) => selected.has(c.id)) ? raw('checked') : ''}>` : ''}<strong>${s.name}</strong><span class="count">${s.count}</span>${s.total_credit ? html`<small>${fmtMoney(s.total_credit)}</small>` : ''}</header>
       <div class="cards">${s.cards.length ? sortCards(s.cards).map((c) => card(c, bulk, selected)) : html`<div class="empty small">—</div>`}</div>
     </section>`,
@@ -329,6 +330,7 @@ async function showOpp(view, id) {
       </div>
       ${can.write() ? html`<div class="actions">
         <label class="inline">Mover para <select data-move-detail>${html`<option value="">—</option>`}${state.meta.stages.filter((s) => s.id !== o.stage_id).map((s) => html`<option value="${s.id}">${s.name}</option>`)}</select></label>
+        ${o.status === 'aberta' && R1_STAGES.includes(o.stage_key) ? html`<button class="btn r1" data-act="r1-schedule">Agendar R1</button>` : ''}
         <button class="btn" data-act="edit">Editar</button>
         <button class="btn primary" data-act="activity">Registrar atividade</button>
         <button class="btn" data-act="task">Nova tarefa</button>
@@ -371,7 +373,7 @@ async function showOpp(view, id) {
         <div class="section-head"><h3>Propostas</h3>${can.write() ? html`<span class="inline-actions"><button class="btn primary" data-act="proposal-sim">Gerar proposta</button><button class="btn" data-act="prop-new">Registrar proposta gerada</button></span>` : ''}</div>
         ${table(
           [
-            { label: 'Código', render: (p) => html`<a href="#" data-prop="${p.id}">${p.code}</a> v${p.version}` },
+            { label: 'Código', render: (p) => html`<a href="#" data-prop="${p.id}">${String(p.code).replace(/-v\d+$/, '')}</a> v${p.version}` },
             { label: 'Crédito', render: (p) => fmtMoney(p.credit_value), cls: 'num' },
             { label: 'Prazo', render: (p) => p.term_months ?? '—' },
             { label: 'Parcela inicial', render: (p) => fmtMoney(p.initial_installment), cls: 'num' },
@@ -397,6 +399,7 @@ async function showOpp(view, id) {
   });
   on(view, 'click', '[data-act=edit]', async () => (await opportunityForm(contact, o)) && reload());
   on(view, 'click', '[data-act=r1]', async () => (await transcriptFlow(o)) && reload());
+  on(view, 'click', '[data-act=r1-schedule]', async () => (await scheduleR1Dialog({ contactId: o.contact_id, oppId: o.id, moveToR1: ['qualificado', 'r1_bolo'].includes(o.stage_key) })) && reload());
   on(view, 'click', '[data-act=r1-template]', (e) => (e.preventDefault(), downloadR1Template()));
   on(view, 'click', '[data-act=activity]', async () => (await activityForm(contact, { opportunity_id: o.id })) && reload());
   on(view, 'click', '[data-act=task]', async () => (await taskForm({ contact, opportunity_id: o.id })) && reload());

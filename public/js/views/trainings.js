@@ -115,7 +115,7 @@ async function openTraining(id) {
       ${t.kind === 'pdf' && t.file_name ? html`<div class="file-view training-file"><p class="muted">Carregando ${t.file_name}…</p></div>` : ''}
       ${t.video_url ? (embed ? html`<div class="video"><iframe src="${embed}" title="${t.title}" allow="encrypted-media; picture-in-picture" allowfullscreen></iframe></div>` : '') : ''}
       ${t.video_url ? html`<p><a class="btn small" href="${t.video_url}" target="_blank" rel="noopener">Abrir ${t.kind === 'video' ? 'vídeo' : 'link'} em nova aba</a></p>` : ''}
-      ${t.content ? html`<div class="training-text">${raw(String(html`${t.content}`).replace(/\n/g, '<br>'))}</div>` : ''}
+      ${t.content ? html`<div class="training-text">${raw(richText(t.content))}</div>` : ''}
       ${t.quiz.length
         ? html`<h4>Questionário de fixação ${done ? html`<small class="muted">(concluído com nota ${t.progress.quiz_score ?? '—'}%)</small>` : html`<small class="muted">(nota mínima ${t.pass_score}%)</small>`}</h4>
           <ol class="quiz">${t.quiz.map((q, i) => html`<li><p><strong>${q.question}</strong></p>${q.options.map((o, j) => html`<label class="check"><input type="radio" name="q${i}" value="${j}"> ${o}</label>`)}</li>`)}</ol>`
@@ -247,4 +247,26 @@ async function tracking(box) {
           <td class="num">${badge(`${u.required_done}/${u.required}`, u.required && u.required_done < u.required ? 'warn' : 'ok')}</td><td class="num">${u.done}/${d.trainings.length}</td>${u.cells.map(cell)}</tr>`)}</tbody></table></div>
         <p class="hint"><span class="dot ok"></span> concluído · <span class="dot warn"></span> em andamento · <span class="dot muted"></span> não iniciado · * obrigatório para o perfil</p></section>`
     : empty('Cadastre materiais e usuários para acompanhar o progresso.'));
+}
+
+/** Texto do treinamento com formatação simples: "## " título, "- " lista, "**negrito**" e "*itálico*" (sempre escapado). */
+function richText(text) {
+  const inline = (t) => String(html`${t}`).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\*(.+?)\*/g, '<em>$1</em>');
+  const out = [];
+  let list = false;
+  for (const line of String(text).split('\n')) {
+    const l = line.trimEnd();
+    if (/^- /.test(l)) {
+      if (!list) out.push('<ul>');
+      list = true;
+      out.push(`<li>${inline(l.slice(2))}</li>`);
+      continue;
+    }
+    if (list) out.push('</ul>');
+    list = false;
+    if (/^## /.test(l)) out.push(`<h4>${inline(l.slice(3))}</h4>`);
+    else if (l) out.push(`<p>${inline(l)}</p>`);
+  }
+  if (list) out.push('</ul>');
+  return out.join('');
 }

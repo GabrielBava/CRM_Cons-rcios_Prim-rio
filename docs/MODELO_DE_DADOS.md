@@ -2,7 +2,7 @@
 
 Gerado por `scripts/ddl.js` (rode `node scripts/ddl.js` depois de mudar o esquema). O DDL completo está em [`DDL.sql`](DDL.sql).
 
-**62 tabelas**, **174 chaves estrangeiras** declaradas e **17 relacionamentos lógicos** (sem FOREIGN KEY no banco, garantidos pela aplicação).
+**62 tabelas**, **176 chaves estrangeiras** declaradas e **17 relacionamentos lógicos** (sem FOREIGN KEY no banco, garantidos pela aplicação).
 
 ## Visão geral do fluxo comercial
 
@@ -167,7 +167,9 @@ erDiagram
 | `proposals` | `product_id` | `products(id)` | — |
 | `proposals` | `owner_id` | `users(id)` | — |
 | `proposals` | `created_by` | `users(id)` | — |
+| `proposals` | `pdf_attachment_id` | `attachments(id)` | — |
 | `proposals` | `accepted_by` | `users(id)` | — |
+| `proposals` | `administrator_id` | `administrators(id)` | — |
 
 ### Pré-venda, vendas, cancelamentos e comissões
 
@@ -315,7 +317,7 @@ Colunas acrescentadas por migração (o SQLite não permite incluir chave estran
 
 ### Acesso, configuração e auditoria
 
-**`users`** — `id` (PK), `name`, `email`, `password_hash`, `role`, `team_id` (FK), `dialer_agent_ref`, `active`, `created_at`, `updated_at`, `last_login_at`, `modules`, `phone`, `whatsapp`, `job_title`, `birth_date`, `photo`, `bio`, `specialties`, `pix_key`, `professional_reg`, `password_changed_at`
+**`users`** — `id` (PK), `name`, `email`, `password_hash`, `role`, `team_id` (FK), `dialer_agent_ref`, `active`, `created_at`, `updated_at`, `last_login_at`, `modules`, `phone`, `whatsapp`, `job_title`, `birth_date`, `photo`, `bio`, `specialties`, `pix_key`, `professional_reg`, `password_changed_at`, `must_change_password`, `onboarding`, `google_refresh_token_enc`, `google_email`, `google_connected_at`
 
 **`teams`** — `id` (PK), `name`, `created_at`, `leader_id` (FK)
 
@@ -349,7 +351,7 @@ Colunas acrescentadas por migração (o SQLite não permite incluir chave estran
 
 **`data_requests`** — `id` (PK), `contact_id` (FK), `type`, `status`, `details`, `resolution`, `requested_at`, `resolved_at`, `created_by` (FK), `resolved_by` (FK)
 
-**`client_links`** — `id` (PK), `token_hash`, `contact_id` (FK), `created_by` (FK), `created_at`, `expires_at`, `last_used_at`, `submissions`, `revoked_at`, `token`, `first_used_at`, `access_count`, `revoked_by`, `revoke_reason`
+**`client_links`** — `id` (PK), `token_hash`, `contact_id` (FK), `created_by` (FK), `created_at`, `expires_at`, `last_used_at`, `submissions`, `revoked_at`, `token`, `first_used_at`, `access_count`, `revoked_by`, `revoke_reason`, `verify_hash`, `verify_expires_at`, `verify_fails`, `verify_locked_until`, `verified_at`
 
 **`attachments`** — `id` (PK), `contact_id` (FK), `proposal_id` (FK), `contract_id` (FK), `finance_entry_id`, `doc_type`, `filename`, `mime`, `size`, `content`, `status`, `valid_until`, `notes`, `source`, `uploaded_by` (FK), `reviewed_by` (FK), `reviewed_at`, `created_at`
 
@@ -369,7 +371,7 @@ Colunas acrescentadas por migração (o SQLite não permite incluir chave estran
 
 **`activities`** — `id` (PK), `contact_id` (FK), `company_contact_id` (FK), `opportunity_id` (FK), `type`, `channel`, `direction`, `result`, `duration_seconds`, `notes`, `next_action`, `return_at`, `occurred_at`, `source`, `external_id`, `call_event_id`, `ref_type`, `ref_id`, `user_id` (FK), `created_by` (FK), `created_at`
 
-**`tasks`** — `id` (PK), `contact_id` (FK), `opportunity_id` (FK), `type`, `title`, `notes`, `due_at`, `status`, `outcome`, `assigned_to` (FK), `created_by` (FK), `created_at`, `updated_at`, `completed_at`, `completed_by` (FK), `priority`, `proposal_id` (FK), `cadence_step`, `pre_sale_id`, `sale_id`
+**`tasks`** — `id` (PK), `contact_id` (FK), `opportunity_id` (FK), `type`, `title`, `notes`, `due_at`, `status`, `outcome`, `assigned_to` (FK), `created_by` (FK), `created_at`, `updated_at`, `completed_at`, `completed_by` (FK), `priority`, `proposal_id` (FK), `cadence_step`, `pre_sale_id`, `sale_id`, `ends_at`, `attendee_email`, `meeting_url`, `google_event_id`, `calendar_status`
 
 **`distribution_log`** — `id` (PK), `contact_id` (FK), `from_user` (FK), `to_user` (FK), `method`, `by_user` (FK), `created_at`
 
@@ -389,7 +391,7 @@ Colunas acrescentadas por migração (o SQLite não permite incluir chave estran
 
 **`simulation_links`** — `id` (PK), `token_hash`, `contact_id` (FK), `opportunity_id` (FK), `created_by` (FK), `origin_screen`, `created_at`, `expires_at`, `first_used_at`, `last_used_at`, `revoked_at`
 
-**`proposals`** — `id` (PK), `code`, `contact_id` (FK), `opportunity_id` (FK), `simulation_id` (FK), `version`, `previous_id` (FK), `product_id` (FK), `credit_value`, `term_months`, `initial_installment`, `payment_modality`, `admin_fee_pct`, `reserve_fund_pct`, `insurance_pct`, `other_costs`, `readjustment_index`, `readjustment_assumptions`, `strategy`, `status`, `link_url`, `valid_until`, `notes`, `presented_at`, `owner_id` (FK), `created_by` (FK), `created_at`, `updated_at`, `accepted_at`, `accepted_channel`, `accepted_by` (FK), `refusal_reason`, `category`, `sent_channel`, `last_response_at`, `last_response`, `refusal_notes`, `refused_at`, `retake_at`, `has_adhesion`, `adhesion_pct`, `adhesion_months`, `reducer_pct`, `readjustment_rate`, `bid_deduction`, `contemplation_month`, `embedded_bid_pct`, `quotas`, `quota_split_strategy`, `quota_values`, `quota_split_notes`
+**`proposals`** — `id` (PK), `code`, `contact_id` (FK), `opportunity_id` (FK), `simulation_id` (FK), `version`, `previous_id` (FK), `product_id` (FK), `credit_value`, `term_months`, `initial_installment`, `payment_modality`, `admin_fee_pct`, `reserve_fund_pct`, `insurance_pct`, `other_costs`, `readjustment_index`, `readjustment_assumptions`, `strategy`, `status`, `link_url`, `valid_until`, `notes`, `presented_at`, `owner_id` (FK), `created_by` (FK), `created_at`, `updated_at`, `simulator_token_hash`, `simulator_token_expires_at`, `generated_at`, `pdf_attachment_id` (FK), `accepted_at`, `accepted_channel`, `accepted_by` (FK), `refusal_reason`, `category`, `sent_channel`, `last_response_at`, `last_response`, `refusal_notes`, `refused_at`, `retake_at`, `has_adhesion`, `adhesion_pct`, `adhesion_months`, `reducer_pct`, `readjustment_rate`, `bid_deduction`, `contemplation_month`, `embedded_bid_pct`, `quotas`, `quota_split_strategy`, `quota_values`, `quota_split_notes`, `administrator_id` (FK), `plan_other`
 
 ### Pré-venda, vendas, cancelamentos e comissões
 
@@ -421,7 +423,7 @@ Colunas acrescentadas por migração (o SQLite não permite incluir chave estran
 
 ### Treinamentos
 
-**`trainings`** — `id` (PK), `title`, `category`, `description`, `kind`, `content`, `video_url`, `file`, `file_name`, `file_mime`, `file_size`, `required_roles`, `due_days`, `quiz`, `pass_score`, `duration_min`, `position`, `active`, `created_by` (FK), `created_at`, `updated_at`
+**`trainings`** — `id` (PK), `title`, `category`, `description`, `kind`, `content`, `video_url`, `file`, `file_name`, `file_mime`, `file_size`, `required_roles`, `due_days`, `quiz`, `pass_score`, `duration_min`, `position`, `active`, `created_by` (FK), `created_at`, `updated_at`, `track`
 
 **`training_progress`** — `training_id` (PK) (FK), `user_id` (PK) (FK), `first_opened_at`, `last_opened_at`, `open_count`, `completed_at`, `quiz_score`, `attempts`
 

@@ -398,6 +398,14 @@ function moveStage(db, user, id, data, opts = {}) {
       db.prepare("INSERT INTO tasks (contact_id, opportunity_id, type, title, notes, due_at, assigned_to, created_by, created_at, updated_at) VALUES (?, ?, 'follow_up', ?, ?, ?, ?, ?, ?, ?)")
         .run(o.contact_id, o.id, 'Retomar contato (nutrição futura)', upd.pause_reason, toIso(data.return_at), o.owner_id ?? user.id, user.id, now, now);
     }
+    // R1 bolo: a R1 que já passou do horário é encerrada como "cliente não compareceu"
+    if (to.key === 'r1_bolo') {
+      const missed = db.prepare("SELECT id, title FROM tasks WHERE contact_id = ? AND type = 'reuniao' AND status = 'pendente' AND due_at <= ?").all(o.contact_id, now);
+      for (const t of missed) {
+        db.prepare("UPDATE tasks SET status = 'concluida', outcome = 'nao_compareceu', completed_at = ?, completed_by = ?, updated_at = ? WHERE id = ?").run(now, user.id, now, t.id);
+        insertActivity(db, { contact_id: o.contact_id, opportunity_id: o.id, type: 'reuniao_nao_realizada', notes: `Reunião cliente não compareceu: ${t.title}${reason ? ` — ${reason}` : ''}`, user_id: user.id, ref_type: 'task', ref_id: t.id });
+      }
+    }
     // Prospect que avança no funil passa a ser lead
     if (to.key && to.key !== 'prospect' && to.kind === 'aberta') {
       db.prepare("UPDATE contacts SET relationship = 'lead', updated_at = ? WHERE id = ? AND relationship = 'prospect'").run(now, o.contact_id);
@@ -505,7 +513,7 @@ const OPP_SELECT = `SELECT o.*, c.name AS contact_name, c.code AS contact_code, 
   c.created_at AS contact_created_at, c.temperature AS contact_temperature, c.relationship AS contact_relationship,
   (SELECT MAX(pr.credit_value) FROM proposals pr WHERE pr.opportunity_id = o.id AND pr.status IN ('rascunho','apresentada','em_analise','aprovada')) AS proposal_value,
   (SELECT COUNT(*) FROM proposals pr WHERE pr.opportunity_id = o.id AND pr.status <> 'substituida') AS proposal_count,
-  c.optouts AS contact_optouts, s.name AS stage_name, s.kind AS stage_kind, p.name AS product_name, u.name AS owner_name,
+  c.optouts AS contact_optouts, s.name AS stage_name, s.kind AS stage_kind, s.key AS stage_key, p.name AS product_name, u.name AS owner_name,
   (SELECT t.title || '|' || t.due_at FROM tasks t WHERE t.opportunity_id = o.id AND t.status = 'pendente' ORDER BY t.due_at LIMIT 1) AS next_task
   FROM opportunities o JOIN contacts c ON c.id = o.contact_id JOIN pipeline_stages s ON s.id = o.stage_id
   LEFT JOIN products p ON p.id = o.product_id LEFT JOIN users u ON u.id = o.owner_id`;

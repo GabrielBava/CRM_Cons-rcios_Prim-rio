@@ -361,6 +361,7 @@ function createClientLink(db, user, contactId) {
   if (c.anonymized_at) throw badRequest('Cadastro anonimizado.');
   if (c.active === 0) throw badRequest('Cadastro inativo: reative o cadastro para gerar o link.');
   if (activeClientLink(db, c.id)) throw new HttpError(409, 'Já existe um link de cadastro ativo. Copie o link atual ou revogue-o para gerar outro.');
+  if (!phoneEndings(c).length) throw badRequest('Cadastre o celular do cliente antes de gerar o link: a ficha só abre com os 4 últimos dígitos do celular.');
   const days = Number(getSetting(db, 'client_link_days')) || 7;
   const token = randomToken(32);
   const expires = new Date(Date.now() + days * 86400000).toISOString();
@@ -389,8 +390,77 @@ function resolveClientLink(db, token) {
   return { link, contact: c };
 }
 
-function publicForm(db, token) {
+/* ----- Proteção da ficha: o cliente informa os 4 últimos dígitos do celular antes de ver ou editar qualquer dado ----- */
+
+const VERIFY_HOURS = 2;
+const VERIFY_MAX_FAILS = 5;
+const phoneEndings = (c) => [...new Set([c.whatsapp, c.phone1, c.phone2].map((v) => String(v || '').replace(/\D/g, '')).filter((d) => d.length >= 8).map((d) => d.slice(-4)))];
+/** "Olá, Nome Sobrenome": primeiro e último nome (só isso aparece antes da verificação). */
+const greetingName = (c) => {
+  const parts = String((c.kind === 'PJ' ? c.contact_name || c.name : c.name) || '').trim().split(/\s+/).filter(Boolean);
+  return parts.length > 1 ? `${parts[0]} ${parts[parts.length - 1]}` : parts[0] || '';
+};
+
+/** Confere os 4 dígitos e devolve a chave de acesso da sessão (2 horas). 5 erros seguidos bloqueiam por 15 minutos. */
+function publicVerify(db, token, data = {}) {
   const { link, contact } = resolveClientLink(db, token);
+  const now = Date.now();
+  if (link.verify_locked_until && Date.parse(link.verify_locked_until) > now) {
+    const min = Math.ceil((Date.parse(link.verify_locked_until) - now) / 60000);
+    throw new HttpError(429, `Por segurança, o acesso foi bloqueado depois de várias tentativas. Tente de novo em ${min} minuto(s) ou fale com seu especialista.`);
+  }
+  const endings = phoneEndings(contact);
+  if (!endings.length) throw new HttpError(409, 'Não encontramos um celular no seu cadastro para confirmar o acesso. Fale com seu especialista.');
+  const typed = String(data.digits || '').replace(/\D/g, '');
+  if (typed.length !== 4) throw badRequest('Informe os 4 últimos dígitos do seu celular.');
+  if (!endings.includes(typed)) {
+    const fails = (link.verify_fails || 0) + 1;
+    const lock = fails >= VERIFY_MAX_FAILS ? new Date(now + 15 * 60000).toISOString() : null;
+    db.prepare('UPDATE client_links SET verify_fails = ?, verify_locked_until = COALESCE(?, verify_locked_until) WHERE id = ?').run(lock ? 0 : fails, lock, link.id);
+    if (lock) {
+      insertActivity(db, { contact_id: contact.id, type: 'cadastro', notes: 'Link de cadastro bloqueado por 15 minutos: 5 tentativas com os dígitos do celular incorretos.', source: 'cliente' });
+      require('./notifications').notify(db, contact.owner_id, { kind: 'seguranca', level: 'warn', title: `Tentativas de acesso à ficha de ${contact.name}`, body: '5 tentativas com os dígitos do celular incorretos. O link foi bloqueado por 15 minutos.', link: `#/leads/${contact.id}/prevenda` });
+      throw new HttpError(429, 'Dígitos incorretos. Por segurança, o acesso foi bloqueado por 15 minutos.');
+    }
+    throw badRequest(`Os dígitos não conferem com o celular do cadastro. Você ainda tem ${VERIFY_MAX_FAILS - fails} tentativa(s).`);
+  }
+  const key = randomToken(24);
+  db.prepare('UPDATE client_links SET verify_hash = ?, verify_expires_at = ?, verify_fails = 0, verify_locked_until = NULL, verified_at = ? WHERE id = ?')
+    .run(sha256(key), new Date(now + VERIFY_HOURS * 3600000).toISOString(), nowIso(), link.id);
+  return { key, expires_in_hours: VERIFY_HOURS };
+}
+
+/** Link válido e acesso confirmado pelos 4 dígitos (chave enviada pelo navegador do cliente). */
+function resolveVerified(db, token, key) {
+  const r = resolveClientLink(db, token);
+  const ok = key && r.link.verify_hash && r.link.verify_hash === sha256(String(key)) && r.link.verify_expires_at && Date.parse(r.link.verify_expires_at) > Date.now();
+  if (!ok) throw new HttpError(401, 'Por segurança, confirme os 4 últimos dígitos do seu celular para continuar.', { needs_verification: true });
+  return r;
+}
+
+/** Campos obrigatórios da ficha (os mesmos da conferência da venda), para destacar o que falta. */
+function requiredFields(db, contact) {
+  const cfg = (getSetting(db, 'field_config') || {})[contact.kind === 'PJ' ? 'contact_pj' : 'contact_pf'] || {};
+  const on = (f) => cfg[f]?.sale_required !== false && cfg[f]?.visible !== false;
+  const list = SALE_FIELDS[contact.kind].map(([f]) => f).filter(on);
+  const spouse = contact.kind === 'PF' ? ['property_regime', 'spouse_name', 'spouse_doc'].filter((f) => on(f === 'property_regime' ? f : 'spouse')) : [];
+  return { fields: list, spouse, address: on('address') ? ['cep', 'street', 'number', 'district', 'city', 'state'] : [] };
+}
+
+function publicForm(db, token, key) {
+  const pre = resolveClientLink(db, token);
+  let verified = true;
+  try {
+    resolveVerified(db, token, key);
+  } catch {
+    verified = false;
+  }
+  if (!verified) {
+    // Antes da confirmação: só a saudação, sem nenhum dado do cadastro
+    const lockedUntil = pre.link.verify_locked_until && Date.parse(pre.link.verify_locked_until) > Date.now() ? pre.link.verify_locked_until : null;
+    return { needs_verification: true, greeting: greetingName(pre.contact), company: getSetting(db, 'company_name') || '', expires_at: pre.link.expires_at, locked_until: lockedUntil, has_phone: phoneEndings(pre.contact).length > 0 };
+  }
+  const { link, contact } = pre;
   const now = nowIso();
   // Conta como novo acesso só depois de 30 minutos sem atividade (recarregar a página não infla a contagem)
   const newVisit = !link.last_used_at || Date.parse(now) - Date.parse(link.last_used_at) > 30 * 60000;
@@ -416,6 +486,7 @@ function publicForm(db, token) {
     company: getSetting(db, 'company_name') || '',
     completed: !!db.prepare("SELECT 1 FROM pre_sales WHERE client_link_id = ? AND completed_at IS NOT NULL").get(link.id),
     expires_at: link.expires_at,
+    required: requiredFields(db, contact),
   };
 }
 
@@ -429,7 +500,7 @@ function notifyOwner(db, contact, text) {
 }
 
 function publicSubmit(db, token, body) {
-  const { link, contact } = resolveClientLink(db, token);
+  const { link, contact } = resolveVerified(db, token, body.key);
   const { updateContact } = require('./contacts');
   const system = { id: null, role: 'admin', name: 'Cliente (link)' };
   const data = {};
@@ -462,7 +533,7 @@ function publicSubmit(db, token, body) {
 }
 
 function publicUpload(db, token, body) {
-  const { contact } = resolveClientLink(db, token);
+  const { contact } = resolveVerified(db, token, body.key);
   return tx(db, () => {
     const id = insertAttachment(db, contact.id, { ...body, proposal_id: undefined, contract_id: undefined, finance_entry_id: undefined }, { source: 'cliente' });
     insertActivity(db, { contact_id: contact.id, type: 'cadastro', notes: `O cliente enviou um arquivo pelo link: ${clean(body.filename)} (${optionLabel(db, 'tipo_documento', clean(body.doc_type) || 'outro')}).`, source: 'cliente', ref_type: 'attachment', ref_id: id });
@@ -477,11 +548,11 @@ function publicUpload(db, token, body) {
  * O cliente conclui o cadastro: dados obrigatórios preenchidos e documentos enviados (a validação dos documentos
  * continua com a equipe). Atualiza a pré-venda para "Concluído pelo cliente".
  */
-function publicComplete(db, token) {
-  const { link, contact } = resolveClientLink(db, token);
+function publicComplete(db, token, key) {
+  const { link, contact } = resolveVerified(db, token, key);
   const check = saleChecklist(db, contact);
   const missing = check.items.filter((i) => (i.group === 'Documentos' ? !['recebido', 'aprovado'].includes(i.status) : !i.ok));
-  if (missing.length) throw badRequest(`Ainda falta: ${missing.map((m) => m.label).join('; ')}.`, { missing });
+  if (missing.length) throw badRequest(`Ainda falta: ${missing.map((m) => m.label).join('; ')}.`, { missing: missing.map((m) => ({ key: m.key, label: m.label, group: m.group })) });
   return tx(db, () => {
     db.prepare('UPDATE client_links SET submissions = submissions + 1, last_used_at = ? WHERE id = ?').run(nowIso(), link.id);
     insertActivity(db, { contact_id: contact.id, type: 'cadastro', notes: 'O cliente concluiu o cadastro pelo link e enviou os documentos para conferência.', source: 'cliente' });
@@ -490,8 +561,8 @@ function publicComplete(db, token) {
   });
 }
 
-async function publicCep(db, token, cep) {
-  resolveClientLink(db, token);
+async function publicCep(db, token, cep, key) {
+  resolveVerified(db, token, key);
   return lookupCep(cep);
 }
 
@@ -740,6 +811,8 @@ function proposalSimulatorLink(db, user, contactId, data = {}) {
   const phone = c.whatsapp || c.phone1 || c.phone2 || '';
   const params = new URLSearchParams({ nome: name || '', contato: phone, origem: 'crm', cadastro: c.code, modo: 'proposta' });
   if (data.proposal_code) params.set('proposta', data.proposal_code);
+  // Nova versão da proposta: o simulador abre com as condições da versão anterior e o botão "Atualizar proposta"
+  for (const [k, v] of Object.entries(data.prefill || {})) if (v != null && v !== '') params.set(k, String(v));
   // O token da proposta vai só depois do "#": não aparece em registros de servidores e proxies
   const hash = new URLSearchParams(params);
   if (data.crm_token) hash.set('crm_token', data.crm_token);
@@ -756,6 +829,7 @@ function proposalSimulatorLink(db, user, contactId, data = {}) {
 module.exports = {
   lookupCep, saveAddress, deleteAddress, savePartner, uploadAttachment, listAttachments, getAttachment, reviewAttachment,
   saleChecklist, createClientLink, revokeClientLinks, activeClientLink, clientLinkHistory, publicForm, publicSubmit, publicUpload, publicCep, publicComplete, insertAttachment,
+  publicVerify, resolveVerified,
   postSaleItems, togglePostSale, markPostSale, bidHistory, BID_TYPES, NPS_QUESTIONS, npsStatus, listNps, createNps, cancelNps, publicNpsForm, publicNpsSubmit, listBidStrategies, saveBidStrategy,
   proposalSimulatorLink, EXTERNAL_FIELDS,
 };

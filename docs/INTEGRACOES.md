@@ -193,6 +193,19 @@ Campos novos aceitos: `housing_purpose` (morar/investir), `bid_source` (reserva,
 
 O futuro agente de IA que ler a transcrição pode gerar qualquer um desses formatos ou chamar diretamente o endpoint `/qualificacao`.
 
+## 7. Google Agenda (R1 com Google Meet)
+
+- **Configuração (administrador):** Configurações › Integrações › Google Agenda, ou as variáveis `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET`. No Google Cloud Console: ativar a Google Calendar API, criar um ID do cliente OAuth "Aplicativo da Web" com o URI de redirecionamento `https://SEU-CRM/api/google/retorno` (endereço público em `PUBLIC_URL` ou na própria tela) e o escopo `calendar.events`.
+- **Conexão (cada especialista):** Meu cadastro › Google Agenda › Conectar. O CRM guarda só o token de atualização, cifrado (AES-256-GCM).
+- **Agendamento:** `POST /api/r1/agendar` cria a tarefa "Reunião (R1)" e o evento na agenda principal do responsável pelo cliente (`events.insert` com `conferenceDataVersion=1` e `sendUpdates=all`): Google Meet, convite ao e-mail do cliente e o link salvo na tarefa. Reagendar ou cancelar a tarefa atualiza (ou exclui) o evento.
+- **Sem integração:** a tarefa é criada no CRM e o especialista abre o evento já preenchido no Google Agenda (`calendar.google.com/calendar/render?action=TEMPLATE…`) e cola o link do Meet na reunião.
+
+## 8. E-mail (SMTP) da ficha de adesão
+
+- **Configuração:** Configurações › Integrações › E-mail, ou `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY` (`tls` = 465, `starttls` = 587), `SMTP_USER`, `SMTP_PASSWORD`. Remetente padrão `admin@veroconsorciosbr.com.br`.
+- **Envio:** `POST /api/pre-vendas/:id/enviar-email` ou `POST /api/cadastros/:id/link-cliente/enviar-email`: e-mail em HTML (passo a passo e botão "Acessar minha ficha") com versão em texto. Sem SMTP, a resposta traz o e-mail pronto (`html`, `text`, `mailto`) para o especialista enviar pelo próprio programa.
+- **Segurança da ficha:** `POST /api/publico/ficha/verificar` confere os 4 últimos dígitos do celular e devolve uma chave de acesso de 2 horas (cabeçalho `X-Ficha-Key` ou campo `key`). Sem a chave, a ficha mostra só a saudação. Cinco tentativas erradas bloqueiam o link por 15 minutos e avisam o especialista.
+
 ## Exportação para discadora
 
 **Prospects e leads › Lista para discadora** gera um CSV com `id_lead;nome;telefone;telefone_2;responsavel`, respeitando os filtros da tela. A lista exclui automaticamente cadastros com oposição a ligações ou a todos os canais, cadastros sem telefone e cadastros anonimizados. O `id_lead` é o que a discadora deve devolver nos eventos.

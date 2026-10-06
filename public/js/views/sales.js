@@ -46,7 +46,7 @@ function proposals(box) {
       const r = await get('/api/propostas', { ...readPeriod(form), page, limit: 50 });
       render($('#list', box), html`<section class="card">${table(
         [
-          { label: 'Código', render: (p) => html`<a href="#" data-prop="${p.id}">${p.code}</a> <small>v${p.version}</small>` },
+          { label: 'Código', render: (p) => html`<a href="#" data-prop="${p.id}">${String(p.code).replace(/-v\d+$/, '')}</a> <small>v${p.version}</small>` },
           { label: 'Cadastro', render: (p) => html`<a href="#/leads/${p.contact_id}">${p.contact_name}</a>` },
           { label: 'Oportunidade', render: (p) => html`<a href="#/oportunidades/${p.opportunity_id}">${p.opportunity_code}</a>` },
           { label: 'Produto', render: (p) => p.product_name || '—' },

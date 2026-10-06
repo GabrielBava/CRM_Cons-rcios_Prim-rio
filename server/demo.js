@@ -52,6 +52,9 @@ function seedDemo(db, password) {
   const c1 = mkUser('Especialista Demo 1', 'consultor1@demo.local', 'consultor', team, 'ramal-201', '(11) 90000-0003');
   const c2 = mkUser('Especialista Demo 2', 'consultor2@demo.local', 'consultor', team, 'ramal-202', '(11) 90000-0004');
   mkUser('Leitura Demo', 'leitura@demo.local', 'leitura', team, null, null);
+  // Especialista recém-contratado: senha provisória (troca obrigatória no 1º acesso) e trilha de integração
+  const novo = mkUser('Especialista Novo (integração)', 'novo@demo.local', 'consultor', team, null, null);
+  db.prepare('UPDATE users SET must_change_password = 1, onboarding = ? WHERE id = ?').run(JSON.stringify({ active: true, started_at: now, steps: {} }), novo.id);
   db.prepare('UPDATE teams SET leader_id = ? WHERE id = ?').run(gestor.id, team);
   // Cargos e dados do "Meu cadastro"
   for (const [u, title, specs] of [[admin, 'Diretor comercial', '[]'], [gestor, 'Líder de equipe comercial', '["imovel","veiculo"]'], [c1, 'Especialista em consórcio imobiliário', '["imovel"]'], [c2, 'Especialista em consórcio de veículos', '["veiculo","servico"]']]) {
@@ -81,8 +84,8 @@ function seedDemo(db, password) {
   const [pImovel, pVeiculo, pServico] = db.prepare('SELECT id FROM products ORDER BY id').all().map((p) => p.id);
   catalog.savePlan(db, admin, { id: pImovel, name: 'HS Imóvel 200', plan_code: 'HS-IMV-200', administrator_id: alfa, category: 'imovel', admin_fee_pct: 18, reserve_fund_pct: 2, insurance_pct: 0.038, term_months: 200, term_options: '180, 200, 220', embedded_bid: true, embedded_bid_pct: 30, fixed_bid: true, fixed_bid_pct: 25, adhesion: true, adhesion_pct: 1, adhesion_months: 3, readjustment_index: 'incc', credit_min: 100000, credit_max: 500000, credit_step: 10000, description: 'Imóvel residencial ou comercial.' });
   catalog.savePlan(db, admin, { id: pVeiculo, name: 'Auto 80', plan_code: 'AUT-80', administrator_id: alfa, category: 'veiculo', admin_fee_pct: 14, reserve_fund_pct: 2, term_months: 80, embedded_bid: true, embedded_bid_pct: 25, adhesion: false, readjustment_index: 'ipca', credit_min: 40000, credit_max: 150000, credit_step: 5000 });
-  catalog.savePlan(db, admin, { id: pServico, name: 'Serviços 40', administrator_id: beta, category: 'servico', admin_fee_pct: 20, reserve_fund_pct: 3, term_months: 40, readjustment_index: 'pre6', credit_min: 15000, credit_max: 30000 });
-  const pBeta = catalog.savePlan(db, admin, { name: 'Imóvel Beta 180', administrator_id: beta, category: 'imovel', admin_fee_pct: 17, reserve_fund_pct: 1.5, term_months: 180, fixed_bid: true, fixed_bid_pct: 30, readjustment_index: 'ipca', credit_min: 150000, credit_max: 400000, credit_step: 50000,
+  catalog.savePlan(db, admin, { id: pServico, name: 'Serviços 40', plan_code: 'BT-SRV-40', administrator_id: beta, category: 'servico', admin_fee_pct: 20, reserve_fund_pct: 3, term_months: 40, readjustment_index: 'pre6', credit_min: 15000, credit_max: 30000 });
+  const pBeta = catalog.savePlan(db, admin, { name: 'Imóvel Beta 180', plan_code: 'BT-IMV-180', administrator_id: beta, category: 'imovel', admin_fee_pct: 17, reserve_fund_pct: 1.5, term_months: 180, fixed_bid: true, fixed_bid_pct: 30, readjustment_index: 'ipca', credit_min: 150000, credit_max: 400000, credit_step: 50000,
     commission_schedule: [{ month_offset: 0, pct: 0.5, release_after_days: 7 }, { month_offset: 2, pct: 0.3 }] });
   const plans = [pImovel, pVeiculo, pImovel, pBeta];
 
@@ -251,8 +254,11 @@ function seedDemo(db, password) {
           const ps = db.prepare('SELECT * FROM pre_sales WHERE opportunity_id = ?').get(opp.id);
           const link = db.prepare('SELECT token FROM client_links WHERE id = ?').get(ps.client_link_id);
           sales.markSent(db, owner, ps.id, { via: 'email' });
-          record.publicForm(db, link.token);
-          record.publicUpload(db, link.token, { doc_type: 'identificacao', filename: 'documento-identidade.png', mime: 'image/png', content_base64: SAMPLE_DOC });
+          // O cliente confirma os 4 últimos dígitos do celular antes de ver e enviar dados
+          const c0 = db.prepare('SELECT whatsapp, phone1 FROM contacts WHERE id = ?').get(id);
+          const { key } = record.publicVerify(db, link.token, { digits: String(c0.whatsapp || c0.phone1).replace(/\D/g, '').slice(-4) });
+          record.publicForm(db, link.token, key);
+          record.publicUpload(db, link.token, { key, doc_type: 'identificacao', filename: 'documento-identidade.png', mime: 'image/png', content_base64: SAMPLE_DOC });
         } else {
           // Comprovante anexado: venda em Vendas aguardando a alocação (1 de 2 cotas já alocada)
           completeRecord(id, i);

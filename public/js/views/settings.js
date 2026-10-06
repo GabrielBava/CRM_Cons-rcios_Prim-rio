@@ -1,8 +1,9 @@
-import { get, post, patch } from '../api.js';
+import { get, post, patch, put } from '../api.js';
 import {
   html, render, $, $$, on, fresh, state, table, badge, field, modal, selectOptions, toItems, userItems, fmtDateTime, can, toast, toastError,
-  statusIntegration, K, empty, formData,
+  statusIntegration, K, empty, formData, confirmDialog,
 } from '../ui.js';
+import '../meeting.js';
 
 export async function refreshMeta() {
   state.meta = await get('/api/meta');
@@ -55,6 +56,7 @@ const TABS = [
   ['listas', 'Listas', true],
   ['campos', 'Campos', true],
   ['integracoes', 'Integrações', false],
+  ['modelo-r1', 'Modelo da R1', true],
   ['geral', 'Geral', true],
   ['auditoria', 'Auditoria', true],
 ];
@@ -85,7 +87,91 @@ export async function show(view, { id }) {
   await draw();
 }
 
+/** Google Agenda: cliente OAuth do Google Cloud (administrador) e o endereço de retorno a cadastrar no Google. */
+function googleCard(g) {
+  return html`<section class="card integ">
+    <div class="section-head"><h3>Google Agenda (R1 com Google Meet)</h3>${badge(g.configured ? 'Configurado' : 'Não configurado', g.configured ? 'ok' : 'muted')}</div>
+    <p>Com o Google Agenda configurado, cada especialista conecta a própria agenda em <a href="#/meu-cadastro">Meu cadastro</a>. Ao agendar a R1, o CRM cria o evento na agenda dele com link do Google Meet e o Google envia o convite ao e-mail do cliente; o link fica salvo no CRM. Reagendar ou cancelar a R1 no CRM atualiza o evento.</p>
+    <ol class="small">
+      <li>No <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console</a>, ative a <strong>Google Calendar API</strong> e crie um <strong>ID do cliente OAuth</strong> do tipo "Aplicativo da Web".</li>
+      <li>Em "URIs de redirecionamento autorizados", cadastre: <code class="selectable">${g.redirect_uri}</code></li>
+      <li>Na tela de consentimento OAuth, inclua o escopo <code>calendar.events</code> e publique o app (ou adicione os e-mails dos especialistas como usuários de teste).</li>
+      <li>Cole abaixo o ID do cliente e a chave secreta.</li>
+    </ol>
+    ${can.admin() ? html`<form data-google-form class="grid" novalidate>
+      ${g.from_env ? html`<p class="hint full">Definido pelas variáveis GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET do servidor.</p>` : html`
+      ${field({ name: 'client_id', label: 'ID do cliente OAuth', value: g.client_id || '', placeholder: '1234-abc.apps.googleusercontent.com', full: true })}
+      ${field({ name: 'client_secret', label: g.has_secret ? 'Chave secreta (já salva; preencha só para trocar)' : 'Chave secreta do cliente', type: 'password', full: true })}`}
+      ${field({ name: 'public_url', label: 'Endereço público do CRM (opcional)', value: g.public_url, placeholder: 'https://crm.veroconsorcios.com.br', help: 'Use quando o CRM estiver atrás de um proxy e o endereço de retorno acima não for o endereço real.', full: true })}
+      <div class="inline-actions full"><button class="btn primary" type="submit">Salvar configuração</button></div>
+    </form>` : ''}
+  </section>`;
+}
+
+/** E-mail (SMTP): a ficha de adesão sai do endereço da empresa (padrão admin@veroconsorciosbr.com.br). */
+function emailCard(st) {
+  return html`<section class="card integ">
+    <div class="section-head"><h3>E-mail (envio da ficha de adesão)</h3>${badge(st.configured ? 'Configurado' : 'Não configurado', st.configured ? 'ok' : 'muted')}</div>
+    <p>O botão "Enviar por e-mail" da ficha manda um e-mail com o visual da Vero, o passo a passo e o botão "Acessar minha ficha", a partir de <strong>${st.from_email}</strong>. Sem SMTP, o CRM mostra o e-mail pronto para o especialista copiar ou abrir no programa de e-mail.</p>
+    ${can.admin() ? html`<form data-email-form class="grid" novalidate>
+      ${field({ name: 'host', label: 'Servidor SMTP', value: st.host || '', placeholder: 'smtp.seuprovedor.com.br' })}
+      ${field({ name: 'port', label: 'Porta', type: 'number', value: st.port || 465 })}
+      ${field({ name: 'security', label: 'Segurança', type: 'select', options: [{ value: 'tls', label: 'SSL/TLS (porta 465)' }, { value: 'starttls', label: 'STARTTLS (porta 587)' }, { value: 'none', label: 'Sem criptografia (só testes locais)' }], value: st.security || 'tls', allowEmpty: false })}
+      ${field({ name: 'user', label: 'Usuário', value: st.user || '', placeholder: 'admin@veroconsorciosbr.com.br' })}
+      ${field({ name: 'password', label: st.has_password ? 'Senha (já salva; preencha só para trocar)' : 'Senha', type: 'password' })}
+      ${field({ name: 'from_email', label: 'Remetente', value: st.from_email, placeholder: 'admin@veroconsorciosbr.com.br' })}
+      ${field({ name: 'from_name', label: 'Nome do remetente', value: st.from_name })}
+      <div class="inline-actions full"><button class="btn primary" type="submit">Salvar</button>${st.configured ? html`<button class="btn" type="button" data-email-test>Enviar e-mail de teste para mim</button>` : ''}</div>
+    </form>` : ''}
+  </section>`;
+}
+
 const RENDER = {
+  async 'modelo-r1'(box, redraw) {
+    const cfg = await get('/api/r1/modelo-config');
+    render(box, html`<section class="card">
+      <div class="section-head"><h3>Modelo da R1</h3>${badge(cfg.custom ? 'Modelo personalizado' : 'Modelo padrão Vero', cfg.custom ? 'ok' : 'muted')}</div>
+      <p>É o roteiro único da reunião de diagnóstico: o especialista abre pelo botão "Modelo da R1" da reunião agendada, e o CRM preenche automaticamente o nome, a foto e o contato dele (Meu cadastro) e o nome do cliente.</p>
+      <p class="hint">Para usar o modelo da empresa, envie um arquivo .html com os campos abaixo onde os dados devem aparecer. O modelo padrão funciona sem JavaScript, permite anotações durante a reunião e imprime um slide por página.</p>
+      <div class="inline-actions">
+        <button type="button" class="btn" data-r1-model="preview=1">Pré-visualizar</button>
+        <button type="button" class="btn" data-act="r1-download">Baixar modelo atual (.html)</button>
+        <label class="btn primary">Enviar novo modelo (.html)<input type="file" accept=".html,.htm,text/html" data-r1-upload hidden></label>
+        ${cfg.custom ? html`<button type="button" class="btn ghost" data-act="r1-reset">Voltar ao modelo padrão</button>` : ''}
+      </div>
+      <h4>Campos disponíveis</h4>
+      ${table([{ label: 'Campo', render: (f) => html`<code class="selectable">${f.key}</code>` }, { label: 'Conteúdo', key: 'label' }], cfg.fields)}
+    </section>`);
+    on(box, 'click', '[data-act=r1-download]', () => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([cfg.template], { type: 'text/html' }));
+      a.download = 'modelo-r1.html';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    });
+    on(box, 'change', '[data-r1-upload]', async (e, input) => {
+      const file = input.files[0];
+      if (!file) return;
+      try {
+        if (file.size > 3e6) throw new Error('Modelo muito grande (máximo de 3 MB).');
+        await put('/api/r1/modelo-config', { html: await file.text() });
+        toast('Modelo da R1 atualizado para toda a equipe.');
+        redraw();
+      } catch (ex) {
+        toastError(ex);
+      }
+    });
+    on(box, 'click', '[data-act=r1-reset]', async () => {
+      if (!(await confirmDialog('Voltar ao modelo padrão', 'O modelo personalizado será removido e a equipe passa a usar o modelo padrão da Vero.'))) return;
+      try {
+        await put('/api/r1/modelo-config', { html: '' });
+        redraw();
+      } catch (ex) {
+        toastError(ex);
+      }
+    });
+  },
+
   async funil(box, redraw) {
     const [stages, rules] = await Promise.all([get('/api/etapas'), get('/api/funil/regras')]);
     const active = stages.filter((s) => s.active);
@@ -245,8 +331,11 @@ const RENDER = {
       api_leads: [['POST', `${base}/api/integracoes/leads`]],
       whatsapp: [['POST', `${base}/api/integracoes/whatsapp/mensagens`]],
       meta_ads: [],
+      agenda_externa: [],
     };
-    render(box, html`<div class="alert">Nenhuma integração é considerada conectada sem validação: o status "Ativa" só pode ser marcado após o recebimento de ao menos um evento real processado com sucesso. Detalhes técnicos em <code>docs/INTEGRACOES.md</code>.</div>
+    const g = await get('/api/google/status').catch(() => null);
+    const em = await get('/api/email/status').catch(() => null);
+    render(box, html`${g ? googleCard(g) : ''}${em ? emailCard(em) : ''}<div class="alert">Nenhuma integração é considerada conectada sem validação: o status "Ativa" só pode ser marcado após o recebimento de ao menos um evento real processado com sucesso. Detalhes técnicos em <code>docs/INTEGRACOES.md</code>.</div>
       ${list.map((i) => html`<section class="card integ" data-key="${i.key}">
         <div class="section-head"><h3>${i.name}</h3>${statusIntegration(i.effective_status, i.effective_status_label)}</div>
         <p>${i.description}</p>
@@ -266,6 +355,35 @@ const RENDER = {
           ${i.key === 'discadora' ? html`<button class="btn small ghost" data-int-preview>Testar mapeamento</button>` : ''}
         </div>` : ''}
       </section>`)}`);
+    on(box, 'submit', '[data-email-form]', async (e, f) => {
+      e.preventDefault();
+      try {
+        await put('/api/email/config', formData(f));
+        toast('Envio de e-mails configurado.');
+        redraw();
+      } catch (ex) {
+        toastError(ex);
+      }
+    });
+    on(box, 'click', '[data-email-test]', async () => {
+      try {
+        const r = await post('/api/email/teste', { base: location.href.split('#')[0], logo_url: new URL('img/vero-logo-dark.png', document.baseURI).href });
+        if (r.sent) toast(`E-mail de teste enviado para ${r.to}.`);
+        else toastError(new Error(r.reason === 'nao_configurado' ? 'Configure o servidor SMTP primeiro.' : `Falha no envio: ${r.error}`));
+      } catch (ex) {
+        toastError(ex);
+      }
+    });
+    on(box, 'submit', '[data-google-form]', async (e, f) => {
+      e.preventDefault();
+      try {
+        await put('/api/google/config', formData(f));
+        toast('Google Agenda configurado. Cada especialista conecta a própria agenda em Meu cadastro.');
+        redraw();
+      } catch (ex) {
+        toastError(ex);
+      }
+    });
     const byKey = Object.fromEntries(list.map((i) => [i.key, i]));
     on(box, 'click', '[data-int-token]', async (e, b) => {
       const key = b.dataset.intToken;

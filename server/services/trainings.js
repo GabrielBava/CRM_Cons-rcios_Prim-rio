@@ -30,7 +30,7 @@ function normalizeQuiz(v) {
     });
 }
 
-const LIST_COLS = 't.id, t.title, t.category, t.description, t.kind, t.video_url, t.file_name, t.file_size, t.required_roles, t.due_days, t.pass_score, t.duration_min, t.position, t.active, t.created_at, t.updated_at, t.quiz';
+const LIST_COLS = 't.id, t.title, t.category, t.description, t.kind, t.video_url, t.file_name, t.file_size, t.required_roles, t.due_days, t.pass_score, t.duration_min, t.position, t.active, t.created_at, t.updated_at, t.quiz, t.track';
 
 function decorate(t, progress, user) {
   const quiz = parse(t.quiz, []);
@@ -51,7 +51,9 @@ function decorate(t, progress, user) {
 }
 
 function listTrainings(db, user) {
-  const rows = db.prepare(`SELECT ${LIST_COLS} FROM trainings t WHERE ${user.role === 'admin' ? '1=1' : 't.active = 1'} ORDER BY t.category, t.position, t.title`).all();
+  // A trilha de consórcios da integração fica oculta até o especialista concluir as etapas anteriores
+  const hidden = require('./onboarding').hiddenTrainingIds(db, user);
+  const rows = db.prepare(`SELECT ${LIST_COLS} FROM trainings t WHERE ${user.role === 'admin' ? '1=1' : 't.active = 1'} ORDER BY t.category, t.position, t.title`).all().filter((t) => !hidden.has(t.id));
   const prog = db.prepare('SELECT * FROM training_progress WHERE user_id = ?').all(user.id);
   const items = rows.map((t) => decorate(t, prog.find((p) => p.training_id === t.id), user));
   const req = items.filter((t) => t.required && t.active);
@@ -70,6 +72,7 @@ function listTrainings(db, user) {
 function getTraining(db, user, id) {
   const t = db.prepare(`SELECT ${LIST_COLS}, t.content FROM trainings t WHERE t.id = ?`).get(Number(id));
   if (!t || (!t.active && user.role !== 'admin')) throw notFound('Treinamento não encontrado.');
+  if (require('./onboarding').hiddenTrainingIds(db, user).has(t.id)) throw badRequest('Este treinamento é liberado depois das etapas anteriores da trilha de integração (Painel inicial).');
   const now = nowIso();
   // Registra o acesso
   db.prepare(`INSERT INTO training_progress (training_id, user_id, first_opened_at, last_opened_at, open_count) VALUES (?, ?, ?, ?, 1)
@@ -92,6 +95,7 @@ function getFile(db, user, id) {
 function complete(db, user, id, data) {
   const t = db.prepare('SELECT * FROM trainings WHERE id = ? AND active = 1').get(Number(id));
   if (!t) throw notFound('Treinamento não encontrado.');
+  if (require('./onboarding').hiddenTrainingIds(db, user).has(t.id)) throw badRequest('Conclua as etapas anteriores da trilha de integração primeiro.');
   const quiz = parse(t.quiz, []);
   const now = nowIso();
   let score = null;
@@ -106,6 +110,7 @@ function complete(db, user, id, data) {
   const passed = score == null || score >= t.pass_score;
   if (passed) db.prepare('UPDATE training_progress SET completed_at = COALESCE(completed_at, ?) WHERE training_id = ? AND user_id = ?').run(now, t.id, user.id);
   audit(db, user, 'training', t.id, passed ? 'concluido' : 'reprovado_no_questionario', { nota: score });
+  if (passed && t.track) require('./onboarding').afterTrainingComplete(db, user);
   return { passed, score, pass_score: t.pass_score };
 }
 
