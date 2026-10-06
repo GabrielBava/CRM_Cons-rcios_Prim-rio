@@ -18,7 +18,8 @@ if (major < 22 || (major === 22 && minor < 13)) {
 }
 
 const root = path.join(__dirname, '..');
-require('../server/env').loadConfigEnv();
+const fromConfig = require('../server/env').loadConfigEnv();
+if (fromConfig.length) console.log(`Configuração lida de config.env: ${fromConfig.join(', ')}`);
 process.env.CRM_DB = process.env.CRM_DB || path.join(root, 'data', 'local.db');
 process.env.PORT = process.env.PORT || '3000';
 const password = process.env.DEMO_PASSWORD || 'demo12345';
