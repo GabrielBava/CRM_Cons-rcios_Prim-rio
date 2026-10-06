@@ -38,8 +38,10 @@ dados de demonstração e, com domínio, HTTPS automático) e o `Vagrantfile` (V
 **Opção A — VM no seu computador, automática (VirtualBox + Vagrant)**
 
 1. Instale o [VirtualBox](https://www.virtualbox.org/wiki/Downloads) e o [Vagrant](https://developer.hashicorp.com/vagrant/install).
-2. Abra o terminal (no Windows, o "Prompt de Comando") dentro da pasta descompactada e rode `vagrant up`.
+2. **Windows:** dois cliques em `iniciar-vm-windows.bat` (dentro da pasta `vero-consorcios`).
+   **Mac/Linux:** no terminal, entre na pasta onde está o arquivo `Vagrantfile` (`cd vero-consorcios`) e rode `vagrant up`.
    Na primeira vez ele baixa o Ubuntu 24.04 e instala tudo (cerca de 5 a 10 minutos).
+   Se aparecer "A Vagrant environment or target machine is required", o comando foi rodado fora da pasta do `Vagrantfile`.
 3. Acesse no navegador do seu computador: <http://localhost:8080/> (CRM), <http://localhost:8080/lp/> e
    <http://localhost:8080/simulador/>. Login: `admin@demo.local` · `demo12345`.
 4. `vagrant halt` desliga a VM; `vagrant up` liga de novo; `vagrant destroy` apaga tudo para recomeçar do zero.
