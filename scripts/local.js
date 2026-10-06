@@ -18,6 +18,7 @@ if (major < 22 || (major === 22 && minor < 13)) {
 }
 
 const root = path.join(__dirname, '..');
+require('../server/env').loadConfigEnv();
 process.env.CRM_DB = process.env.CRM_DB || path.join(root, 'data', 'local.db');
 process.env.PORT = process.env.PORT || '3000';
 const password = process.env.DEMO_PASSWORD || 'demo12345';
@@ -33,7 +34,7 @@ if (fresh && process.env.LOCAL_VAZIO !== '1') {
 }
 
 require('../server/index.js');
-const url = `http://127.0.0.1:${process.env.PORT}`;
+const url = `http://localhost:${process.env.PORT}`;
 setTimeout(() => {
   console.log(`
   CRM ................ ${url}/            (admin@demo.local · ${password})

@@ -83,6 +83,8 @@ const DESCRIPTIONS = {
     'Conector direto com a Meta (Lead Ads / webhooks da Graph API) NÃO implementado. Até lá, leads podem chegar pela "API de entrada de leads" por meio de uma ferramenta intermediária, preservando IDs de lead, campanha, conjunto e anúncio.',
   whatsapp:
     'Recebe eventos de mensagens (POST /api/integracoes/whatsapp/mensagens) para registrar no histórico. Não envia mensagens. O provedor (ex.: API oficial do WhatsApp Business ou parceiro) ainda não foi definido.',
+  bi:
+    'Bases de dados para Power BI, Looker Studio ou Excel (GET /api/bi e /api/bi/<base>, em JSON ou CSV): vendas, comissões, funil, propostas, financeiro, colaboradores, benefícios, metas e atividades. Gere o token e use-o no cabeçalho Authorization: Bearer <token> (ou ?token= no endereço). Sem CPF, RG, contato ou dados bancários.',
   api_leads:
     'Ponto de entrada genérico de leads do próprio CRM (POST /api/integracoes/leads), com deduplicação por ID externo, telefone, e-mail e CPF/CNPJ. Pode ser usado por formulários do site ou ferramentas intermediárias.',
 };

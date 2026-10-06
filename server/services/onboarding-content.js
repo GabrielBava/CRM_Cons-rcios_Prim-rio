@@ -149,7 +149,7 @@ Em **Meu cadastro › Google Agenda**, conecte a sua agenda (uma única vez). As
 - Clique em **Agendar R1** (painel lateral do lead, ficha do cliente, negócio ou Agenda).
 - Confira o cliente e o **e-mail** (é por ele que o convite chega; se o cadastro não tiver, informe no pop-up).
 - Escolha a data e o horário de início. O término já vem 30 minutos depois; ajuste de 15 em 15 minutos se precisar.
-- O título segue o padrão **[R1] Nome do cliente / Vero Consórcios**.
+- O título segue o padrão **[R1] Nome do cliente | Vero Consórcios**.
 - Deixe marcada a videoconferência: o CRM gera o Meet, salva o link e envia o convite.
 - Ao arrastar o card de **Lead qualificado** para **R1**, o mesmo pop-up abre e o negócio muda de etapa ao salvar.
 

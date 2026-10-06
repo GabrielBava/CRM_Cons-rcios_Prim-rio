@@ -15,6 +15,9 @@ const proposals = require('./services/proposals');
 const dialer = require('./services/dialer');
 const inbound = require('./services/inbound');
 const integrations = require('./services/integrations');
+const insights = require('./services/insights');
+const people = require('./services/people');
+const documents = require('./services/documents');
 const reports = require('./services/reports');
 const io = require('./services/importexport');
 const admin = require('./services/admin');
@@ -140,7 +143,7 @@ function createRouter(db) {
     return { ...ps, link_url: url, message: url ? sales.presaleMessage(db, ps, url) : null };
   });
   add('POST', '/api/pre-vendas/:id/enviado', ({ user, params, body }) => (sales.markSent(db, user, params.id, body), { ok: true }));
-  // Ficha por e-mail (modelo da Vero, remetente admin@veroconsorciosbr.com.br): envia pelo SMTP ou devolve o e-mail pronto
+  // Ficha por e-mail (modelo da Vero, remetente noreply@veroconsorciosbr.com.br): envia pelo SMTP ou devolve o e-mail pronto
   add('POST', '/api/pre-vendas/:id/enviar-email', async ({ user, params, body }) => {
     const ps = sales.getPreSale(db, user, params.id);
     const base = /^https?:\/\/[^\s#]+$/.test(body.base || '') ? body.base : '';
@@ -342,6 +345,8 @@ function createRouter(db) {
     return { ok: true, google };
   });
   add('PATCH', '/api/tarefas/:id/link', ({ user, params, body }) => meetings.setMeetingUrl(db, user, params.id, body));
+  // Presença na R1 pelo Google Meet (a rotina confere a cada 5 minutos; o botão confere na hora)
+  add('POST', '/api/tarefas/:id/presenca', ({ user, params }) => meetings.checkAttendance(db, params.id, user));
 
   /* ---------- R1 e Google Agenda ---------- */
   add('GET', '/api/r1/contexto', ({ user, query, req }) => meetings.r1Context(db, user, query.contact_id, req));
@@ -352,7 +357,7 @@ function createRouter(db) {
   add('GET', '/api/r1/modelo-config', ({ user }) => meetings.r1ModelConfig(db, user));
   add('PUT', '/api/r1/modelo-config', ({ user, body }) => meetings.saveR1ModelConfig(db, user, body), { bodyLimit: 4e6 });
   add('GET', '/api/google/status', ({ user, req }) => meetings.googleStatus(db, user, req));
-  add('POST', '/api/google/conectar', ({ user, req }) => meetings.connectUrl(db, user, req));
+  add('POST', '/api/google/conectar', ({ user, req, body }) => meetings.connectUrl(db, user, req, { popup: !!body?.popup }));
   add('POST', '/api/google/desconectar', ({ user }) => (meetings.disconnect(db, user), { ok: true }));
   add('PUT', '/api/google/config', ({ user, body, req }) => (meetings.saveGoogleConfig(db, user, body), meetings.googleStatus(db, user, req)));
   add('GET', '/api/google/retorno', ({ req, res, query }) => meetings.oauthCallback(db, req, res, query), { public: true });
@@ -385,13 +390,84 @@ function createRouter(db) {
   add('POST', '/api/entradas/:id/descartar', ({ user, params, body }) => (inbound.discardInbound(db, user, params.id, body.reason), { ok: true }));
 
   /* ---------- Relatórios, importação e exportação ---------- */
-  add('GET', '/api/relatorios', ({ user }) => (perms.requireModule(user, 'relatorios'), reports.REPORTS));
-  add('GET', '/api/relatorios/:key', ({ user, params, query }) => (perms.requireModule(user, 'relatorios'), reports.report(db, user, params.key, query)));
+  // Catálogo por perfil: especialista vê só "Meu desempenho" (sem exportar); RH, financeiro e vendas gerais por permissão
+  add('GET', '/api/relatorios', ({ user }) => (perms.requireModule(user, 'relatorios'), insights.catalog(user)));
+  add('GET', '/api/relatorios-pacote.xlsx', ({ user, query, res }) => {
+    const x = insights.packageXlsx(db, user, query);
+    return sendBinary(res, x.filename, XLSX_MIME, x.content);
+  });
+  add('GET', '/api/relatorios/:key', ({ user, params, query }) => (perms.requireModule(user, 'relatorios'), insights.run(db, user, params.key, query)));
   add('GET', '/api/relatorios/:key/csv', ({ user, params, query, res }) => {
-    const r = reports.report(db, user, params.key, query);
+    perms.requireModule(user, 'relatorios');
+    insights.requireExport(user);
+    const r = insights.run(db, user, params.key, query);
     const csv = toCSV(r.columns, r.totals ? [...r.rows, r.totals] : r.rows);
     return sendFile(res, `relatorio-${params.key}.csv`, csv);
   });
+  add('GET', '/api/relatorios/:key/xlsx', ({ user, params, query, res }) => {
+    perms.requireModule(user, 'relatorios');
+    const x = insights.reportXlsx(db, user, params.key, query);
+    return sendBinary(res, x.filename, XLSX_MIME, x.content);
+  });
+
+  /* ---------- Conexão BI (Power BI, Looker Studio, Excel): token da integração "bi" ---------- */
+  // Leitura com o token da integração "bi" (cabeçalho Authorization ou ?token=, para o Looker Studio e o Excel)
+  const biAuth = (req, query) => {
+    const integ = integrations.getIntegration(db, 'bi');
+    const header = req.headers.authorization || '';
+    const token = header.startsWith('Bearer ') ? header.slice(7).trim() : String(query.token || '');
+    if (!token || !integ.token_hash || !require('./util').safeEqual(require('./util').sha256(token), integ.token_hash)) throw new HttpError(401, 'Token da Conexão BI inválido. Gere o token em Configurações › Integrações › Conexão BI.');
+    if (integ.status === 'desativada') throw new HttpError(503, 'A Conexão BI está desativada em Configurações › Integrações.');
+    return integ;
+  };
+  add('GET', '/api/bi', ({ req, query }) => (biAuth(req, query), insights.biIndex(db, require('./services/meetings').publicUrl(db, req))), { integration: true });
+  add('GET', '/api/bi/:base', ({ req, query, params, res }) => {
+    biAuth(req, query);
+    const d = insights.biDataset(db, params.base);
+    integrations.logEvent(db, 'bi', 'leitura', null, 'ok', `Base ${params.base}: ${d.linhas} linha(s)`, null);
+    if (query.formato === 'csv') {
+      const cols = d.dados.length ? Object.keys(d.dados[0]).map((k) => ({ key: k, label: k })) : [];
+      return sendFile(res, `${params.base}.csv`, toCSV(cols, d.dados));
+    }
+    return d;
+  }, { integration: true });
+
+  /* ---------- Colaboradores (RH) ---------- */
+  add('GET', '/api/colaboradores', ({ user, query }) => people.listEmployees(db, user, query));
+  add('GET', '/api/colaboradores/cadastros', ({ user }) => people.catalogs(db, user));
+  add('POST', '/api/colaboradores', ({ user, body }) => people.saveEmployee(db, user, body));
+  add('GET', '/api/colaboradores/:id', ({ user, params }) => people.getEmployee(db, user, params.id));
+  add('PATCH', '/api/colaboradores/:id', ({ user, params, body }) => people.saveEmployee(db, user, { ...body, id: params.id }));
+  add('POST', '/api/colaboradores/:id/beneficios', ({ user, params, body }) => people.saveBenefit(db, user, params.id, body));
+  add('DELETE', '/api/colaboradores/:id/beneficios/:bid', ({ user, params }) => people.deleteBenefit(db, user, params.id, params.bid));
+  add('POST', '/api/colaboradores/:id/contratos', ({ user, params, body }) => people.saveContract(db, user, params.id, body), { bodyLimit: 15e6 });
+  add('GET', '/api/colaboradores-contratos/:id/arquivo', ({ user, params, res }) => {
+    const c = people.getContractFile(db, user, params.id);
+    return sendBinary(res, c.filename, c.mime, c.content);
+  });
+  add('POST', '/api/colaboradores/:id/arquivos', ({ user, params, body }) => people.uploadFile(db, user, params.id, body), { bodyLimit: 15e6 });
+  add('GET', '/api/colaboradores-arquivos/:id', ({ user, params, res }) => {
+    const f = people.getFile(db, user, params.id);
+    return sendBinary(res, f.filename, f.mime, f.content);
+  });
+  add('DELETE', '/api/colaboradores-arquivos/:id', ({ user, params }) => people.deleteFile(db, user, params.id));
+
+  /* ---------- Central de documentos (somente administrador) ---------- */
+  add('GET', '/api/documentos', ({ user, query }) => documents.browse(db, user, query));
+  add('POST', '/api/documentos/pastas', ({ user, body }) => documents.saveFolder(db, user, body));
+  add('DELETE', '/api/documentos/pastas/:id', ({ user, params }) => documents.deleteFolder(db, user, params.id));
+  add('POST', '/api/documentos', ({ user, body }) => documents.saveDocument(db, user, body), { bodyLimit: 30e6 });
+  add('GET', '/api/documentos/:id', ({ user, params }) => documents.getDocument(db, user, params.id));
+  add('GET', '/api/documentos/:id/arquivo', ({ user, params, res, query }) => {
+    const d = documents.download(db, user, params.id);
+    if (query.ver === '1' && /^(application\/pdf|image\/)/.test(d.mime || '')) {
+      res.writeHead(200, { 'Content-Type': d.mime, 'Content-Disposition': 'inline', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; plugin-types application/pdf" });
+      res.end(d.content);
+      return undefined;
+    }
+    return sendBinary(res, d.filename, d.mime, d.content);
+  });
+  add('DELETE', '/api/documentos/:id', ({ user, params, query }) => documents.removeDocument(db, user, params.id, { permanent: query.definitivo === '1' }));
   add('GET', '/api/exportar/:entity', ({ user, params, query, res }) => {
     const { filename, content } = io.exportData(db, user, params.entity, query);
     return sendFile(res, filename, content);
@@ -429,6 +505,8 @@ function createRouter(db) {
     res.end(content);
     return undefined;
   }
+
+  const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
   function sendBinary(res, filename, mime, content) {
     res.writeHead(200, {
@@ -546,9 +624,25 @@ function createRouter(db) {
     } catch (e) {
       console.error('Falha na rotina do financeiro:', e.message);
     }
+    try {
+      documents.expirySweep(db);
+      people.contractSweep(db);
+    } catch (e) {
+      console.error('Falha nos alertas de documentos e contratos:', e.message);
+    }
   }
 
-  return { dispatch, sweep, queueSweep };
+  /** Presença na R1 pelo Google Meet: a cada 5 minutos confere as reuniões em andamento. */
+  async function meetSweep() {
+    try {
+      return await meetings.attendanceSweep(db);
+    } catch (e) {
+      console.error('Falha na verificação de presença da R1:', e.message);
+      return null;
+    }
+  }
+
+  return { dispatch, sweep, queueSweep, meetSweep };
 }
 
 module.exports = { createRouter };

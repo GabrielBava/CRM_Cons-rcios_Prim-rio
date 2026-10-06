@@ -260,6 +260,11 @@ function saveSettings(db, user, data) {
     if (id && !db.prepare('SELECT 1 FROM users WHERE id = ? AND active = 1').get(id)) throw badRequest('Usuário financeiro inválido.');
     setSetting(db, 'finance_user_id', id);
   }
+  if (data.cash_reserve_min !== undefined) {
+    const n = data.cash_reserve_min === '' || data.cash_reserve_min == null ? 0 : Number(data.cash_reserve_min);
+    if (!Number.isFinite(n) || n < 0) throw badRequest('Reserva mínima de caixa inválida.');
+    setSetting(db, 'cash_reserve_min', Math.round(n * 100) / 100);
+  }
   if (data.funnel_sequential !== undefined) setSetting(db, 'funnel_sequential', !!data.funnel_sequential && data.funnel_sequential !== 'false');
   if (data.presale_alert_hours !== undefined) {
     const n = Number(data.presale_alert_hours);
@@ -397,6 +402,7 @@ function meta(db, user) {
       postsale_referral_min_nps: getSetting(db, 'postsale_referral_min_nps') ?? 9,
       postsale_days: require('./postsale').postsaleDays(db),
       r1_duration_min: Number(getSetting(db, 'r1_duration_min')) || 30,
+      cash_reserve_min: Number(getSetting(db, 'cash_reserve_min')) || 0,
     },
     simulator: simulatorAvailability(db),
     constants: {

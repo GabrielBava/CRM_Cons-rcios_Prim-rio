@@ -366,13 +366,16 @@ test('painel e todos os relatórios respondem com definições', async () => {
   assert.equal(d.status, 200);
   assert.ok(d.data.kpis.every((k) => k.def));
   const list = (await call('admin', 'GET', '/api/relatorios')).data;
-  for (const key of Object.keys(list)) {
-    const r = await call('gestor', 'GET', `/api/relatorios/${key}`);
+  assert.ok(list.reports.length >= 25);
+  for (const { key } of list.reports) {
+    const r = await call('admin', 'GET', `/api/relatorios/${key}`);
     assert.equal(r.status, 200, key);
     assert.ok(r.data.definition.length > 0, key);
-    const csv = await call('gestor', 'GET', `/api/relatorios/${key}/csv`);
+    const csv = await call('admin', 'GET', `/api/relatorios/${key}/csv`);
     assert.equal(csv.status, 200, key);
   }
+  const gl = (await call('gestor', 'GET', '/api/relatorios')).data;
+  for (const { key } of gl.reports.filter((r) => r.group === 'Comercial')) assert.equal((await call('gestor', 'GET', `/api/relatorios/${key}`)).status, 200, key);
   const tc = (await call('admin', 'GET', '/api/relatorios/taxa_contato')).data;
   assert.ok(tc.rows.length >= 1);
 });
@@ -656,7 +659,7 @@ test('funil: Prospect vai direto para Tentativa; R1 bolo só a partir da R1; R1 
   // Pop-up "Agendar R1": cliente, e-mail, horário (30 min) e move para R1
   const ctx = await call('c1', 'GET', `/api/r1/contexto?contact_id=${c.data.id}`);
   assert.equal(ctx.status, 200, JSON.stringify(ctx.data));
-  assert.equal(ctx.data.title, '[R1] Prospect Direto / Vero Consórcios');
+  assert.equal(ctx.data.title, '[R1] Prospect Direto | Vero Consórcios');
   assert.equal(ctx.data.duration_min, 30);
   assert.equal(ctx.data.google.configured, false);
   const start = new Date(Date.now() + 2 * 86400000);
@@ -754,7 +757,7 @@ test('Google Agenda: configuração pelo administrador, conexão do especialista
     assert.equal(r.data.meeting_url, 'https://meet.google.com/aaa-bbbb-ccc');
     const [method, url, ev] = seen.find((x) => x[0] === 'POST');
     assert.match(url, /conferenceDataVersion=1&sendUpdates=all/);
-    assert.equal(ev.summary, '[R1] Cliente Meet / Vero Consórcios');
+    assert.equal(ev.summary, '[R1] Cliente Meet | Vero Consórcios');
     assert.equal(ev.attendees[0].email, 'cliente.meet@exemplo.com');
     assert.equal(ev.conferenceData.createRequest.conferenceSolutionKey.type, 'hangoutsMeet');
     assert.equal(Date.parse(ev.end.dateTime) - Date.parse(ev.start.dateTime), 45 * 60000);
@@ -777,6 +780,145 @@ test('Google Agenda: configuração pelo administrador, conexão do especialista
     globalThis.fetch = realFetch;
     await call('admin', 'PUT', '/api/google/config', { client_id: '', client_secret: '', public_url: '' });
   }
+});
+
+/** Servidor SMTP de teste (local): guarda as linhas recebidas em got. */
+async function fakeSmtp() {
+  const net = require('node:net');
+  const got = [];
+  const server = net.createServer((sock) => {
+    let data = false;
+    let buf = '';
+    sock.write('220 teste ESMTP\r\n');
+    sock.on('data', (chunk) => {
+      buf += chunk.toString();
+      let i;
+      while ((i = buf.indexOf('\r\n')) >= 0) {
+        const line = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        if (data) {
+          if (line === '.') {
+            data = false;
+            sock.write('250 OK queued\r\n');
+          } else got.push(line);
+          continue;
+        }
+        got.push(line);
+        if (/^EHLO/.test(line)) sock.write('250-teste\r\n250 AUTH PLAIN LOGIN\r\n');
+        else if (/^AUTH PLAIN/.test(line)) sock.write('235 ok\r\n');
+        else if (/^(MAIL|RCPT)/.test(line)) sock.write('250 ok\r\n');
+        else if (line === 'DATA') {
+          data = true;
+          sock.write('354 go\r\n');
+        } else if (line === 'QUIT') sock.end('221 bye\r\n');
+      }
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  return { got, port: server.address().port, close: () => server.close() };
+}
+
+test('R1 pelo Google Meet: link automático, confirmação por e-mail (noreply@) e "R1 feita" só quando alguém de fora da empresa entra', async () => {
+  await call('admin', 'PUT', '/api/google/config', { client_id: '123-abc.apps.googleusercontent.com', client_secret: 'segredo', public_url: 'https://crm.vero.test' });
+  const smtp = await fakeSmtp();
+  await call('admin', 'PUT', '/api/email/config', { host: '127.0.0.1', port: smtp.port, security: 'none', user: 'noreply@veroconsorciosbr.com.br', password: 'segredo' });
+  const con = await call('c1', 'POST', '/api/google/conectar', { popup: true });
+  const state = new URL(con.data.url).searchParams.get('state');
+  assert.match(new URL(con.data.url).searchParams.get('scope'), /meetings\.space\.readonly/);
+  const me = (await call('c1', 'GET', '/api/perfil')).data;
+  let room = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => {
+    const u = String(url);
+    if (u.startsWith('https://oauth2.googleapis.com/token')) {
+      const idt = `x.${Buffer.from(JSON.stringify({ email: 'especialista@gmail.com', sub: '1001' })).toString('base64url')}.y`;
+      return new Response(JSON.stringify({ access_token: 'at', refresh_token: 'rt', expires_in: 3600, id_token: idt, scope: 'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/meetings.space.readonly openid email' }), { status: 200 });
+    }
+    if (u.startsWith('https://www.googleapis.com/calendar/v3/')) return new Response(JSON.stringify({ id: 'evt9', hangoutLink: 'https://meet.google.com/xyz-abcd-efg', htmlLink: 'https://calendar.google.com/e' }), { status: 200 });
+    if (u.startsWith('https://meet.googleapis.com/v2/conferenceRecords?')) {
+      assert.match(decodeURIComponent(u), /space\.meeting_code = "xyz-abcd-efg"/);
+      return new Response(JSON.stringify(room.length ? { conferenceRecords: [{ name: 'conferenceRecords/r1' }] } : {}), { status: 200 });
+    }
+    if (u.startsWith('https://meet.googleapis.com/v2/conferenceRecords/r1/participants')) return new Response(JSON.stringify({ participants: room }), { status: 200 });
+    return realFetch(url, opts);
+  };
+  try {
+    const cb = await fetch(`${base}/api/google/retorno?code=abc&state=${state}`, { redirect: 'manual' });
+    assert.equal(cb.headers.get('location'), '/#/meu-cadastro?google=ok&fechar=1', 'aberta pelo pop-up: a guia se fecha sozinha');
+    const st = (await call('c1', 'GET', '/api/google/status')).data;
+    assert.equal(st.meet_access, true);
+    assert.equal(st.needs_reconnect, false);
+    const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Presença', phone1: '11 94444-7070', email: 'cliente.presenca@exemplo.com', origin: 'indicacao' });
+    const start = new Date(Date.now() + 10 * 60000);
+    const r = await call('c1', 'POST', '/api/r1/agendar', { contact_id: c.data.id, start_at: start.toISOString(), end_at: new Date(start.getTime() + 30 * 60000).toISOString(), video: true, logo_url: 'https://crm.vero.test/img/vero-logo-dark.png' });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.equal(r.data.meeting_url, 'https://meet.google.com/xyz-abcd-efg', 'link do Meet salvo na R1 sem segundo passo');
+    // Confirmação por e-mail para o cliente, remetente noreply@
+    assert.equal(r.data.confirmation.sent, true, JSON.stringify(r.data.confirmation));
+    assert.ok(smtp.got.includes('MAIL FROM:<noreply@veroconsorciosbr.com.br>'));
+    assert.ok(smtp.got.includes('RCPT TO:<cliente.presenca@exemplo.com>'));
+    const mailHtml = Buffer.from(smtp.got.join('\n').split('Content-Type: text/html; charset=utf-8')[1].split('\n\n')[1].split('--vero')[0].replace(/\s/g, ''), 'base64').toString('utf8');
+    assert.match(mailHtml, /Entrar na reunião/);
+    assert.match(mailHtml, /meet\.google\.com\/xyz-abcd-efg/);
+    // Modelo da R1 liberado para baixar
+    const dl = await fetch(`${base}/api/r1/modelo?task_id=${r.data.task_id}&baixar=1`, { headers: { Cookie: sessions.c1, 'X-Requested-With': 'crm' } });
+    assert.equal(dl.status, 200);
+    assert.match(dl.headers.get('content-disposition'), /attachment; filename="R1 - Cliente Presenca\.html"/);
+    const page = await dl.text();
+    assert.match(page, /Cliente Presença/);
+    assert.match(page, new RegExp(me.name));
+    assert.ok(!/\{\{\s*especialista_nome\s*\}\}/.test(page));
+    const presenca = () => call('c1', 'POST', `/api/tarefas/${r.data.task_id}/presenca`);
+    // Ninguém na sala; depois só o especialista; depois o especialista e um colega da empresa: não conta
+    assert.equal((await presenca()).data.status, 'aguardando');
+    const t0 = new Date(start.getTime() + 60000).toISOString();
+    room = [{ signedinUser: { user: 'users/1001', displayName: 'Outro Nome Na Conta' }, earliestStartTime: t0 }];
+    assert.equal((await presenca()).data.status, 'aguardando', 'especialista sozinho não conta');
+    room.push({ signedinUser: { user: 'users/2002', displayName: 'Administrador Teste' }, earliestStartTime: t0 });
+    const adminName = (await call('admin', 'GET', '/api/perfil')).data.name;
+    room[1].signedinUser.displayName = adminName;
+    const p2 = (await presenca()).data;
+    assert.equal(p2.status, 'aguardando', 'só pessoas da empresa não contam');
+    assert.ok(p2.participants.every((p) => p.internal));
+    // O cliente entra (convidado sem conta Google): R1 feita, no horário em que entrou
+    const t1 = new Date(start.getTime() + 4 * 60000).toISOString();
+    room.push({ anonymousUser: { displayName: 'Cliente Presença' }, earliestStartTime: t1 });
+    room[2].anonymousUser.displayName = 'Cliente (celular)';
+    const p3 = (await presenca()).data;
+    assert.equal(p3.status, 'r1_feita', JSON.stringify(p3));
+    assert.equal(p3.attended_at, t1);
+    const rec = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data;
+    const task = rec.tasks.find((t) => t.id === r.data.task_id);
+    assert.equal(task.status, 'concluida');
+    assert.equal(task.outcome, 'realizada');
+    assert.equal(task.attendance_status, 'r1_feita');
+    assert.equal(task.completed_at, t1);
+    assert.ok(rec.activities?.some?.((a) => a.type === 'reuniao_realizada') ?? true);
+    // Regra da etapa "R1 realizada" passa a valer para o negócio
+    const opp = rec.opportunities[0];
+    const chk = await call('c1', 'GET', `/api/oportunidades/${opp.id}`);
+    assert.equal(chk.status, 200);
+  } finally {
+    globalThis.fetch = realFetch;
+    smtp.close();
+    await call('c1', 'POST', '/api/google/desconectar');
+    await call('admin', 'PUT', '/api/google/config', { client_id: '', client_secret: '', public_url: '' });
+    await call('admin', 'PUT', '/api/email/config', { host: '', user: '', password: '', clear_password: true });
+  }
+});
+
+test('presença no Meet: classificação dos participantes e decisão', () => {
+  const { DatabaseSync } = require('node:sqlite');
+  const m = require('../server/services/meetings');
+  assert.equal(m.meetCode('https://meet.google.com/abc-defg-hij?authuser=0'), 'abc-defg-hij');
+  assert.equal(m.meetCode('https://zoom.us/j/1'), null);
+  const one = [{ name: 'A', internal: true, joined_at: '2026-01-01T10:00:00Z' }];
+  assert.equal(m.decideAttendance(one).status, 'aguardando');
+  assert.equal(m.decideAttendance([...one, { name: 'B', internal: true, joined_at: '2026-01-01T10:01:00Z' }]).status, 'aguardando');
+  const d = m.decideAttendance([{ name: 'A', internal: true, joined_at: '2026-01-01T10:05:00Z' }, { name: 'C', internal: false, joined_at: '2026-01-01T10:02:00Z' }]);
+  assert.deepEqual(d, { status: 'r1_feita', at: '2026-01-01T10:05:00Z' }, 'vale o momento em que os dois estavam na sala');
+  assert.equal(m.decideAttendance([{ name: 'C', internal: false, joined_at: 'x' }, { name: 'D', internal: false, joined_at: 'y' }]).status, 'r1_feita', 'dois de fora da empresa também contam');
+  void DatabaseSync;
 });
 
 test('planos e administradoras: faixa de crédito com incremento, comissão em parcelas e visão restrita ao administrador', async () => {
@@ -1578,7 +1720,7 @@ test('planos na proposta: só administradoras e planos ativos (pelo código) ou 
   assert.equal(p3.administrator_name, 'Adm Teste');
 });
 
-test('ficha por e-mail: modelo da Vero enviado pelo SMTP (remetente admin@veroconsorciosbr.com.br) ou devolvido pronto sem SMTP', async () => {
+test('ficha por e-mail: modelo da Vero enviado pelo SMTP (remetente noreply@veroconsorciosbr.com.br) ou devolvido pronto sem SMTP', async () => {
   const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Email Ficha', phone1: '11 94321-6006', email: 'cliente.ficha@exemplo.com' });
   assert.equal(c.status, 200, JSON.stringify(c.data));
   const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
@@ -1588,7 +1730,7 @@ test('ficha por e-mail: modelo da Vero enviado pelo SMTP (remetente admin@veroco
   assert.equal(off.status, 200, JSON.stringify(off.data));
   assert.equal(off.data.sent, false);
   assert.equal(off.data.reason, 'nao_configurado');
-  assert.equal(off.data.from, 'admin@veroconsorciosbr.com.br');
+  assert.equal(off.data.from, 'noreply@veroconsorciosbr.com.br');
   assert.match(off.data.html, /Acessar minha ficha/);
   assert.match(off.data.html, /4 últimos dígitos do seu celular/);
   assert.match(off.data.html, /https:\/\/crm\.vero\.test\/#\/ficha\//);
@@ -1632,14 +1774,14 @@ test('ficha por e-mail: modelo da Vero enviado pelo SMTP (remetente admin@veroco
   await new Promise((r) => smtp.listen(0, '127.0.0.1', r));
   try {
     assert.equal((await call('c1', 'PUT', '/api/email/config', { host: '127.0.0.1' })).status, 403);
-    const cfg = await call('admin', 'PUT', '/api/email/config', { host: '127.0.0.1', port: smtp.address().port, security: 'none', user: 'admin@veroconsorciosbr.com.br', password: 'segredo', from_name: 'Vero Consórcios' });
+    const cfg = await call('admin', 'PUT', '/api/email/config', { host: '127.0.0.1', port: smtp.address().port, security: 'none', user: 'noreply@veroconsorciosbr.com.br', password: 'segredo', from_name: 'Vero Consórcios' });
     assert.equal(cfg.status, 200, JSON.stringify(cfg.data));
     assert.equal(cfg.data.configured, true);
-    assert.equal(cfg.data.from_email, 'admin@veroconsorciosbr.com.br');
+    assert.equal(cfg.data.from_email, 'noreply@veroconsorciosbr.com.br');
     const sent = await call('c1', 'POST', `/api/pre-vendas/${ps.data.id}/enviar-email`, { base: 'https://crm.vero.test/' });
     assert.equal(sent.status, 200, JSON.stringify(sent.data));
     assert.equal(sent.data.sent, true, JSON.stringify(sent.data));
-    assert.ok(got.includes('MAIL FROM:<admin@veroconsorciosbr.com.br>'));
+    assert.ok(got.includes('MAIL FROM:<noreply@veroconsorciosbr.com.br>'));
     assert.ok(got.includes('RCPT TO:<cliente.ficha@exemplo.com>'));
     assert.ok(got.some((l) => /^Subject: =\?UTF-8\?B\?/.test(l)));
     const html = Buffer.from(got.join('\n').split('Content-Type: text/html; charset=utf-8')[1].split('\n\n')[1].split('--vero')[0].replace(/\s/g, ''), 'base64').toString('utf8');
@@ -1650,4 +1792,167 @@ test('ficha por e-mail: modelo da Vero enviado pelo SMTP (remetente admin@veroco
     smtp.close();
     await call('admin', 'PUT', '/api/email/config', { host: '', user: '', password: '', clear_password: true });
   }
+});
+
+
+/* ------------------------- Colaboradores, Central de documentos, Relatórios por perfil e BI ------------------------- */
+
+const b64 = (text) => Buffer.from(text).toString('base64');
+
+test('colaboradores: cadastro completo por modelo contratual, contratos com anexo, benefícios, situação e acesso só com o módulo', async () => {
+  assert.equal((await call('c1', 'GET', '/api/colaboradores')).status, 403, 'especialista não acessa o RH');
+  assert.equal((await call('gestor', 'GET', '/api/colaboradores')).status, 403);
+  assert.equal((await call('admin', 'POST', '/api/colaboradores', { full_name: 'Ana CPF Errado', cpf: '111.111.111-11' })).status, 400);
+  assert.equal((await call('admin', 'POST', '/api/colaboradores', { full_name: 'Bruno PJ', contract_type: 'pj' })).status, 400, 'PJ exige razão social e CNPJ');
+  const lider = await call('admin', 'POST', '/api/colaboradores', { full_name: 'Carla Líder', job_title: 'Gerente comercial', contract_type: 'socio', partner_share_pct: 50, pay_model: 'fixa', base_salary: '15000', admission_date: '2021-03-01' });
+  assert.equal(lider.status, 200, JSON.stringify(lider.data));
+  assert.match(lider.data.code, /^COL-/);
+  const e = await call('admin', 'POST', '/api/colaboradores', {
+    full_name: 'Daniel Especialista', cpf: '529.982.247-25', rg: '1234567', birth_date: '1995-06-10', phone: '51 99999-0000', personal_email: 'daniel@gmail.com', corporate_email: 'daniel@veroconsorciosbr.com.br',
+    cep: '90000-000', street: 'Rua A', number: '10', city: 'Porto Alegre', state: 'RS', emergency_name: 'Maria', emergency_relation: 'Mãe', emergency_phone: '51 98888-0000',
+    job_title: 'Especialista em consórcios', job_function: 'Vendas consultivas', leader_id: lider.data.id, admission_date: '2025-01-15',
+    contract_type: 'clt', work_schedule: 'Seg a sex, 9h-18h', weekly_hours: 44, daily_hours: 8, break_minutes: 60,
+    pay_model: 'hibrida', base_salary: '3000', variable_description: '0,6% do crédito vendido', variable_target: '2000',
+  });
+  assert.equal(e.status, 200, JSON.stringify(e.data));
+  assert.equal((await call('admin', 'POST', '/api/colaboradores', { full_name: 'Duplicado', cpf: '52998224725' })).status, 400, 'CPF único');
+  const id = e.data.id;
+  assert.equal((await call('admin', 'POST', `/api/colaboradores/${id}/beneficios`, { kind: 'beneficio', type: 'vale_refeicao', amount: 800, company_cost: 800 })).status, 200);
+  assert.equal((await call('admin', 'POST', `/api/colaboradores/${id}/beneficios`, { kind: 'beneficio', type: 'plano_saude', description: 'Unimed', amount: 450 })).status, 200);
+  assert.equal((await call('admin', 'POST', `/api/colaboradores/${id}/beneficios`, { kind: 'desconto', type: 'desconto_vt', value_type: 'percentual', amount: 6 })).status, 200);
+  assert.equal((await call('admin', 'POST', `/api/colaboradores/${id}/beneficios`, { kind: 'desconto', type: 'inexistente' })).status, 400);
+  const k = await call('admin', 'POST', `/api/colaboradores/${id}/contratos`, { title: 'Contrato de trabalho CLT', start_date: '2025-01-15', end_date: '2025-04-14', filename: 'contrato.pdf', content_base64: b64('%PDF-1.4 contrato') });
+  assert.equal(k.status, 200, JSON.stringify(k.data));
+  assert.equal((await call('admin', 'POST', `/api/colaboradores/${id}/contratos`, { title: 'X', start_date: '2025-02-01', end_date: '2025-01-01' })).status, 400, 'término antes do início');
+  assert.equal((await call('admin', 'POST', `/api/colaboradores/${id}/arquivos`, { category: 'identificacao', filename: 'rg.exe', content_base64: b64('x') })).status, 400);
+  const f = await call('admin', 'POST', `/api/colaboradores/${id}/arquivos`, { category: 'identificacao', filename: 'rg.png', content_base64: b64('png') });
+  assert.equal(f.status, 200);
+  const d = (await call('admin', 'GET', `/api/colaboradores/${id}`)).data;
+  assert.equal(d.leader_name, 'Carla Líder');
+  assert.equal(d.cost.fixed, 3000);
+  assert.equal(d.cost.variable, 2000);
+  assert.equal(d.cost.benefits, 1250);
+  assert.equal(d.cost.discounts, 180, '6% do fixo');
+  assert.equal(d.cost.total_cost, 6250);
+  assert.equal(d.contracts[0].filename, 'contrato.pdf');
+  assert.equal(d.files.length, 1);
+  const dl = await fetch(`${base}/api/colaboradores-contratos/${k.data.id}/arquivo`, { headers: { Cookie: sessions.admin } });
+  assert.equal(dl.status, 200);
+  assert.equal(await dl.text(), '%PDF-1.4 contrato');
+  // Situação: férias (data de início automática) e desligamento com data obrigatória
+  assert.equal((await call('admin', 'PATCH', `/api/colaboradores/${id}`, { status: 'ferias', status_until: '2026-12-20' })).status, 200);
+  assert.equal((await call('admin', 'PATCH', `/api/colaboradores/${id}`, { status: 'desligado' })).status, 400);
+  assert.equal((await call('admin', 'PATCH', `/api/colaboradores/${id}`, { status: 'desligado', termination_date: '2026-09-30', termination_type: 'pedido', termination_reason: 'Nova oportunidade' })).status, 200);
+  assert.equal((await call('admin', 'PATCH', `/api/colaboradores/${id}`, { base_salary: '3500' })).status, 200);
+  const h = (await call('admin', 'GET', `/api/colaboradores/${id}`)).data.history;
+  assert.ok(h.some((x) => x.kind === 'situacao' && /Desligado/.test(x.text)));
+  assert.ok(h.some((x) => x.kind === 'remuneracao' && /3\.500/.test(x.text)));
+  const list = (await call('admin', 'GET', '/api/colaboradores')).data;
+  assert.ok(!list.rows.some((r) => r.id === id), 'desligado sai da lista padrão');
+  assert.ok((await call('admin', 'GET', '/api/colaboradores?todos=1')).data.rows.some((r) => r.id === id));
+  // Contrato vencendo gera alerta para quem tem o módulo
+  const { contractSweep } = require('../server/services/people');
+  await call('admin', 'PATCH', `/api/colaboradores/${id}`, { status: 'ativo', termination_date: '' });
+  assert.ok(contractSweep(appDb) >= 1);
+});
+
+test('central de documentos: pastas padrão, subpastas, envio com validade, nova versão, alertas e acesso só do administrador', async () => {
+  assert.equal((await call('gestor', 'GET', '/api/documentos')).status, 403);
+  assert.equal((await call('c1', 'GET', '/api/documentos')).status, 403);
+  const root = (await call('admin', 'GET', '/api/documentos')).data;
+  assert.equal(root.folders.length, 8);
+  const fiscal = root.folders.find((f) => /Fiscal/.test(f.name));
+  const sub = await call('admin', 'POST', '/api/documentos/pastas', { name: 'Certidões negativas', parent_id: fiscal.id });
+  assert.equal(sub.status, 200);
+  assert.equal((await call('admin', 'POST', '/api/documentos/pastas', { name: 'Certidões negativas', parent_id: fiscal.id })).status, 400, 'nome repetido na mesma pasta');
+  const soon = new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10);
+  const doc = await call('admin', 'POST', '/api/documentos', { folder_id: sub.data.id, title: 'CND Federal', doc_number: '123', issuer: 'Receita Federal', expires_at: soon, filename: 'cnd.pdf', content_base64: b64('v1') });
+  assert.equal(doc.status, 200, JSON.stringify(doc.data));
+  assert.equal((await call('admin', 'POST', '/api/documentos', { folder_id: sub.data.id, filename: 'virus.exe', content_base64: b64('x') })).status, 400);
+  let view = (await call('admin', 'GET', `/api/documentos?pasta=${sub.data.id}`)).data;
+  assert.equal(view.documents[0].expiry, 'vencendo');
+  assert.deepEqual(view.path.map((p) => p.name), [fiscal.name, 'Certidões negativas']);
+  assert.ok((await call('admin', 'GET', '/api/documentos')).data.alerts.some((a) => a.id === doc.data.id));
+  assert.ok((await call('admin', 'GET', '/api/documentos?q=Receita')).data.documents.some((a) => a.id === doc.data.id), 'busca em todas as pastas');
+  // Nova versão: a anterior fica no histórico
+  const v2 = await call('admin', 'POST', '/api/documentos', { id: doc.data.id, expires_at: '2027-12-31', filename: 'cnd-2.pdf', content_base64: b64('v2') });
+  assert.equal(v2.data.version, 2);
+  const det = (await call('admin', 'GET', `/api/documentos/${v2.data.id}`)).data;
+  assert.equal(det.versions.length, 1);
+  assert.equal(det.expiry, 'ok');
+  const dl = await fetch(`${base}/api/documentos/${det.versions[0].id}/arquivo`, { headers: { Cookie: sessions.admin } });
+  assert.equal(await dl.text(), 'v1');
+  view = (await call('admin', 'GET', `/api/documentos?pasta=${sub.data.id}`)).data;
+  assert.equal(view.documents.length, 1);
+  // Pasta com arquivo não pode ser excluída; pasta principal também não
+  const del = (url) => call('admin', 'DELETE', url);
+  assert.equal((await del(`/api/documentos/pastas/${sub.data.id}`)).status, 400);
+  assert.equal((await del(`/api/documentos/pastas/${fiscal.id}`)).status, 400);
+  // Alerta de validade (uma vez por documento)
+  const late = await call('admin', 'POST', '/api/documentos', { folder_id: sub.data.id, title: 'Alvará', expires_at: '2020-01-01', filename: 'alvara.pdf', content_base64: b64('a') });
+  const { expirySweep } = require('../server/services/documents');
+  assert.ok(expirySweep(appDb) >= 1);
+  assert.equal(expirySweep(appDb), 0);
+  assert.equal((await del(`/api/documentos/${late.data.id}`)).status, 200, 'arquivar');
+  assert.equal((await del(`/api/documentos/${v2.data.id}?definitivo=1`)).status, 200);
+  assert.equal((await del(`/api/documentos/pastas/${sub.data.id}`)).status, 400, 'ainda tem o arquivado');
+  assert.equal((await del(`/api/documentos/${late.data.id}?definitivo=1`)).status, 200);
+  assert.equal((await del(`/api/documentos/pastas/${sub.data.id}`)).status, 200);
+});
+
+test('relatórios por perfil: especialista só vê as próprias vendas, sem exportar; administrador exporta Excel e o pacote', async () => {
+  const cat = (await call('c1', 'GET', '/api/relatorios')).data;
+  assert.equal(cat.export, false);
+  assert.deepEqual([...new Set(cat.reports.map((r) => r.group))], ['Meu desempenho']);
+  assert.equal((await call('c1', 'GET', '/api/relatorios/leads_por_origem')).status, 403, 'sem dados de leads');
+  assert.equal((await call('c1', 'GET', '/api/relatorios/fin_saldos')).status, 403);
+  const mine = await call('c1', 'GET', '/api/relatorios/minhas_vendas?from=2020-01-01T00:00:00Z&to=2030-01-01T00:00:00Z');
+  assert.equal(mine.status, 200);
+  assert.equal(mine.data.exportable, false);
+  assert.ok(!mine.data.extra.columns.some((c) => /cliente|nome|telefone|email/i.test(c.key)), 'sem dados do cliente');
+  assert.equal((await call('c1', 'GET', '/api/relatorios/minhas_vendas/csv')).status, 403);
+  assert.equal((await call('c1', 'GET', '/api/relatorios/minhas_vendas/xlsx')).status, 403);
+  const g = (await call('gestor', 'GET', '/api/relatorios')).data;
+  assert.ok(g.reports.some((r) => r.group === 'Comercial'));
+  assert.ok(!g.reports.some((r) => r.group === 'Financeiro' || r.group === 'Pessoas (RH)'));
+  const a = (await call('admin', 'GET', '/api/relatorios')).data;
+  assert.ok(['Vendas e operação', 'Financeiro', 'Pessoas (RH)', 'Comercial'].every((x) => a.reports.some((r) => r.group === x)));
+  const x = await fetch(`${base}/api/relatorios/fin_pagar/xlsx?from=2020-01-01T00:00:00Z&to=2030-01-01T00:00:00Z`, { headers: { Cookie: sessions.admin } });
+  assert.equal(x.status, 200);
+  assert.match(x.headers.get('content-type'), /spreadsheetml/);
+  const buf = Buffer.from(await x.arrayBuffer());
+  assert.equal(buf.slice(0, 2).toString(), 'PK');
+  const pk = await fetch(`${base}/api/relatorios-pacote.xlsx?grupo=Financeiro`, { headers: { Cookie: sessions.admin } });
+  assert.equal(pk.status, 200);
+  assert.ok((await pk.arrayBuffer()).byteLength > 1000);
+  assert.equal((await fetch(`${base}/api/relatorios-pacote.xlsx`, { headers: { Cookie: sessions.gestor } })).status, 403);
+  const saldo = (await call('admin', 'GET', '/api/relatorios/fin_saldos')).data;
+  assert.equal(saldo.rows.length, 3, '30, 60 e 90 dias');
+  assert.ok('excedente' in saldo.rows[0]);
+  const rem = (await call('admin', 'GET', '/api/relatorios/rh_remuneracao')).data;
+  assert.ok(rem.rows.some((r) => r.nome === 'Daniel Especialista'));
+});
+
+test('conexão BI: bases em JSON e CSV com o token da integração, sem dados pessoais sensíveis', async () => {
+  assert.equal((await call(null, 'GET', '/api/bi')).status, 401);
+  const t = await call('admin', 'POST', '/api/integracoes/bi/token');
+  assert.equal(t.status, 200);
+  const h = { Authorization: `Bearer ${t.data.token}` };
+  const idx = await call(null, 'GET', '/api/bi', undefined, h);
+  assert.equal(idx.status, 200, JSON.stringify(idx.data));
+  assert.ok(idx.data.bases.some((b) => b.base === 'vendas'));
+  for (const b of idx.data.bases) {
+    const r = await call(null, 'GET', `/api/bi/${b.base}`, undefined, h);
+    assert.equal(r.status, 200, `${b.base}: ${JSON.stringify(r.data)}`);
+  }
+  await call('admin', 'POST', '/api/colaboradores', { full_name: 'Elisa BI', cpf: '390.533.447-05', pix_key: 'elisa@pix', personal_email: 'elisa@gmail.com', job_title: 'Analista' });
+  const col = (await call(null, 'GET', '/api/bi/colaboradores', undefined, h)).data;
+  assert.ok(col.linhas >= 1);
+  assert.ok(!Object.keys(col.dados[0]).some((k) => /^(cpf|rg|pix_key|personal_email|corporate_email|phone)$|bank|email|telefone/i.test(k)));
+  assert.ok(!JSON.stringify(col.dados).includes('39053344705'));
+  const csv = await fetch(`${base}/api/bi/financeiro?formato=csv&token=${encodeURIComponent(t.data.token)}`);
+  assert.equal(csv.status, 200);
+  assert.match(csv.headers.get('content-type'), /text\/csv/);
+  assert.equal((await call(null, 'GET', '/api/bi/inexistente', undefined, h)).status, 400);
+  assert.equal((await fetch(`${base}/api/bi/vendas?token=errado`)).status, 401);
 });

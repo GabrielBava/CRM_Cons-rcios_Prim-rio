@@ -15,9 +15,9 @@ cai no CRM e é distribuído pela roleta; o especialista gera a proposta no simu
 
 | O quê | Endereço | Acesso |
 |---|---|---|
-| CRM | <http://127.0.0.1:3000/> | `admin@demo.local` · senha `demo12345` |
-| Landing page | <http://127.0.0.1:3000/lp/> | pública |
-| Simulador | <http://127.0.0.1:3000/simulador/> | aberto pelo CRM |
+| CRM | <http://localhost:3000/> | `admin@demo.local` · senha `demo12345` |
+| Landing page | <http://localhost:3000/lp/> | pública |
+| Simulador | <http://localhost:3000/simulador/> | aberto pelo CRM |
 
 Outros usuários da demonstração (mesma senha): `gestora@demo.local` (líder), `consultor1@demo.local` e
 `consultor2@demo.local` (especialistas, participam da roleta), `leitura@demo.local` (somente leitura) e
@@ -78,7 +78,7 @@ cliques em `iniciar-windows.bat`. Ao fechar a área restrita, tudo é apagado.
 
 ### A. Landing page → CRM (simulador da LP)
 
-1. Abra <http://127.0.0.1:3000/lp/>, escolha **Imóvel** (ou Veículo), ajuste o valor e clique **Simular agora**.
+1. Abra <http://localhost:3000/lp/>, escolha **Imóvel** (ou Veículo), ajuste o valor e clique **Simular agora**.
 2. Preencha nome e sobrenome, e-mail, celular, preferência de contato e horário; marque os dois aceites; envie.
 3. No CRM (`admin@demo.local`), abra **CRM**: o card aparece em **Tentativa de contato**, já com um especialista.
    - Origem: **Landing page**; campanha "LP · Simulador Imóvel" (ou a `utm_campaign` do link).
@@ -137,14 +137,17 @@ cliques em `iniciar-windows.bat`. Ao fechar a área restrita, tudo é apagado.
 3. Concluídas as etapas, o treinamento de consórcios (7 módulos) aparece em Treinamentos; ao terminar, a liderança é avisada.
 4. Para criar um especialista de verdade: Usuários › Novo usuário (senha provisória e trilha marcadas por padrão).
 
-### H. R1: agendamento, Google Agenda e modelo
+### H. R1: agendamento, Google Agenda, presença e modelo
 
 1. No CRM, arraste um card de **Lead qualificado** para **R1**: abre o pop-up "Agendar R1" (cliente, e-mail, data, início e
-   término de 15 em 15 minutos, 30 minutos por padrão, título "[R1] Cliente / Vero Consórcios").
-2. Sem o Google conectado, clique em "Abrir no Google Agenda" (evento já preenchido) e cole o link do Meet.
-   Com o Google configurado (Configurações › Integrações) e conectado (Meu cadastro), o evento sai com Meet e convite.
-3. "Abrir modelo da R1": o roteiro da reunião com seu nome, foto e contato. O administrador troca o modelo em
-   Configurações › Modelo da R1.
+   término de 15 em 15 minutos, 30 minutos por padrão, título "[R1] Cliente | Vero Consórcios").
+2. Com o `config.env` deste pacote, o Google já está configurado: no pop-up clique em **Conectar Google Agenda** (uma vez)
+   e depois em **Agendar R1**. O evento entra na sua agenda com o Google Meet, o cliente recebe o convite e a confirmação
+   por e-mail (`noreply@`), e o link do Meet fica salvo na R1. Sem o Google, use "Abrir no Google Agenda" e cole o link.
+3. **Baixar modelo da R1** (ou Abrir): o modelo oficial da Vero com seu nome, foto, WhatsApp e e-mail e o nome do cliente.
+4. **R1 feita:** entre no Meet no horário e peça para alguém de fora da empresa entrar (ex.: um celular sem a sua conta).
+   Em até 5 minutos (ou no botão "Verificar presença" da tarefa) a reunião vira "R1 feita" com o horário.
+   Só você na sala, ou só colegas da Vero, não conta.
 4. Cliente faltou? Mova de **R1** para **R1 bolo** (justificativa opcional) e use "Agendar R1" para remarcar.
 5. No painel lateral (clique no nome do card): botão **Agendar R1**, engrenagem para **trocar o responsável** (com motivo)
    e **Editar** nas informações de negócio.
@@ -158,13 +161,26 @@ cliques em `iniciar-windows.bat`. Ao fechar a área restrita, tudo é apagado.
 
 ### J. Ficha do cliente (link)
 
-1. Abra o link da ficha numa janela anônima: aparece "Olá, Nome Sobrenome" e o pedido dos 4 últimos dígitos do celular.
+1. Abra o link da ficha numa janela anônima: aparece, no centro da tela, "Olá, Nome Sobrenome" e o pedido dos 4 últimos
+   dígitos do celular; depois a ficha abre também centralizada.
 2. Deixe um campo obrigatório vazio e clique em Salvar: ele fica em vermelho e o que foi digitado continua lá.
 3. Documentos obrigatórios: identificação e comprovante de endereço, em foto ou PDF.
-4. Na pré-venda, "Enviar por e-mail" mostra o e-mail visual (sem SMTP) ou envia de `admin@veroconsorciosbr.com.br`
-   (SMTP em Configurações › Integrações › E-mail).
+4. Na pré-venda, **Enviar para o cliente por e-mail** dispara na hora o e-mail de `noreply@veroconsorciosbr.com.br`
+   (SMTP do `config.env`). Sem SMTP, mostra o e-mail pronto para copiar.
 
-### K. Demais módulos
+### K. Colaboradores, Central de documentos e Relatórios
+
+1. **Colaboradores** (menu Administração): abra "Gestora Demo (líder)" e veja identificação, organização, contrato CLT e
+   jornada, remuneração híbrida, benefícios e descontos, contrato anexado e histórico. Em "Editar cadastro", troque o
+   modelo para PJ: aparecem razão social e CNPJ e somem os campos de jornada.
+2. **Central de documentos**: pastas padrão; "Fiscal e tributário › Certidões negativas" tem uma certidão vencendo e o
+   "Alvará" está vencido (alerta no topo e no sino). Abra um documento: baixar, enviar nova versão e ver as anteriores.
+3. **Relatórios**: como administrador, veja Financeiro › "Saldos, projeção e excedente de caixa" e exporte em Excel; como
+   `consultor1@demo.local`, só aparece "Meu desempenho", sem botão de exportar.
+4. **Conexão BI**: Configurações › Integrações › Conexão BI › Gerar token e abra
+   `http://localhost:3000/api/bi/vendas?formato=csv&token=SEU_TOKEN` no navegador.
+
+### L. Demais módulos
 
 Painel inicial (funil visual e ranking), Agenda, Metas, Comissões, Pós-venda (NPS e estratégia de lance),
 Financeiro (contas a pagar e a receber), Administradoras (senha do portal), Relatórios, Usuários e Configurações.

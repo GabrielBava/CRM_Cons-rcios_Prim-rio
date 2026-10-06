@@ -330,6 +330,8 @@ function seedDemo(db, password) {
     });
   }
   seedTreasuryDemo(db, { admin, gestor, c1, PDF });
+  seedPeopleDemo(db, { admin, gestor, c1, c2, team, PDF });
+  seedDocumentsDemo(db, { admin, PDF });
   finance.overdueSweep(db);
   sales.presaleSweep(db);
   sales.commissionSweep(db);
@@ -429,6 +431,65 @@ function seedTreasuryDemo(db, { admin, gestor, c1, PDF }) {
     treasury.createTitle(db, admin, { direction: 'receber', kind: 'pontual', description: 'Intermediação de carta contemplada', partner_id: parceiroImob, category_id: cat('receber', 'Intermediação'), cost_center_id: cc('Comercial'), payment_method_id: pm('Pix'), account_id: main, responsible_id: c1.id, total_value: 6000, first_due: dateAgo(-35) });
   });
   treasury.sweep(db);
+}
+
+/** Colaboradores fictícios: sócio-diretor, líder (CLT), especialistas (CLT e PJ), estagiária e um desligado. */
+function seedPeopleDemo(db, { admin, gestor, c1, c2, team, PDF }) {
+  const people = require('./services/people');
+  const cc = (n) => db.prepare('SELECT id FROM fin_cost_centers WHERE name = ?').get(n)?.id ?? null;
+  const save = (d) => people.saveEmployee(db, admin, d).id;
+  const dir = save({ full_name: 'Administrador Demo', user_id: admin.id, cpf: '111.444.777-35', birth_date: '1985-04-12', phone: '(51) 98912-1113', corporate_email: 'admin@demo.local', job_title: 'Diretor comercial', job_function: 'Gestão da empresa e das parcerias', cost_center_id: cc('Diretoria'), admission_date: '2021-02-01', contract_type: 'socio', partner_share_pct: 100, pay_model: 'fixa', base_salary: 12000, pay_day: 5, work_regime: 'hibrido', city: 'Porto Alegre', state: 'RS' });
+  const lider = save({ full_name: 'Gestora Demo (líder)', user_id: gestor.id, cpf: '295.379.955-93', birth_date: '1990-' + dateAgo(-5).slice(5), phone: '(11) 90000-0002', personal_email: 'gestora.pessoal@example.com', corporate_email: 'gestora@demo.local', job_title: 'Líder de equipe comercial', job_function: 'Gestão do time e distribuição de leads', team_id: team, leader_id: dir, cost_center_id: cc('Comercial'), admission_date: '2022-03-14', contract_type: 'clt', pis: '123.45678.91-0', ctps: '1234567', ctps_series: '001', work_schedule: 'Segunda a sexta, 9h às 18h', weekly_hours: 44, daily_hours: 8, break_minutes: 60, time_tracking: 'Ponto eletrônico', pay_model: 'hibrida', base_salary: 6500, variable_description: '0,1% sobre o crédito vendido pela equipe + bônus por meta trimestral', variable_target: 2500, pay_day: 5, work_regime: 'presencial', emergency_name: 'Paulo Souza', emergency_relation: 'Cônjuge', emergency_phone: '(11) 97777-0000', bank_name: 'Banco do Brasil', bank_agency: '1234', bank_account: '56789-0', bank_account_type: 'Corrente', pix_key: 'gestora@demo.local' });
+  const e1 = save({ full_name: 'Especialista Demo 1', user_id: c1.id, cpf: '153.509.460-56', birth_date: '1996-08-21', phone: '(11) 90000-0003', corporate_email: 'consultor1@demo.local', job_title: 'Especialista em consórcio imobiliário', job_function: 'Atendimento consultivo e vendas', team_id: team, leader_id: lider, cost_center_id: cc('Comercial'), admission_date: dateAgo(400), contract_type: 'clt', work_schedule: 'Segunda a sexta, 9h às 18h', weekly_hours: 44, daily_hours: 8, break_minutes: 60, time_tracking: 'Aplicativo', pay_model: 'hibrida', base_salary: 3200, variable_description: '0,6% sobre o crédito vendido, em parcelas conforme a tabela da administradora', variable_target: 3500, pay_day: 5, work_regime: 'hibrido' });
+  const e2 = save({ full_name: 'Especialista Demo 2', user_id: c2.id, cpf: '714.602.380-01', birth_date: '1993-11-02', phone: '(11) 90000-0004', corporate_email: 'consultor2@demo.local', job_title: 'Especialista em consórcio de veículos', job_function: 'Vendas consultivas', team_id: team, leader_id: lider, cost_center_id: cc('Comercial'), admission_date: dateAgo(220), contract_type: 'pj', pj_company_name: 'Demo 2 Consultoria Ltda', pj_trade_name: 'Demo 2 Consultoria', pj_cnpj: '11.222.333/0001-81', pj_tax_regime: 'Simples Nacional', pay_model: 'variavel', variable_description: '0,7% sobre o crédito vendido (nota fiscal mensal)', variable_target: 5000, pay_day: 10, work_regime: 'remoto' });
+  const est = save({ full_name: 'Júlia Estagiária', cpf: '483.157.200-40', birth_date: '2003-' + dateAgo(-12).slice(5), phone: '(51) 99111-2222', personal_email: 'julia.estagio@example.com', corporate_email: 'julia@veroconsorciosbr.com.br', job_title: 'Estagiária de pós-venda', job_function: 'Apoio na formalização e no pós-venda', leader_id: lider, cost_center_id: cc('Operação e pós-venda'), admission_date: dateAgo(90), contract_type: 'estagio', internship_institution: 'UFRGS', internship_course: 'Administração', internship_supervisor: 'Gestora Demo (líder)', work_schedule: 'Segunda a sexta, 13h às 19h', weekly_hours: 30, daily_hours: 6, time_tracking: 'Aplicativo', pay_model: 'fixa', base_salary: 1500, pay_day: 5, work_regime: 'presencial' });
+  const old = save({ full_name: 'Rafael Ex-especialista', cpf: '862.410.950-72', job_title: 'Especialista em consórcios', team_id: team, leader_id: lider, cost_center_id: cc('Comercial'), admission_date: dateAgo(500), contract_type: 'clt', pay_model: 'hibrida', base_salary: 3000, variable_description: '0,6% sobre vendas', variable_target: 2000 });
+  people.saveEmployee(db, admin, { id: old, status: 'desligado', termination_date: dateAgo(40), termination_type: 'pedido', termination_reason: 'Mudança de cidade' });
+  const ben = (id, kind, type, extra = {}) => people.saveBenefit(db, admin, id, { kind, type, ...extra });
+  for (const id of [lider, e1, est]) {
+    ben(id, 'beneficio', 'vale_refeicao', { amount: id === est ? 400 : 800, description: 'Cartão refeição' });
+    ben(id, 'beneficio', 'vale_transporte', { amount: 250 });
+    ben(id, 'desconto', 'desconto_vt', { value_type: 'percentual', amount: id === est ? 0 : 6, description: 'Até 6% do salário-base' });
+  }
+  for (const id of [lider, e1]) {
+    ben(id, 'beneficio', 'plano_saude', { amount: 520, company_cost: 520, description: 'Plano de saúde enfermaria' });
+    ben(id, 'beneficio', 'seguro_vida', { amount: 35 });
+    ben(id, 'desconto', 'inss', { value_type: 'percentual', amount: 9, description: 'Alíquota efetiva estimada' });
+    ben(id, 'desconto', 'coparticipacao', { amount: 40 });
+  }
+  ben(e2, 'beneficio', 'ajuda_custo', { amount: 300, description: 'Internet e celular' });
+  const ctr = (id, title, start, end, extra = {}) => people.saveContract(db, admin, id, { title, start_date: start, end_date: end, filename: `${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.pdf`, content_base64: PDF, ...extra });
+  ctr(lider, 'Contrato de trabalho CLT', '2022-03-14', null);
+  ctr(e1, 'Contrato de trabalho CLT', dateAgo(400), null);
+  ctr(e2, 'Contrato de prestação de serviços (PJ)', dateAgo(220), dateAgo(-20), { monthly_value: 5000, notes: 'Renovação anual; reajuste pelo IPCA.' });
+  ctr(est, 'Termo de compromisso de estágio', dateAgo(90), dateAgo(-275), { notes: 'Seguro de acidentes pessoais contratado.' });
+  ctr(dir, 'Contrato social – cláusula de pró-labore', '2021-02-01', null, { contract_type: 'socio' });
+  people.uploadFile(db, admin, e1, { category: 'identificacao', title: 'CNH digital', filename: 'cnh.pdf', content_base64: PDF });
+  people.uploadFile(db, admin, e2, { category: 'cnpj', title: 'Cartão CNPJ da PJ', filename: 'cartao-cnpj.pdf', content_base64: PDF });
+  people.saveEmployee(db, admin, { id: e1, status: 'ferias', status_since: dateAgo(3), status_until: dateAgo(-12), status_reason: 'Férias do 1º período aquisitivo' });
+}
+
+/** Central de documentos: alguns arquivos fictícios nas pastas padrão (um com a validade vencendo). */
+function seedDocumentsDemo(db, { admin, PDF }) {
+  const documents = require('./services/documents');
+  const folder = (re) => db.prepare('SELECT id, name FROM doc_folders WHERE parent_id IS NULL').all().find((f) => re.test(f.name))?.id;
+  const sub = (parent, name) => documents.saveFolder(db, admin, { name, parent_id: parent }).id;
+  const up = (folder_id, title, extra = {}) => documents.saveDocument(db, admin, { folder_id, title, filename: `${title.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-')}.pdf`, content_base64: PDF, ...extra });
+  const soc = folder(/Societ/);
+  up(soc, 'Cartão CNPJ', { doc_number: '12.345.678/0001-90', issuer: 'Receita Federal', issue_date: dateAgo(60), tags: 'cnpj, cadastro' });
+  up(soc, 'Contrato social – 2ª alteração', { issuer: 'Junta Comercial do RS', issue_date: '2024-05-10', tags: 'contrato social, societário' });
+  const fisc = folder(/Fiscal/);
+  const cert = sub(fisc, 'Certidões negativas');
+  up(cert, 'CND Federal (Receita e PGFN)', { issuer: 'Receita Federal', issue_date: dateAgo(170), expires_at: dateAgo(-10), tags: 'certidão' });
+  up(cert, 'CND Estadual', { issuer: 'SEFAZ-RS', issue_date: dateAgo(30), expires_at: dateAgo(-60), tags: 'certidão' });
+  up(fisc, 'Inscrição municipal', { doc_number: '987654-3', issuer: 'Prefeitura de Porto Alegre', tags: 'inscrição' });
+  const jur = folder(/Jur/);
+  up(jur, 'Contrato de parceria com administradora', { issue_date: '2025-01-20', expires_at: dateAgo(-300), tags: 'contrato, parceria' });
+  const lic = folder(/Licen/);
+  up(lic, 'Alvará de funcionamento', { issuer: 'Prefeitura de Porto Alegre', issue_date: dateAgo(340), expires_at: dateAgo(5), tags: 'alvará' });
+  up(lic, 'Certificado digital e-CNPJ A1', { issuer: 'Certificadora', expires_at: dateAgo(-200), tags: 'certificado digital' });
+  up(folder(/Marca/), 'Manual da marca Vero Consórcios', { tags: 'marca, identidade visual' });
+  documents.expirySweep(db);
 }
 
 module.exports = { seedDemo, DEMO_USERS };

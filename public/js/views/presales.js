@@ -229,7 +229,7 @@ async function openPreSale(id, reload) {
         <p class="small">O cliente recebe o link com as instruções de preenchimento e o aviso de privacidade (LGPD). Acesso: ${ps.accessed_at ? `primeiro acesso em ${fmtDateTime(ps.accessed_at)}` : 'ainda não acessado'} · ${ps.link_access_count || 0} acesso(s).</p>
         <div class="inline-actions">
           ${msg?.whatsapp_url ? html`<a class="btn small primary" href="${msg.whatsapp_url}" target="_blank" rel="noopener noreferrer" data-sent="whatsapp">Enviar por WhatsApp</a>` : ''}
-          ${msg?.email_url ? html`<button type="button" class="btn small" data-send-email>Enviar por e-mail</button>` : html`<span class="small muted">Sem e-mail no cadastro.</span>`}
+          ${msg?.email_url ? html`<button type="button" class="btn small primary" data-send-email title="${msg?.email_configured ? `Envia na hora para ${msg?.email_to}` : 'Abre o e-mail pronto para envio'}">${msg?.email_configured ? `Enviar para o cliente por e-mail (${msg?.email_to})` : 'Enviar por e-mail'}</button>` : html`<span class="small muted">Sem e-mail no cadastro.</span>`}
           <button type="button" class="btn small" data-copy-msg>Copiar mensagem</button>
           ${window.CRM_PREVIEW ? html`<a class="btn small" href="${ps.link_url.slice(ps.link_url.indexOf('#'))}">Testar como cliente</a>` : ''}
         </div>
@@ -276,7 +276,7 @@ async function openPreSale(id, reload) {
       on(form, 'click', '[data-sent]', (e, a) => post(`/api/pre-vendas/${ps.id}/enviado`, { via: a.dataset.sent }).catch(() => {}));
       on(form, 'click', '[data-send-email]', async (e, b) => {
         b.disabled = true;
-        await sendFichaEmail(`/api/pre-vendas/${ps.id}/enviar-email`);
+        await sendFichaEmail(`/api/pre-vendas/${ps.id}/enviar-email`, b);
         b.disabled = false;
       });
       on(form, 'click', '[data-copy-msg]', async () => {

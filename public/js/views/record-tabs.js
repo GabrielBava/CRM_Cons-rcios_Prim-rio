@@ -707,7 +707,7 @@ export async function clientLinkDialog(c, reload) {
       ${link.token ? copyBox(pageUrl(`ficha/${link.token}`)) : html`<p class="warn-text">O endereço deste link não está disponível. Revogue-o na aba Pré-venda e gere outro.</p>`}
       ${msg?.active ? html`<div class="inline-actions send-ficha">
         ${msg.whatsapp_url ? html`<a class="btn primary" href="${msg.whatsapp_url}" target="_blank" rel="noopener noreferrer">Enviar por WhatsApp</a>` : ''}
-        ${msg.email_to ? html`<button type="button" class="btn" data-send-email>Enviar por e-mail</button>` : html`<span class="small muted">Sem e-mail no cadastro.</span>`}
+        ${msg.email_to ? html`<button type="button" class="btn primary" data-send-email title="${msg.email_configured ? `Envia na hora para ${msg.email_to}` : 'Abre o e-mail pronto para envio'}">${msg.email_configured ? `Enviar para o cliente por e-mail (${msg.email_to})` : 'Enviar por e-mail'}</button>` : html`<span class="small muted">Sem e-mail no cadastro.</span>`}
       </div>
       <details class="small"><summary>Mensagem do WhatsApp</summary><pre class="code msg-preview">${msg.text}</pre></details>` : ''}
       <div class="kv">${kv('Acessos', link.access_count || 0)}${kv('Último acesso', link.last_used_at ? fmtDateTime(link.last_used_at) : 'ainda não acessado')}</div>
@@ -716,7 +716,7 @@ export async function clientLinkDialog(c, reload) {
       bindCopy(form);
       on(form, 'click', '[data-send-email]', async (e, b) => {
         b.disabled = true;
-        await sendFichaEmail(`/api/cadastros/${c.id}/link-cliente/enviar-email`);
+        await sendFichaEmail(`/api/cadastros/${c.id}/link-cliente/enviar-email`, b);
         b.disabled = false;
       });
     },

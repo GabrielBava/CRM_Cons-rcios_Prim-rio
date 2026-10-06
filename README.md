@@ -49,7 +49,7 @@ A interface segue o manual da marca v1.0 (aplicações e diretrizes, elementos d
 **Teste local completo (CRM + simulador + landing page):** `npm run local` (ou `iniciar-windows.bat` / `iniciar-mac-linux.sh`). Cria o banco de demonstração na primeira vez e serve o CRM em `/`, a landing page em `/lp/` e o simulador em `/simulador/`. Roteiro passo a passo em [`TESTE-LOCAL.md`](TESTE-LOCAL.md).
 
 ```bash
-npm start                    # http://127.0.0.1:3000
+npm start                    # http://localhost:3000
 ```
 
 No primeiro acesso, a tela pede a criação do usuário **administrador**. Não existe senha padrão.
@@ -179,10 +179,22 @@ docs/
 ## Novo especialista, R1 e ficha do cliente
 
 - **Primeiro acesso:** o usuário criado pelo administrador recebe uma senha provisória; a plataforma só abre depois da troca. Especialistas seguem a trilha do Painel inicial (Meu cadastro, Conheça a Vero, Kit do especialista) e, no fim, o treinamento de consórcios é liberado em Treinamentos.
-- **Agendar R1:** o mesmo pop-up no funil (Lead qualificado → R1), no painel lateral, na ficha e na Agenda: cliente e e-mail, horários de 15 em 15 minutos, 30 minutos por padrão, título "[R1] Cliente / Vero Consórcios". Com o Google Agenda conectado (Meu cadastro), o evento sai com Google Meet e convite ao cliente.
-- **Modelo da R1:** HTML único da empresa, aberto pela reunião com nome, foto e contato do especialista. O administrador troca o modelo em Configurações › Modelo da R1 (campos `{{...}}`).
+- **Agendar R1:** o mesmo pop-up no funil (Lead qualificado → R1), no painel lateral, na ficha e na Agenda: cliente e e-mail, horários de 15 em 15 minutos, 30 minutos por padrão, título "[R1] Cliente | Vero Consórcios". Com o Google Agenda conectado, o clique em "Agendar R1" já cria o evento na agenda do especialista com Google Meet, envia o convite ao cliente, salva o link na R1 e libera o modelo da R1 para baixar. O cliente recebe também a confirmação por e-mail (remetente `noreply@`). O pop-up oferece "Conectar Google Agenda" a quem ainda não conectou.
+- **R1 feita (presença pelo Google Meet):** a cada 5 minutos o CRM confere a sala do Meet das R1 em andamento (API do Google Meet). Conta como "R1 feita" quando há pelo menos 2 participantes e ao menos um é de fora da empresa (o cliente); o especialista sozinho, ou só pessoas da empresa, não conta. A reunião é concluída como realizada no horário em que o cliente entrou, e o especialista é avisado. Botão "Verificar presença" para conferir na hora.
+- **Modelo da R1:** o modelo oficial da Vero (13 seções com notas do apresentador), preenchido com nome, foto, WhatsApp, e-mail, cargo e apresentação do especialista e o nome do cliente; abre ou baixa (HTML) pela reunião. O administrador troca o modelo em Configurações › Modelo da R1 (campos `{{...}}`).
 - **Planos:** a proposta e o simulador usam só as administradoras e os planos ativos (pelo código), mais a opção "Outros" com condições livres.
-- **Ficha do cliente:** abre só com os 4 últimos dígitos do celular; campos obrigatórios vazios ficam em vermelho sem perder o que foi digitado; documentos obrigatórios: identificação e comprovante de endereço (foto ou PDF). Envio por WhatsApp (modelo) ou por e-mail visual (SMTP, remetente `admin@veroconsorciosbr.com.br`).
+- **Ficha do cliente:** abre só com os 4 últimos dígitos do celular; campos obrigatórios vazios ficam em vermelho sem perder o que foi digitado; documentos obrigatórios: identificação e comprovante de endereço (foto ou PDF). Envio por WhatsApp (modelo) ou por e-mail visual (SMTP, remetente `noreply@veroconsorciosbr.com.br`).
+
+## Colaboradores, Central de documentos e Relatórios
+
+- **Colaboradores (RH):** identificação completa (CPF, RG, nascimento, contatos, e-mail pessoal e corporativo, endereço, contato de emergência), organização (cargo, função, time, líder direto, centro de custo, entrada), situação (ativo, férias, afastado, desligado com data, tipo e motivo), modelo contratual (CLT com PIS/CTPS e jornada; PJ com razão social e CNPJ; estágio; prestador; sócio), contratos com vigência e arquivo anexo, remuneração fixa, variável ou híbrida, benefícios e descontos de mercado, dados bancários, documentos e histórico. Módulo "Colaboradores": padrão só do administrador, pode ser liberado a um usuário de RH.
+- **Central de documentos:** só o administrador. Pastas padrão (societário, fiscal e tributário, jurídico, licenças e certidões, gestão, RH, financeiro, marca) e subpastas; cada arquivo com número, órgão emissor, emissão e validade (alerta 30 dias antes), versões anteriores guardadas e downloads auditados.
+- **Relatórios por perfil:** o especialista vê só "Meu desempenho" (as próprias vendas e comissões), sem dados de leads e sem exportar. O líder vê os comerciais da equipe. RH (módulo Colaboradores): quadro, cadastro, remuneração e custo, contratos, admissões/desligamentos/turnover e aniversariantes. Administrador: vendas gerais, fluxo de caixa, saldos e excedente de caixa (reserva mínima em Configurações), contas a pagar e a receber e resultado por categoria; exporta em Excel (.xlsx) cada relatório ou o pacote completo.
+- **Conexão BI:** Configurações › Integrações › Conexão BI gera o token; `GET /api/bi` lista as bases (vendas, comissões, funil, propostas, financeiro, colaboradores, benefícios, metas e atividades) em JSON ou CSV para Power BI, Looker Studio ou Excel. Detalhes em `docs/INTEGRACOES.md`.
+
+## Configuração local (senhas e chaves)
+
+Senhas e chaves (Google, SMTP) ficam no arquivo `config.env`, na pasta do sistema, fora do Git (`.gitignore`). Modelo em `config.env.exemplo`. O servidor lê o arquivo ao iniciar (`npm start`, `npm run local` e os atalhos) e o instalador do Ubuntu o leva para `/etc/vero-consorcios.env`.
 
 ## Produção
 
@@ -192,4 +204,4 @@ docs/
 - Faça backup periódico do arquivo definido em `CRM_DB`, junto com os arquivos `-wal` e `-shm` e a chave `<banco>.key` (sem ela, as senhas de portal guardadas não podem ser abertas).
 - Tokens de integração são exibidos uma única vez. No banco fica apenas o hash.
 - **Google Agenda (R1 com Meet):** defina `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET` (ou configure em Configurações › Integrações) e `PUBLIC_URL` com o endereço público do CRM. Cadastre no Google Cloud o URI de retorno `PUBLIC_URL/api/google/retorno`.
-- **E-mail da ficha:** configure o SMTP em Configurações › Integrações › E-mail (ou `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`, `SMTP_USER`, `SMTP_PASSWORD`). Remetente padrão: `admin@veroconsorciosbr.com.br`.
+- **E-mails automáticos (ficha e R1 agendada):** configure o SMTP em Configurações › Integrações › E-mail ou no `config.env` (`SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`). Remetente padrão: `noreply@veroconsorciosbr.com.br`.

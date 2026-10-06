@@ -1,7 +1,7 @@
 -- =====================================================================
 -- Vero Consórcios (ERP/CRM) — DDL completo do banco (SQLite)
 -- Gerado por scripts/ddl.js a partir de um banco novo, com todas as migrações aplicadas.
--- 62 tabelas · 176 chaves estrangeiras declaradas · 43 índices
+-- 69 tabelas · 194 chaves estrangeiras declaradas · 49 índices
 --
 -- Observações
 --  - O SQLite verifica as chaves estrangeiras na gravação (PRAGMA foreign_keys = ON), não na criação:
@@ -44,7 +44,9 @@ CREATE TABLE IF NOT EXISTS users (
   onboarding TEXT NOT NULL DEFAULT '{}',
   google_refresh_token_enc TEXT,
   google_email TEXT,
-  google_connected_at TEXT
+  google_connected_at TEXT,
+  google_sub TEXT,
+  google_scopes TEXT
 );
 
 CREATE TABLE IF NOT EXISTS teams (
@@ -552,7 +554,13 @@ CREATE TABLE IF NOT EXISTS tasks (
   attendee_email TEXT,
   meeting_url TEXT,
   google_event_id TEXT,
-  calendar_status TEXT
+  calendar_status TEXT,
+  attendance_status TEXT,
+  attendance_checked_at TEXT,
+  attendance_detail TEXT,
+  attended_at TEXT,
+  calendar_owner_id INTEGER REFERENCES users(id),
+  confirmation_sent_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(status, due_at);
 
@@ -1176,6 +1184,192 @@ CREATE TABLE IF NOT EXISTS call_events (
 );
 CREATE INDEX IF NOT EXISTS idx_call_status ON call_events(status);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_call_external ON call_events(provider, external_call_id) WHERE external_call_id IS NOT NULL;
+
+-- ---------------------------------------------------------------------
+-- Pessoas (RH)
+-- ---------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS employees (
+  id INTEGER PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  user_id INTEGER REFERENCES users(id),
+  status TEXT NOT NULL DEFAULT 'ativo' CHECK (status IN ('ativo','ferias','afastado','desligado')),
+  status_since TEXT,
+  status_until TEXT,
+  status_reason TEXT,
+  full_name TEXT NOT NULL,
+  social_name TEXT,
+  cpf TEXT,
+  rg TEXT,
+  rg_issuer TEXT,
+  birth_date TEXT,
+  sex TEXT,
+  marital_status TEXT,
+  nationality TEXT,
+  mother_name TEXT,
+  education TEXT,
+  pis TEXT,
+  ctps TEXT,
+  ctps_series TEXT,
+  phone TEXT,
+  personal_email TEXT,
+  corporate_email TEXT,
+  cep TEXT,
+  street TEXT,
+  number TEXT,
+  complement TEXT,
+  district TEXT,
+  city TEXT,
+  state TEXT,
+  emergency_name TEXT,
+  emergency_relation TEXT,
+  emergency_phone TEXT,
+  job_title TEXT,
+  job_function TEXT,
+  team_id INTEGER REFERENCES teams(id),
+  leader_id INTEGER REFERENCES employees(id),
+  cost_center_id INTEGER REFERENCES fin_cost_centers(id),
+  work_regime TEXT,
+  work_location TEXT,
+  admission_date TEXT,
+  probation_end TEXT,
+  termination_date TEXT,
+  termination_type TEXT,
+  termination_reason TEXT,
+  contract_type TEXT NOT NULL DEFAULT 'clt' CHECK (contract_type IN ('clt','pj','estagio','prestador','socio')),
+  pj_company_name TEXT,
+  pj_trade_name TEXT,
+  pj_cnpj TEXT,
+  pj_municipal_reg TEXT,
+  pj_tax_regime TEXT,
+  internship_institution TEXT,
+  internship_course TEXT,
+  internship_supervisor TEXT,
+  partner_share_pct REAL,
+  work_schedule TEXT,
+  weekly_hours REAL,
+  daily_hours REAL,
+  break_minutes INTEGER,
+  time_tracking TEXT,
+  pay_model TEXT NOT NULL DEFAULT 'fixa' CHECK (pay_model IN ('fixa','variavel','hibrida')),
+  base_salary REAL,
+  variable_description TEXT,
+  variable_target REAL,
+  variable_cap REAL,
+  pay_day INTEGER,
+  bank_name TEXT,
+  bank_agency TEXT,
+  bank_account TEXT,
+  bank_account_type TEXT,
+  pix_key TEXT,
+  notes TEXT,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_employees_status ON employees(status);
+
+CREATE TABLE IF NOT EXISTS employee_contracts (
+  id INTEGER PRIMARY KEY,
+  employee_id INTEGER NOT NULL REFERENCES employees(id),
+  contract_type TEXT,
+  title TEXT NOT NULL,
+  start_date TEXT,
+  end_date TEXT,
+  ended_at TEXT,
+  status TEXT NOT NULL DEFAULT 'vigente' CHECK (status IN ('vigente','encerrado','rascunho')),
+  monthly_value REAL,
+  notes TEXT,
+  filename TEXT,
+  mime TEXT,
+  size INTEGER,
+  content BLOB,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_emp_contracts ON employee_contracts(employee_id);
+
+CREATE TABLE IF NOT EXISTS employee_benefits (
+  id INTEGER PRIMARY KEY,
+  employee_id INTEGER NOT NULL REFERENCES employees(id),
+  kind TEXT NOT NULL CHECK (kind IN ('beneficio','desconto')),
+  type TEXT NOT NULL,
+  description TEXT,
+  value_type TEXT NOT NULL DEFAULT 'valor' CHECK (value_type IN ('valor','percentual')),
+  amount REAL,
+  company_cost REAL,
+  start_date TEXT,
+  end_date TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_emp_benefits ON employee_benefits(employee_id);
+
+CREATE TABLE IF NOT EXISTS employee_files (
+  id INTEGER PRIMARY KEY,
+  employee_id INTEGER NOT NULL REFERENCES employees(id),
+  category TEXT NOT NULL DEFAULT 'outro',
+  title TEXT,
+  filename TEXT NOT NULL,
+  mime TEXT,
+  size INTEGER NOT NULL,
+  content BLOB NOT NULL,
+  uploaded_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_emp_files ON employee_files(employee_id);
+
+CREATE TABLE IF NOT EXISTS employee_history (
+  id INTEGER PRIMARY KEY,
+  employee_id INTEGER NOT NULL REFERENCES employees(id),
+  kind TEXT NOT NULL,
+  text TEXT NOT NULL,
+  user_id INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_emp_history ON employee_history(employee_id, created_at);
+
+-- ---------------------------------------------------------------------
+-- Central de documentos
+-- ---------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS doc_folders (
+  id INTEGER PRIMARY KEY,
+  parent_id INTEGER REFERENCES doc_folders(id),
+  name TEXT NOT NULL,
+  description TEXT,
+  position INTEGER NOT NULL DEFAULT 0,
+  system INTEGER NOT NULL DEFAULT 0,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS company_documents (
+  id INTEGER PRIMARY KEY,
+  folder_id INTEGER NOT NULL REFERENCES doc_folders(id),
+  title TEXT NOT NULL,
+  description TEXT,
+  doc_number TEXT,
+  issuer TEXT,
+  issue_date TEXT,
+  expires_at TEXT,
+  tags TEXT,
+  filename TEXT NOT NULL,
+  mime TEXT,
+  size INTEGER NOT NULL,
+  content BLOB NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  previous_id INTEGER REFERENCES company_documents(id),
+  status TEXT NOT NULL DEFAULT 'ativo' CHECK (status IN ('ativo','substituido','arquivado')),
+  expiry_alerted_at TEXT,
+  uploaded_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_company_docs ON company_documents(folder_id, status);
 
 -- ---------------------------------------------------------------------
 -- Financeiro da empresa

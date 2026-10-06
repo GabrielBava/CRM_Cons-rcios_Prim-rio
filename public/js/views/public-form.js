@@ -36,7 +36,7 @@ const keyStore = {
 
 /** Tela de segurança: "Olá, Nome Sobrenome" e os 4 últimos dígitos do celular antes de qualquer dado. */
 function verifyScreen(app, token, d, onOk) {
-  render(app, html`<div class="public-page">
+  render(app, html`<div class="public-page verify-page">
     <header><span class="brand-logo" role="img" aria-label="Vero Consórcios"></span><h1>Ficha Cadastral do Participante</h1></header>
     <form class="card verify-card" id="vf" novalidate>
       <h2>Olá, ${d.greeting || 'cliente'}!</h2>

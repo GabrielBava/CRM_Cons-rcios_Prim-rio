@@ -61,6 +61,8 @@ export async function show(view) {
             <h3>Google Agenda</h3>
             ${!g ? html`<p class="muted small">Indisponível.</p>`
               : g.connected ? html`<p class="small">Conectado a <strong>${g.google_email || 'sua conta Google'}</strong> desde ${fmtDateTime(g.connected_at)}. Cada R1 agendada no CRM entra na sua agenda com link do Google Meet e convite para o cliente.</p>
+                ${g.needs_reconnect ? html`<div class="alert warn small">Falta a permissão do Google Meet para o CRM registrar sozinho a "R1 feita" quando o cliente entrar na reunião. Clique em Reconectar e aceite todas as permissões.</div>
+                  <button type="button" class="btn small primary" data-act="google-on">Reconectar</button>` : html`<p class="small muted">Presença automática ativa: quando alguém de fora da empresa entra no Meet da R1, a reunião é registrada como "R1 feita".</p>`}
                 <button type="button" class="btn small ghost" data-act="google-off">Desconectar</button>`
               : g.configured ? html`<p class="small">Conecte sua agenda para que a R1 agendada no CRM crie o evento no seu Google Agenda, gere o link do Google Meet e envie o convite ao cliente.</p>
                 <button type="button" class="btn small primary" data-act="google-on">Conectar meu Google Agenda</button>`
@@ -155,6 +157,8 @@ export async function show(view) {
   if (back) {
     const msgs = { ok: 'Google Agenda conectado. As próximas R1 já entram na sua agenda com Google Meet.', cancelado: 'Conexão com o Google cancelada.', expirado: 'O pedido de conexão expirou. Tente de novo.', sem_permissao: 'O Google não devolveu a permissão de acesso contínuo. Tente de novo e aceite todas as permissões.', erro: 'Não foi possível conectar ao Google. Confira a configuração com o administrador.' };
     toast(msgs[back] || back, back === 'ok' ? 'ok' : 'error');
+    // Conexão aberta pelo pop-up "Agendar R1": esta guia se fecha e o agendamento continua na guia original
+    if (back === 'ok' && new URLSearchParams(location.hash.split('?')[1] || '').get('fechar') === '1') setTimeout(() => window.close(), 1200);
     history.replaceState(null, '', '#/meu-cadastro');
   }
   await load();

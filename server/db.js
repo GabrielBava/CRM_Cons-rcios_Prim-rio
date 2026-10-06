@@ -956,6 +956,19 @@ const DEFAULT_INTEGRATIONS = [
   ['whatsapp', 'WhatsApp'],
   ['api_leads', 'API de entrada de leads (site, formulários, conectores)'],
   ['agenda_externa', 'Google Agenda / Outlook'],
+  ['bi', 'Conexão BI (Power BI, Looker Studio, Excel)'],
+];
+
+/** Pastas padrão da Central de documentos (estrutura de documentos de um ERP). */
+const DOC_FOLDERS = [
+  ['Societário e institucional', 'Contrato social e alterações, cartão CNPJ, atas, procurações, quadro societário.'],
+  ['Fiscal e tributário', 'Inscrições estadual e municipal, certidões negativas, guias, declarações e apurações.'],
+  ['Jurídico e contratos', 'Contratos com administradoras, parceiros, fornecedores e clientes; processos e notificações.'],
+  ['Licenças, registros e certidões', 'Alvará, registros em órgãos de classe, certificado digital, marcas (INPI).'],
+  ['Gestão e organizacional', 'Planejamento, políticas internas, organograma, processos e manuais.'],
+  ['Pessoas e RH', 'Modelos de contrato, políticas de RH, convenção coletiva, documentos trabalhistas da empresa.'],
+  ['Financeiro e bancário', 'Contas bancárias, contratos bancários, seguros, empréstimos e garantias.'],
+  ['Marca e comunicação', 'Manual da marca, logos, apresentações institucionais e materiais oficiais.'],
 ];
 
 const DEFAULT_SETTINGS = {
@@ -998,14 +1011,20 @@ const DEFAULT_SETTINGS = {
   google_client_secret_enc: null,
   public_url: '',
   // R1: título do evento ({cliente}, {empresa}) e duração padrão em minutos
-  r1_title_template: '[R1] {cliente} / {empresa}',
+  r1_title_template: '[R1] {cliente} | {empresa}',
   r1_duration_min: 30,
+  // Domínio da empresa: quem entra no Meet com conta deste domínio não conta como cliente na presença da R1
+  internal_domain: 'veroconsorciosbr.com.br',
+  // Reserva mínima de caixa (relatório de saldos: o que passar disso é excedente de caixa)
+  cash_reserve_min: 0,
+  // Presença automática da R1 pelo Google Meet (precisa da permissão do Meet na conexão do especialista)
+  r1_auto_attendance: true,
   // Documentos obrigatórios da ficha: identificação e comprovante de endereço (foto ou PDF)
   doc_checklist: {
     PF: ['identificacao', 'comprovante_endereco'],
     PJ: ['doc_representante', 'comprovante_endereco'],
   },
-  // E-mail (SMTP) para enviar a ficha ao cliente; remetente padrão admin@veroconsorciosbr.com.br
+  // E-mail (SMTP) para enviar a ficha ao cliente; remetente padrão noreply@veroconsorciosbr.com.br
   smtp: null,
 };
 
@@ -1157,6 +1176,18 @@ function seedDefaults(db) {
     }
     db.prepare("INSERT INTO settings (key, value) VALUES ('migr_v9_docs', 'true')").run();
   }
+  // v10: título da R1 com barra reta ("[R1] Cliente | Vero Consórcios") e remetente noreply@ nos e-mails automáticos
+  if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_v10_r1'").get()) {
+    db.prepare("UPDATE settings SET value = ? WHERE key = 'r1_title_template' AND value = ?").run(JSON.stringify('[R1] {cliente} | {empresa}'), JSON.stringify('[R1] {cliente} / {empresa}'));
+    const smtp = getSetting(db, 'smtp');
+    if (smtp && smtp.from_email === 'admin@veroconsorciosbr.com.br') db.prepare("UPDATE settings SET value = ? WHERE key = 'smtp'").run(JSON.stringify({ ...smtp, from_email: 'noreply@veroconsorciosbr.com.br' }));
+    db.prepare("INSERT INTO settings (key, value) VALUES ('migr_v10_r1', 'true')").run();
+  }
+  // Central de documentos: pastas padrão (o administrador cria subpastas dentro delas)
+  if (db.prepare('SELECT COUNT(*) AS n FROM doc_folders').get().n === 0) {
+    const ins = db.prepare('INSERT INTO doc_folders (name, description, position, system, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)');
+    DOC_FOLDERS.forEach(([n, d], i) => ins.run(n, d, i, now, now));
+  }
   // Nome oficial da empresa: Vero Consórcios (só preenche quando ainda não foi definido)
   if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_marca_vero'").get()) {
     db.prepare("UPDATE settings SET value = ? WHERE key = 'company_name' AND value IN (?, 'null')").run(JSON.stringify('Vero Consórcios'), JSON.stringify(''));
@@ -1231,6 +1262,8 @@ const ADDED_COLUMNS = {
     ['must_change_password', 'INTEGER NOT NULL DEFAULT 0'], ['onboarding', "TEXT NOT NULL DEFAULT '{}'"],
     // Google Agenda do usuário (OAuth): token de atualização cifrado
     ['google_refresh_token_enc', 'TEXT'], ['google_email', 'TEXT'], ['google_connected_at', 'TEXT'],
+    // Identificador da conta Google (presença no Meet) e permissões concedidas
+    ['google_sub', 'TEXT'], ['google_scopes', 'TEXT'],
   ],
   teams: [['leader_id', 'INTEGER REFERENCES users(id)']],
   pipeline_stages: [['key', 'TEXT'], ['playbook', 'TEXT'], ['rot_days', 'INTEGER'], ['training_id', 'INTEGER']],
@@ -1238,6 +1271,9 @@ const ADDED_COLUMNS = {
     ['priority', "TEXT NOT NULL DEFAULT 'normal'"], ['proposal_id', 'INTEGER REFERENCES proposals(id)'], ['cadence_step', 'TEXT'], ['pre_sale_id', 'INTEGER'], ['sale_id', 'INTEGER'],
     // Reuniões (R1): término, convidado, link da videoconferência e evento no Google Agenda
     ['ends_at', 'TEXT'], ['attendee_email', 'TEXT'], ['meeting_url', 'TEXT'], ['google_event_id', 'TEXT'], ['calendar_status', 'TEXT'],
+    // Presença no Google Meet: aguardando, r1_feita (cliente de fora da empresa entrou) ou sem_cliente; e-mail de confirmação
+    ['attendance_status', 'TEXT'], ['attendance_checked_at', 'TEXT'], ['attendance_detail', 'TEXT'], ['attended_at', 'TEXT'],
+    ['calendar_owner_id', 'INTEGER REFERENCES users(id)'], ['confirmation_sent_at', 'TEXT'],
   ],
   products: [
     ['administrator_id', 'INTEGER REFERENCES administrators(id)'], ['plan_code', 'TEXT'], ['admin_fee_pct', 'REAL'], ['reserve_fund_pct', 'REAL'],
@@ -1820,6 +1856,128 @@ CREATE TABLE IF NOT EXISTS notifications (
   read_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(user_id, read_at, created_at);
+
+-- Colaboradores (RH): identificação, organização, contrato, jornada, remuneração e dados bancários
+CREATE TABLE IF NOT EXISTS employees (
+  id INTEGER PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  user_id INTEGER REFERENCES users(id),
+  status TEXT NOT NULL DEFAULT 'ativo' CHECK (status IN ('ativo','ferias','afastado','desligado')),
+  status_since TEXT, status_until TEXT, status_reason TEXT,
+  full_name TEXT NOT NULL, social_name TEXT, cpf TEXT, rg TEXT, rg_issuer TEXT, birth_date TEXT, sex TEXT,
+  marital_status TEXT, nationality TEXT, mother_name TEXT, education TEXT, pis TEXT, ctps TEXT, ctps_series TEXT,
+  phone TEXT, personal_email TEXT, corporate_email TEXT,
+  cep TEXT, street TEXT, number TEXT, complement TEXT, district TEXT, city TEXT, state TEXT,
+  emergency_name TEXT, emergency_relation TEXT, emergency_phone TEXT,
+  job_title TEXT, job_function TEXT, team_id INTEGER REFERENCES teams(id), leader_id INTEGER REFERENCES employees(id),
+  cost_center_id INTEGER REFERENCES fin_cost_centers(id), work_regime TEXT, work_location TEXT,
+  admission_date TEXT, probation_end TEXT, termination_date TEXT, termination_type TEXT, termination_reason TEXT,
+  contract_type TEXT NOT NULL DEFAULT 'clt' CHECK (contract_type IN ('clt','pj','estagio','prestador','socio')),
+  pj_company_name TEXT, pj_trade_name TEXT, pj_cnpj TEXT, pj_municipal_reg TEXT, pj_tax_regime TEXT,
+  internship_institution TEXT, internship_course TEXT, internship_supervisor TEXT,
+  partner_share_pct REAL,
+  work_schedule TEXT, weekly_hours REAL, daily_hours REAL, break_minutes INTEGER, time_tracking TEXT,
+  pay_model TEXT NOT NULL DEFAULT 'fixa' CHECK (pay_model IN ('fixa','variavel','hibrida')),
+  base_salary REAL, variable_description TEXT, variable_target REAL, variable_cap REAL, pay_day INTEGER,
+  bank_name TEXT, bank_agency TEXT, bank_account TEXT, bank_account_type TEXT, pix_key TEXT,
+  notes TEXT,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_employees_status ON employees(status);
+
+-- Contratos do colaborador (CLT, PJ, estágio, aditivos): vigência e arquivo anexo
+CREATE TABLE IF NOT EXISTS employee_contracts (
+  id INTEGER PRIMARY KEY,
+  employee_id INTEGER NOT NULL REFERENCES employees(id),
+  contract_type TEXT,
+  title TEXT NOT NULL,
+  start_date TEXT,
+  end_date TEXT,
+  ended_at TEXT,
+  status TEXT NOT NULL DEFAULT 'vigente' CHECK (status IN ('vigente','encerrado','rascunho')),
+  monthly_value REAL,
+  notes TEXT,
+  filename TEXT, mime TEXT, size INTEGER, content BLOB,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_emp_contracts ON employee_contracts(employee_id);
+
+-- Benefícios (VR, VA, plano de saúde...) e descontos (INSS, IRRF, VT...) do colaborador
+CREATE TABLE IF NOT EXISTS employee_benefits (
+  id INTEGER PRIMARY KEY,
+  employee_id INTEGER NOT NULL REFERENCES employees(id),
+  kind TEXT NOT NULL CHECK (kind IN ('beneficio','desconto')),
+  type TEXT NOT NULL,
+  description TEXT,
+  value_type TEXT NOT NULL DEFAULT 'valor' CHECK (value_type IN ('valor','percentual')),
+  amount REAL,
+  company_cost REAL,
+  start_date TEXT, end_date TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_emp_benefits ON employee_benefits(employee_id);
+
+-- Documentos pessoais do colaborador (RG, CPF, comprovantes, ASO, certificados)
+CREATE TABLE IF NOT EXISTS employee_files (
+  id INTEGER PRIMARY KEY,
+  employee_id INTEGER NOT NULL REFERENCES employees(id),
+  category TEXT NOT NULL DEFAULT 'outro',
+  title TEXT,
+  filename TEXT NOT NULL, mime TEXT, size INTEGER NOT NULL, content BLOB NOT NULL,
+  uploaded_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_emp_files ON employee_files(employee_id);
+
+-- Histórico do colaborador: situação, cargo e remuneração
+CREATE TABLE IF NOT EXISTS employee_history (
+  id INTEGER PRIMARY KEY,
+  employee_id INTEGER NOT NULL REFERENCES employees(id),
+  kind TEXT NOT NULL,
+  text TEXT NOT NULL,
+  user_id INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_emp_history ON employee_history(employee_id, created_at);
+
+-- Central de documentos da empresa (somente administrador): pastas e arquivos com versões
+CREATE TABLE IF NOT EXISTS doc_folders (
+  id INTEGER PRIMARY KEY,
+  parent_id INTEGER REFERENCES doc_folders(id),
+  name TEXT NOT NULL,
+  description TEXT,
+  position INTEGER NOT NULL DEFAULT 0,
+  system INTEGER NOT NULL DEFAULT 0,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS company_documents (
+  id INTEGER PRIMARY KEY,
+  folder_id INTEGER NOT NULL REFERENCES doc_folders(id),
+  title TEXT NOT NULL,
+  description TEXT,
+  doc_number TEXT,
+  issuer TEXT,
+  issue_date TEXT,
+  expires_at TEXT,
+  tags TEXT,
+  filename TEXT NOT NULL, mime TEXT, size INTEGER NOT NULL, content BLOB NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  previous_id INTEGER REFERENCES company_documents(id),
+  status TEXT NOT NULL DEFAULT 'ativo' CHECK (status IN ('ativo','substituido','arquivado')),
+  expiry_alerted_at TEXT,
+  uploaded_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_company_docs ON company_documents(folder_id, status);
 `;
 
 /**

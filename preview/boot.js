@@ -6,7 +6,7 @@
   'use strict';
   const DEMO_PASSWORD = 'demo12345';
   // v3: menu do usuário, notificações, pós-venda e funil com ações em massa — recarrega a demonstração nova
-  const DB_KEY = 'crm-preview-db-v8';
+  const DB_KEY = 'crm-preview-db-v9';
   const COOKIE_KEY = 'crm-preview-session';
   const req = (p) => window.CRMBackend.require(p);
   window.CRM_PREVIEW = true;

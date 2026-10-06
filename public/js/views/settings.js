@@ -108,7 +108,7 @@ function googleCard(g) {
   </section>`;
 }
 
-/** E-mail (SMTP): a ficha de adesão sai do endereço da empresa (padrão admin@veroconsorciosbr.com.br). */
+/** E-mail (SMTP): a ficha de adesão sai do endereço da empresa (padrão noreply@veroconsorciosbr.com.br). */
 function emailCard(st) {
   return html`<section class="card integ">
     <div class="section-head"><h3>E-mail (envio da ficha de adesão)</h3>${badge(st.configured ? 'Configurado' : 'Não configurado', st.configured ? 'ok' : 'muted')}</div>
@@ -117,9 +117,9 @@ function emailCard(st) {
       ${field({ name: 'host', label: 'Servidor SMTP', value: st.host || '', placeholder: 'smtp.seuprovedor.com.br' })}
       ${field({ name: 'port', label: 'Porta', type: 'number', value: st.port || 465 })}
       ${field({ name: 'security', label: 'Segurança', type: 'select', options: [{ value: 'tls', label: 'SSL/TLS (porta 465)' }, { value: 'starttls', label: 'STARTTLS (porta 587)' }, { value: 'none', label: 'Sem criptografia (só testes locais)' }], value: st.security || 'tls', allowEmpty: false })}
-      ${field({ name: 'user', label: 'Usuário', value: st.user || '', placeholder: 'admin@veroconsorciosbr.com.br' })}
+      ${field({ name: 'user', label: 'Usuário', value: st.user || '', placeholder: 'noreply@veroconsorciosbr.com.br' })}
       ${field({ name: 'password', label: st.has_password ? 'Senha (já salva; preencha só para trocar)' : 'Senha', type: 'password' })}
-      ${field({ name: 'from_email', label: 'Remetente', value: st.from_email, placeholder: 'admin@veroconsorciosbr.com.br' })}
+      ${field({ name: 'from_email', label: 'Remetente', value: st.from_email, placeholder: 'noreply@veroconsorciosbr.com.br' })}
       ${field({ name: 'from_name', label: 'Nome do remetente', value: st.from_name })}
       <div class="inline-actions full"><button class="btn primary" type="submit">Salvar</button>${st.configured ? html`<button class="btn" type="button" data-email-test>Enviar e-mail de teste para mim</button>` : ''}</div>
     </form>` : ''}
@@ -332,6 +332,7 @@ const RENDER = {
       whatsapp: [['POST', `${base}/api/integracoes/whatsapp/mensagens`]],
       meta_ads: [],
       agenda_externa: [],
+      bi: [['GET', `${base}/api/bi`], ['GET', `${base}/api/bi/vendas`], ['GET', `${base}/api/bi/financeiro?formato=csv`]],
     };
     const g = await get('/api/google/status').catch(() => null);
     const em = await get('/api/email/status').catch(() => null);
@@ -491,6 +492,7 @@ const RENDER = {
       ${field({ name: 'nps_link_days', label: 'Validade do link da pesquisa de satisfação (dias)', type: 'number', value: s.nps_link_days, min: 1 })}
       ${field({ name: 'proposal_simulator_url', label: 'Endereço do simulador de propostas', type: 'url', value: s.proposal_simulator_url, full: true, help: 'O botão "Gerar proposta" abre este endereço com o nome completo e o contato do cliente (parâmetros nome e contato).' })}
       ${field({ name: 'presale_alert_hours', label: 'Alertar pré-venda sem acesso ou sem preenchimento após (horas)', type: 'number', value: s.presale_alert_hours, min: 1, help: 'Cria a tarefa urgente "Revisar pré-venda" para o especialista.' })}
+      ${field({ name: 'cash_reserve_min', label: 'Reserva mínima de caixa', type: 'money', value: s.cash_reserve_min, help: 'Relatório "Saldos, projeção e excedente de caixa": o que passar disso é excedente.' })}
       ${field({ name: 'require_sale_checklist', label: 'Exigir a ficha de pré-venda completa para concluir a venda', type: 'checkbox', value: s.require_sale_checklist, full: true })}
     </div><button class="btn primary" type="submit">Salvar</button></form>
     <form class="card" id="flow"><h3>Pré-venda, venda e pós-venda</h3><div class="grid">

@@ -242,7 +242,7 @@ function presaleMessage(db, ps, url) {
   };
 }
 
-/** Envia a ficha por e-mail (SMTP da empresa, remetente admin@veroconsorciosbr.com.br) ou devolve o e-mail pronto. */
+/** Envia a ficha por e-mail (SMTP da empresa, remetente noreply@veroconsorciosbr.com.br) ou devolve o e-mail pronto. */
 async function sendFichaEmail(db, user, contactId, url, { preSaleId = null, logoUrl = null } = {}) {
   const c = loadContact(db, user, contactId, { write: true });
   if (!c.email) throw badRequest('Cadastre o e-mail do cliente para enviar a ficha por e-mail.');

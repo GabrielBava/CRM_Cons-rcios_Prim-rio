@@ -41,7 +41,7 @@ mkdir -p "$APP_DIR" "$DATA_DIR"
 if [ "$ORIGEM" != "$APP_DIR" ]; then
   echo "==> Copiando o sistema para $APP_DIR"
   rm -rf "${APP_DIR:?}"/*
-  tar -C "$ORIGEM" --exclude=./node_modules --exclude=./data --exclude=./.git --exclude=./dist -cf - . | tar -C "$APP_DIR" -xf -
+  tar -C "$ORIGEM" --exclude=./node_modules --exclude=./data --exclude=./.git --exclude=./dist --exclude=./config.env -cf - . | tar -C "$APP_DIR" -xf -
 fi
 chown -R root:root "$APP_DIR"
 chmod -R a+rX "$APP_DIR"   # o serviço (usuário vero) lê todos os arquivos do sistema
@@ -60,11 +60,25 @@ PORT=$PORTA
 CRM_DB=$DATA_DIR/crm.db
 CRM_SECRET_KEY=$KEY
 ${DOMINIO:+PUBLIC_URL=https://$DOMINIO}
-# Google Agenda (R1 com Meet): GOOGLE_CLIENT_ID=... e GOOGLE_CLIENT_SECRET=...
-# E-mail da ficha (SMTP): SMTP_HOST=... SMTP_PORT=465 SMTP_SECURITY=tls SMTP_USER=admin@veroconsorciosbr.com.br SMTP_PASSWORD=...
+# Google Agenda (R1 com Meet): GOOGLE_CLIENT_ID=... e GOOGLE_CLIENT_SECRET=... (ou um config.env junto do sistema)
+# E-mail da ficha (SMTP): SMTP_HOST=... SMTP_PORT=465 SMTP_SECURITY=tls SMTP_USER=noreply@veroconsorciosbr.com.br SMTP_PASSWORD=...
 # Landing page em outro domínio: LP_ALLOWED_ORIGINS=https://www.seudominio.com.br
 EOF
   chmod 600 "$ENV_FILE"
+fi
+# Senhas e chaves do config.env (Google Agenda, SMTP), quando ele vem junto do sistema: entram no arquivo do serviço
+# (só as chaves que ainda não existem lá; o config.env não é copiado para a pasta do sistema)
+if [ -f "$ORIGEM/config.env" ]; then
+  echo "==> Lendo config.env (Google e e-mail)"
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    case "$line" in ''|\#*) continue ;; esac
+    key="${line%%=*}"; val="${line#*=}"
+    key="$(echo "$key" | tr -d '[:space:]')"
+    val="${val#\"}"; val="${val%\"}"; val="${val#\'}"; val="${val%\'}"
+    [ -z "$val" ] && continue
+    grep -q "^${key}=" "$ENV_FILE" || printf "%s='%s'\n" "$key" "$val" >> "$ENV_FILE"
+  done < "$ORIGEM/config.env"
 fi
 set -a; . "$ENV_FILE"; set +a
 

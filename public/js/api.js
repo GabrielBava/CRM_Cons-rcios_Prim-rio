@@ -48,6 +48,7 @@ export const get = (url, params, headers) => {
 export const post = (url, body = {}) => api('POST', url, body);
 export const patch = (url, body = {}) => api('PATCH', url, body);
 export const put = (url, body = {}) => api('PUT', url, body);
+export const del = (url) => api('DELETE', url);
 
 /** Baixa um arquivo (CSV) respeitando a sessão. */
 export async function download(url, params) {

@@ -2,7 +2,7 @@
 
 Gerado por `scripts/ddl.js` (rode `node scripts/ddl.js` depois de mudar o esquema). O DDL completo está em [`DDL.sql`](DDL.sql).
 
-**62 tabelas**, **176 chaves estrangeiras** declaradas e **17 relacionamentos lógicos** (sem FOREIGN KEY no banco, garantidos pela aplicação).
+**69 tabelas**, **194 chaves estrangeiras** declaradas e **17 relacionamentos lógicos** (sem FOREIGN KEY no banco, garantidos pela aplicação).
 
 ## Visão geral do fluxo comercial
 
@@ -132,6 +132,7 @@ erDiagram
 | `tasks` | `created_by` | `users(id)` | — |
 | `tasks` | `completed_by` | `users(id)` | — |
 | `tasks` | `proposal_id` | `proposals(id)` | — |
+| `tasks` | `calendar_owner_id` | `users(id)` | — |
 | `distribution_log` | `contact_id` | `contacts(id)` | — |
 | `distribution_log` | `from_user` | `users(id)` | — |
 | `distribution_log` | `to_user` | `users(id)` | — |
@@ -259,6 +260,33 @@ erDiagram
 | `call_events` | `user_id` | `users(id)` | — |
 | `call_events` | `activity_id` | `activities(id)` | — |
 
+### Pessoas (RH)
+
+| Tabela | Coluna | Referência | Regra |
+|---|---|---|---|
+| `employees` | `user_id` | `users(id)` | — |
+| `employees` | `team_id` | `teams(id)` | — |
+| `employees` | `leader_id` | `employees(id)` | — |
+| `employees` | `cost_center_id` | `fin_cost_centers(id)` | — |
+| `employees` | `created_by` | `users(id)` | — |
+| `employee_contracts` | `employee_id` | `employees(id)` | — |
+| `employee_contracts` | `created_by` | `users(id)` | — |
+| `employee_benefits` | `employee_id` | `employees(id)` | — |
+| `employee_files` | `employee_id` | `employees(id)` | — |
+| `employee_files` | `uploaded_by` | `users(id)` | — |
+| `employee_history` | `employee_id` | `employees(id)` | — |
+| `employee_history` | `user_id` | `users(id)` | — |
+
+### Central de documentos
+
+| Tabela | Coluna | Referência | Regra |
+|---|---|---|---|
+| `doc_folders` | `parent_id` | `doc_folders(id)` | — |
+| `doc_folders` | `created_by` | `users(id)` | — |
+| `company_documents` | `folder_id` | `doc_folders(id)` | — |
+| `company_documents` | `previous_id` | `company_documents(id)` | — |
+| `company_documents` | `uploaded_by` | `users(id)` | — |
+
 ### Financeiro da empresa
 
 | Tabela | Coluna | Referência | Regra |
@@ -317,7 +345,7 @@ Colunas acrescentadas por migração (o SQLite não permite incluir chave estran
 
 ### Acesso, configuração e auditoria
 
-**`users`** — `id` (PK), `name`, `email`, `password_hash`, `role`, `team_id` (FK), `dialer_agent_ref`, `active`, `created_at`, `updated_at`, `last_login_at`, `modules`, `phone`, `whatsapp`, `job_title`, `birth_date`, `photo`, `bio`, `specialties`, `pix_key`, `professional_reg`, `password_changed_at`, `must_change_password`, `onboarding`, `google_refresh_token_enc`, `google_email`, `google_connected_at`
+**`users`** — `id` (PK), `name`, `email`, `password_hash`, `role`, `team_id` (FK), `dialer_agent_ref`, `active`, `created_at`, `updated_at`, `last_login_at`, `modules`, `phone`, `whatsapp`, `job_title`, `birth_date`, `photo`, `bio`, `specialties`, `pix_key`, `professional_reg`, `password_changed_at`, `must_change_password`, `onboarding`, `google_refresh_token_enc`, `google_email`, `google_connected_at`, `google_sub`, `google_scopes`
 
 **`teams`** — `id` (PK), `name`, `created_at`, `leader_id` (FK)
 
@@ -371,7 +399,7 @@ Colunas acrescentadas por migração (o SQLite não permite incluir chave estran
 
 **`activities`** — `id` (PK), `contact_id` (FK), `company_contact_id` (FK), `opportunity_id` (FK), `type`, `channel`, `direction`, `result`, `duration_seconds`, `notes`, `next_action`, `return_at`, `occurred_at`, `source`, `external_id`, `call_event_id`, `ref_type`, `ref_id`, `user_id` (FK), `created_by` (FK), `created_at`
 
-**`tasks`** — `id` (PK), `contact_id` (FK), `opportunity_id` (FK), `type`, `title`, `notes`, `due_at`, `status`, `outcome`, `assigned_to` (FK), `created_by` (FK), `created_at`, `updated_at`, `completed_at`, `completed_by` (FK), `priority`, `proposal_id` (FK), `cadence_step`, `pre_sale_id`, `sale_id`, `ends_at`, `attendee_email`, `meeting_url`, `google_event_id`, `calendar_status`
+**`tasks`** — `id` (PK), `contact_id` (FK), `opportunity_id` (FK), `type`, `title`, `notes`, `due_at`, `status`, `outcome`, `assigned_to` (FK), `created_by` (FK), `created_at`, `updated_at`, `completed_at`, `completed_by` (FK), `priority`, `proposal_id` (FK), `cadence_step`, `pre_sale_id`, `sale_id`, `ends_at`, `attendee_email`, `meeting_url`, `google_event_id`, `calendar_status`, `attendance_status`, `attendance_checked_at`, `attendance_detail`, `attended_at`, `calendar_owner_id` (FK), `confirmation_sent_at`
 
 **`distribution_log`** — `id` (PK), `contact_id` (FK), `from_user` (FK), `to_user` (FK), `method`, `by_user` (FK), `created_at`
 
@@ -436,6 +464,24 @@ Colunas acrescentadas por migração (o SQLite não permite incluir chave estran
 **`inbound_events`** — `id` (PK), `integration`, `external_id`, `payload`, `status`, `contact_id` (FK), `error_message`, `attempts`, `received_at`, `processed_at`
 
 **`call_events`** — `id` (PK), `provider`, `external_call_id`, `lead_ref`, `contact_id` (FK), `phone`, `phone_norm`, `started_at`, `ended_at`, `duration_seconds`, `agent_ref`, `user_id` (FK), `technical_status`, `result`, `result_raw`, `classification`, `recording_url`, `call_origin`, `raw_payload`, `status`, `error_message`, `candidates`, `activity_id` (FK), `attempts`, `received_at`, `processed_at`
+
+### Pessoas (RH)
+
+**`employees`** — `id` (PK), `code`, `user_id` (FK), `status`, `status_since`, `status_until`, `status_reason`, `full_name`, `social_name`, `cpf`, `rg`, `rg_issuer`, `birth_date`, `sex`, `marital_status`, `nationality`, `mother_name`, `education`, `pis`, `ctps`, `ctps_series`, `phone`, `personal_email`, `corporate_email`, `cep`, `street`, `number`, `complement`, `district`, `city`, `state`, `emergency_name`, `emergency_relation`, `emergency_phone`, `job_title`, `job_function`, `team_id` (FK), `leader_id` (FK), `cost_center_id` (FK), `work_regime`, `work_location`, `admission_date`, `probation_end`, `termination_date`, `termination_type`, `termination_reason`, `contract_type`, `pj_company_name`, `pj_trade_name`, `pj_cnpj`, `pj_municipal_reg`, `pj_tax_regime`, `internship_institution`, `internship_course`, `internship_supervisor`, `partner_share_pct`, `work_schedule`, `weekly_hours`, `daily_hours`, `break_minutes`, `time_tracking`, `pay_model`, `base_salary`, `variable_description`, `variable_target`, `variable_cap`, `pay_day`, `bank_name`, `bank_agency`, `bank_account`, `bank_account_type`, `pix_key`, `notes`, `created_by` (FK), `created_at`, `updated_at`
+
+**`employee_contracts`** — `id` (PK), `employee_id` (FK), `contract_type`, `title`, `start_date`, `end_date`, `ended_at`, `status`, `monthly_value`, `notes`, `filename`, `mime`, `size`, `content`, `created_by` (FK), `created_at`, `updated_at`
+
+**`employee_benefits`** — `id` (PK), `employee_id` (FK), `kind`, `type`, `description`, `value_type`, `amount`, `company_cost`, `start_date`, `end_date`, `active`, `created_at`, `updated_at`
+
+**`employee_files`** — `id` (PK), `employee_id` (FK), `category`, `title`, `filename`, `mime`, `size`, `content`, `uploaded_by` (FK), `created_at`
+
+**`employee_history`** — `id` (PK), `employee_id` (FK), `kind`, `text`, `user_id` (FK), `created_at`
+
+### Central de documentos
+
+**`doc_folders`** — `id` (PK), `parent_id` (FK), `name`, `description`, `position`, `system`, `created_by` (FK), `created_at`, `updated_at`
+
+**`company_documents`** — `id` (PK), `folder_id` (FK), `title`, `description`, `doc_number`, `issuer`, `issue_date`, `expires_at`, `tags`, `filename`, `mime`, `size`, `content`, `version`, `previous_id` (FK), `status`, `expiry_alerted_at`, `uploaded_by` (FK), `created_at`, `updated_at`
 
 ### Financeiro da empresa
 

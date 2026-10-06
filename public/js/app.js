@@ -30,6 +30,8 @@ import * as profileView from './views/profile.js';
 import * as postsaleView from './views/postsale.js';
 import * as treasuryView from './views/treasury.js';
 import * as onboardingView from './views/onboarding.js';
+import * as peopleView from './views/people.js';
+import * as documentsView from './views/documents.js';
 import { icon } from './icons.js';
 
 // Menu lateral: [rota, rótulo, tela, módulo de permissão, grupo]
@@ -49,7 +51,9 @@ const NAV = [
   ['treinamentos', 'Treinamentos', trainings, 'treinamentos'],
   ['administradoras', 'Administradoras', administrators, 'administradoras', 'admin'],
   ['planos', 'Planos', plans, 'planos', 'admin'],
-  ['relatorios', 'Relatórios', reports, 'relatorios', 'admin'],
+  ['relatorios', 'Relatórios', reports, 'relatorios'],
+  ['colaboradores', 'Colaboradores', peopleView, 'colaboradores', 'admin'],
+  ['documentos', 'Central de documentos', documentsView, 'documentos', 'admin'],
   ['usuarios', 'Usuários', users, 'usuarios', 'admin'],
   ['configuracoes', 'Configurações', settings, 'configuracoes', 'admin'],
 ];
@@ -67,7 +71,7 @@ const EXTRA = {
   integracao: [onboardingView, null, 'painel'],
 };
 // Ícone de cada item do menu (manual de identidade, Iconografia)
-const NAV_ICON = { painel: 'painel', entrada: 'leads', funil: 'crm', agenda: 'agenda', simulador: 'simulador', propostas: 'propostas', clientes: 'clientes', metas: 'metas', prevenda: 'prevenda', vendas: 'vendas', posvenda: 'posvenda', comissoes: 'comissoes', treinamentos: 'treinamentos', administradoras: 'administradoras', planos: 'planos', relatorios: 'relatorios', usuarios: 'usuarios', configuracoes: 'configuracoes' };
+const NAV_ICON = { painel: 'painel', entrada: 'leads', funil: 'crm', agenda: 'agenda', simulador: 'simulador', propostas: 'propostas', clientes: 'clientes', metas: 'metas', prevenda: 'prevenda', vendas: 'vendas', posvenda: 'posvenda', comissoes: 'comissoes', treinamentos: 'treinamentos', administradoras: 'administradoras', planos: 'planos', relatorios: 'relatorios', colaboradores: 'colaboradores', documentos: 'documentos', usuarios: 'usuarios', configuracoes: 'configuracoes' };
 const navLink = ([k, label]) => html`<a href="#/${k}" data-nav="${k}">${icon(NAV_ICON[k])}<span>${label}</span></a>`;
 const allowed = (mod) => (state.user?.modules || []).includes(mod);
 // Financeiro da empresa: grupo próprio no menu. Quem não tem o módulo, mas é responsável por lançamentos, vê só pagar/receber.

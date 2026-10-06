@@ -22,6 +22,8 @@ const DOMAINS = [
   ['Produtos contratados e pós-venda', ['contracts', 'finance_entries', 'finance_issues', 'post_sale_items', 'nps_surveys', 'bid_strategies', 'bid_strategy_history']],
   ['Treinamentos', ['trainings', 'training_progress']],
   ['Integrações', ['integrations', 'integration_logs', 'inbound_events', 'call_events']],
+  ['Pessoas (RH)', ['employees', 'employee_contracts', 'employee_benefits', 'employee_files', 'employee_history']],
+  ['Central de documentos', ['doc_folders', 'company_documents']],
   ['Financeiro da empresa', ['fin_accounts', 'fin_cost_centers', 'fin_categories', 'fin_partners', 'fin_payment_methods', 'fin_titles', 'fin_installments', 'fin_allocations', 'fin_notes', 'fin_files']],
 ];
 

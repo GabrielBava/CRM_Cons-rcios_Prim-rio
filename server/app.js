@@ -96,9 +96,13 @@ function createApp({ dbFile = process.env.CRM_DB || path.join(__dirname, '..', '
   timer.unref();
   const queueTimer = setInterval(router.queueSweep, 15 * 60 * 1000);
   queueTimer.unref();
+  // Presença na R1 pelo Google Meet: a cada 5 minutos
+  const meetTimer = setInterval(router.meetSweep, 5 * 60 * 1000);
+  meetTimer.unref();
   server.on('close', () => {
     clearInterval(timer);
     clearInterval(queueTimer);
+    clearInterval(meetTimer);
   });
 
   return { server, db };

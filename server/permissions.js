@@ -23,6 +23,8 @@ const MODULES = [
   { key: 'comissoes', label: 'Comissões e cancelamentos', group: 'Operação' },
   { key: 'treinamentos', label: 'Treinamentos', group: 'Operação' },
   { key: 'financeiro', label: 'Financeiro (contas a pagar, a receber e cadastros)', group: 'Financeiro' },
+  { key: 'colaboradores', label: 'Colaboradores (RH: cadastro, contratos, remuneração e benefícios)', group: 'Pessoas' },
+  { key: 'documentos', label: 'Central de documentos da empresa', group: 'Administração' },
   { key: 'administradoras', label: 'Administradoras', group: 'Administração' },
   { key: 'planos', label: 'Planos', group: 'Administração' },
   { key: 'relatorios', label: 'Relatórios', group: 'Administração' },
@@ -37,12 +39,13 @@ const COMMERCIAL = ['painel', 'crm', 'agenda', 'simulador', 'propostas', 'client
 const ROLE_MODULES = {
   admin: MODULE_KEYS,
   gestor: [...COMMERCIAL, 'distribuicao', 'relatorios'],
-  consultor: COMMERCIAL,
+  // Especialista: em Relatórios vê só as próprias vendas e comissões, sem dados de leads e sem exportar
+  consultor: [...COMMERCIAL, 'relatorios'],
   leitura: ['painel', 'crm', 'clientes', 'propostas', 'posvenda', 'treinamentos'],
 };
 
 /** Módulos que só o administrador acessa, mesmo que sejam incluídos manualmente para outro perfil. */
-const ADMIN_ONLY = ['usuarios', 'configuracoes'];
+const ADMIN_ONLY = ['usuarios', 'configuracoes', 'documentos'];
 
 /** Descrição do escopo de dados de cada perfil (exibida na matriz de permissões). */
 const ROLE_SCOPE = {

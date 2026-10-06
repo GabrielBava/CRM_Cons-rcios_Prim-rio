@@ -195,16 +195,28 @@ O futuro agente de IA que ler a transcrição pode gerar qualquer um desses form
 
 ## 7. Google Agenda (R1 com Google Meet)
 
-- **Configuração (administrador):** Configurações › Integrações › Google Agenda, ou as variáveis `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET`. No Google Cloud Console: ativar a Google Calendar API, criar um ID do cliente OAuth "Aplicativo da Web" com o URI de redirecionamento `https://SEU-CRM/api/google/retorno` (endereço público em `PUBLIC_URL` ou na própria tela) e o escopo `calendar.events`.
+- **Configuração (administrador):** Configurações › Integrações › Google Agenda, ou as variáveis `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET` (no `config.env`). No Google Cloud Console: ativar a **Google Calendar API** e a **Google Meet REST API**, criar um ID do cliente OAuth "Aplicativo da Web" com os URIs de redirecionamento autorizados `https://SEU-CRM/api/google/retorno` (produção, `PUBLIC_URL`), `http://localhost:3000/api/google/retorno` (teste no computador) e `http://localhost:8080/api/google/retorno` (máquina virtual), e os escopos `calendar.events` e `meetings.space.readonly` na tela de consentimento. Enquanto o app estiver em modo "Teste" no Google, inclua o e-mail de cada especialista em "Usuários de teste".
 - **Conexão (cada especialista):** Meu cadastro › Google Agenda › Conectar. O CRM guarda só o token de atualização, cifrado (AES-256-GCM).
 - **Agendamento:** `POST /api/r1/agendar` cria a tarefa "Reunião (R1)" e o evento na agenda principal do responsável pelo cliente (`events.insert` com `conferenceDataVersion=1` e `sendUpdates=all`): Google Meet, convite ao e-mail do cliente e o link salvo na tarefa. Reagendar ou cancelar a tarefa atualiza (ou exclui) o evento.
+- **Agenda do especialista:** o evento vai para a agenda do responsável pelo cliente. Se ele ainda não conectou o Google, vale a agenda de quem está agendando, com o especialista convidado. O pop-up oferece "Conectar Google Agenda" (a autorização abre noutra guia e o pop-up segue o agendamento).
+- **Confirmação por e-mail:** além do convite do Google, o cliente recebe "Reunião confirmada" do `noreply@` com data, horário, botão "Entrar na reunião" e o contato do especialista (com o arquivo `.ics` quando o Google não enviou o convite).
+- **Presença (R1 feita):** a rotina de 5 minutos (e o botão "Verificar presença", `POST /api/tarefas/:id/presenca`) consulta `conferenceRecords` e `participants` da sala do Meet (filtro `space.meeting_code`). Participante da empresa: conta Google conectada por um usuário do CRM (identificador `sub`), nome igual ao de um usuário do CRM, ou e-mail do domínio interno (`internal_domain`, padrão `veroconsorciosbr.com.br`, quando o Google informa). De fora: convidado sem conta, telefone ou outra conta Google. Regra: pelo menos 2 participantes e ao menos 1 de fora → a reunião é concluída como "Realizada" (R1 feita) no horário em que o cliente e alguém da empresa estavam na sala. Se a reunião acabou há mais de 2 horas sem cliente, fica "Cliente não entrou no Meet" e o especialista é avisado para registrar o resultado. Conexões feitas antes desta versão precisam ser refeitas (Meu cadastro › Reconectar) para liberar a permissão do Meet.
 - **Sem integração:** a tarefa é criada no CRM e o especialista abre o evento já preenchido no Google Agenda (`calendar.google.com/calendar/render?action=TEMPLATE…`) e cola o link do Meet na reunião.
 
-## 8. E-mail (SMTP) da ficha de adesão
+## 8. E-mail (SMTP): ficha de adesão e R1 agendada
 
-- **Configuração:** Configurações › Integrações › E-mail, ou `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY` (`tls` = 465, `starttls` = 587), `SMTP_USER`, `SMTP_PASSWORD`. Remetente padrão `admin@veroconsorciosbr.com.br`.
+- **Configuração:** Configurações › Integrações › E-mail, ou no `config.env`: `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY` (`tls` = 465, `starttls` = 587), `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_FROM_NAME`. Remetente padrão `noreply@veroconsorciosbr.com.br` (Titan: `smtp.titan.email`, porta 465, SSL/TLS).
+- **R1 agendada:** ao agendar, o cliente recebe a confirmação (data, horário, link do Meet e contato do especialista).
 - **Envio:** `POST /api/pre-vendas/:id/enviar-email` ou `POST /api/cadastros/:id/link-cliente/enviar-email`: e-mail em HTML (passo a passo e botão "Acessar minha ficha") com versão em texto. Sem SMTP, a resposta traz o e-mail pronto (`html`, `text`, `mailto`) para o especialista enviar pelo próprio programa.
 - **Segurança da ficha:** `POST /api/publico/ficha/verificar` confere os 4 últimos dígitos do celular e devolve uma chave de acesso de 2 horas (cabeçalho `X-Ficha-Key` ou campo `key`). Sem a chave, a ficha mostra só a saudação. Cinco tentativas erradas bloqueiam o link por 15 minutos e avisam o especialista.
+
+## 9. Conexão BI (Power BI, Looker Studio, Excel)
+
+- **Token:** Configurações › Integrações › Conexão BI › Gerar token (exibido uma vez). Envie no cabeçalho `Authorization: Bearer <token>` ou no endereço (`?token=`), para ferramentas que não aceitam cabeçalho.
+- **Bases:** `GET /api/bi` lista as bases e os endereços. `GET /api/bi/<base>` devolve `{ base, gerado_em, linhas, dados: [...] }`; `?formato=csv` devolve CSV (separador `;`). Bases: `vendas`, `comissoes`, `funil`, `propostas`, `financeiro` (parcelas a pagar e a receber), `colaboradores`, `beneficios`, `metas`, `atividades`.
+- **Privacidade:** clientes aparecem só pelo código; CPF, RG, telefone, e-mail e dados bancários de clientes e colaboradores não saem pela conexão BI. Cada leitura fica nos registros da integração.
+- **Power BI:** Obter dados › Web › `https://SEU-CRM/api/bi/vendas?formato=csv&token=…` (ou JSON com o cabeçalho Authorization em "Avançado"). Agende a atualização no Power BI Service.
+- **Relatórios em Excel:** cada relatório exporta `.xlsx` (`GET /api/relatorios/:key/xlsx`) e o administrador exporta o pacote completo (`GET /api/relatorios-pacote.xlsx?grupo=`).
 
 ## Exportação para discadora
 
