@@ -20,7 +20,7 @@ function parseQuotaValues(v) {
   if (nums.some((x) => !(x > 0))) throw badRequest('Os valores das cotas devem ser maiores que zero.');
   return nums.length ? nums : null;
 }
-const FREE_FIELDS = ['link_url', 'notes'];
+const FREE_FIELDS = ['link_url', 'notes', 'description'];
 const FINAL = ['aprovada', 'recusada', 'expirada', 'substituida'];
 const ACTIVE = ['rascunho', 'apresentada', 'em_analise'];
 
@@ -105,9 +105,14 @@ function proposalScore(db, p) {
   return { score: s, level: s >= 70 ? 'alta' : s >= 40 ? 'media' : 'baixa', factors: f };
 }
 
+const PROPOSAL_AREAS = ['consorcio', 'planejamento', 'seguros', 'investimentos'];
 function normalize(db, data, contactId) {
   const o = {};
-  for (const f of ['other_costs', 'readjustment_assumptions', 'notes']) if (data[f] !== undefined) o[f] = clean(data[f]);
+  for (const f of ['other_costs', 'readjustment_assumptions', 'notes', 'description']) if (data[f] !== undefined) o[f] = clean(data[f]);
+  if (data.area !== undefined) {
+    if (!PROPOSAL_AREAS.includes(data.area)) throw badRequest('Área da proposta inválida.');
+    o.area = data.area;
+  }
   for (const f of ['credit_value', 'initial_installment']) {
     if (data[f] !== undefined) {
       o[f] = toNumber(data[f]);
@@ -262,8 +267,11 @@ function createProposal(db, user, data) {
       if (o[pf] == null && s[sf] != null) o[pf] = s[sf];
     }
   }
-  if (o.product_id == null && opp.product_id) o.product_id = opp.product_id;
-  planDefaults(db, o);
+  // Seguros, planejamento e investimentos: proposta registrada com descrição e valor (sem plano de consórcio)
+  const isConsorcio = (o.area || 'consorcio') === 'consorcio';
+  if (!isConsorcio && !o.description) throw badRequest('Descreva a proposta (produto, seguradora/instituição e condições).');
+  if (isConsorcio && o.product_id == null && opp.product_id) o.product_id = opp.product_id;
+  if (isConsorcio) planDefaults(db, o);
   if (o.quotas == null && opp.quotas) o.quotas = opp.quotas;
   checkQuotaSplit(o);
   const status = data.status && ['rascunho', 'apresentada', 'em_analise'].includes(data.status) ? data.status : 'rascunho';
@@ -272,6 +280,9 @@ function createProposal(db, user, data) {
     if (status === 'apresentada') startCadence(db, user, { id: res.id, code: res.code, contact_id: opp.contact_id, opportunity_id: opp.id, owner_id: opp.owner_id }, nowIso());
     insertActivity(db, { contact_id: opp.contact_id, opportunity_id: opp.id, type: 'proposta', notes: `Proposta ${res.code} (v1) criada — ${PROPOSAL_STATUS[status]}.`, user_id: user.id, ref_type: 'proposal', ref_id: res.id });
     audit(db, user, 'proposal', res.id, 'criada', { code: res.code, status }, opp.contact_id);
+    // R2 já realizada: a proposta gerada leva o negócio para Negociação
+    const k = db.prepare('SELECT s.key FROM opportunities o JOIN pipeline_stages s ON s.id = o.stage_id WHERE o.id = ? AND o.status = \'aberta\'').get(opp.id)?.key;
+    if (k === 'r2') res.moved = require('./opportunities').advanceTo(db, user, opp.id, 'negociacao', ['r2'], `Proposta ${res.code} gerada`) || false;
     return res;
   });
 }
@@ -380,7 +391,7 @@ function newVersion(db, user, id, data) {
   if (child) throw badRequest(`Já existe uma versão mais recente (${child.code}).`);
   const o = normalize(db, data || {}, p.contact_id);
   const base = {};
-  for (const f of [...COMMERCIAL_FIELDS, 'link_url', 'category', 'administrator_id', 'plan_other']) base[f] = p[f];
+  for (const f of [...COMMERCIAL_FIELDS, 'link_url', 'category', 'administrator_id', 'plan_other', 'area', 'description']) base[f] = p[f];
   // A nova versão continua sendo a mesma proposta: mesmo código com o número da versão (PR-000011-v2)
   const root = String(p.code).replace(/-v\d+$/, '');
   return tx(db, () => {
@@ -479,6 +490,10 @@ function listProposals(db, user, q) {
       where.push(`${col} = ?`);
       params.push(['status'].includes(k) ? q[k] : Number(q[k]));
     }
+  }
+  if (q.area) {
+    where.push('pr.area = ?');
+    params.push(String(q.area));
   }
   if (q.current === '1') where.push("pr.status <> 'substituida'");
   if (q.from) {

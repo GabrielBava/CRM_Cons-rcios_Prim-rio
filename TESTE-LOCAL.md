@@ -170,6 +170,28 @@ cliques em `iniciar-windows.bat`. Ao fechar a área restrita, tudo é apagado.
    oficial, o administrador preenche Configurações › Integrações › WhatsApp da empresa (ou as chaves `WHATSAPP_*` do
    `config.env`) e cadastra o webhook na Meta. No painel do lead, "WhatsApp da empresa" abre a conversa com o cliente.
 
+### H4. Painel do lead, regras do funil, produtos, diagnóstico e IA Vero
+
+1. **Pipeline:** clique no nome de um lead. O painel mostra só a etapa (a troca é no pipeline), **Ganho** (verde) e
+   **Perdido** (vermelho), o telefone (clique copia), **WhatsApp da empresa** e **Abrir cadastro completo**.
+2. **Detalhes:** ingresso no CRM e primeiro contato (fixos), prazo para agendar a R1 (3 dias após o 1º contato) e a
+   previsão de fechamento (altere a data: salva sozinha).
+3. **Atividades:** use o bloco "Registrar atividade" (Telefone, WhatsApp, E-mail, Direct, LinkedIn ou Contato); os totais
+   por canal ficam no topo. Num lead em "Lead", registrar uma atividade já leva o cartão para "Tentativa de contato".
+4. **Regras ao arrastar:** Lead → Tentativa pede o registro da tentativa; Tentativa → Qualificação abre a qualificação com
+   "Concluir qualificação"; Qualificação → R1 abre o agendamento da R1; R2 → Negociação pede a proposta (escolha a área:
+   consórcio, seguros, planejamento ou investimentos).
+5. **Agendas:** contadores (agendadas, realizadas, remarcadas, no-show) e os blocos R1/R2 com Concluir, Não compareceu e Remarcar.
+6. **Produtos:** "Adicionar" em cada área (consórcio, planejamento, seguros, investimentos) com a oportunidade, descrição,
+   valor (ou faixa de captação) e observação. O topo soma o potencial.
+7. **Diagnóstico:** "Realizar diagnóstico financeiro" abre a ferramenta numa nova guia com os dados do cliente; o que for
+   preenchido volta ao CRM (a pílula "Vero CRM" no canto mostra "Salvo no CRM"). Também em Ferramentas › Planejamento
+   financeiro (escolha o cliente).
+8. **IA Vero:** resumo, próximo passo, canal, BANT, SPIN, objeções com resposta para o WhatsApp e o chat com perguntas
+   prontas. A liderança cadastra objeções, dicas e mensagens em Ferramentas › Base da IA Vero.
+9. **Pipeline › Perdidos** (gestora ou admin): onde cada lead foi perdido e os motivos (MP) por etapa.
+10. **Ferramentas:** separadas por área; o Simulador de consórcio abre com a senha da equipe (a do arquivo original).
+
 ### H2. Menu lateral e Gestão do time
 
 1. O botão no canto superior esquerdo recolhe o menu (fica só o símbolo da Vero e os ícones); clique de novo para expandir.

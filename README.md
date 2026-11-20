@@ -186,6 +186,13 @@ docs/
 - **Relatórios por perfil:** o especialista vê só "Meu desempenho" (as próprias vendas e comissões), sem dados de leads e sem exportar. O líder vê os comerciais da equipe. RH (módulo Colaboradores): quadro, cadastro, remuneração e custo, contratos, admissões/desligamentos/turnover e aniversariantes. Administrador: vendas gerais, fluxo de caixa, saldos e excedente de caixa (reserva mínima em Configurações), contas a pagar e a receber e resultado por categoria; exporta em Excel (.xlsx) cada relatório ou o pacote completo.
 - **Conexão BI:** Configurações › Integrações › Conexão BI gera o token; `GET /api/bi` lista as bases (vendas, comissões, funil, propostas, financeiro, colaboradores, benefícios, metas e atividades) em JSON ou CSV para Power BI, Looker Studio ou Excel. Detalhes em `docs/INTEGRACOES.md`.
 
+## Painel do lead, regras do funil, produtos, diagnóstico e IA Vero
+
+- **Painel do lead:** uma coluna, com Ganho (verde) e Perdido (vermelho), telefone que copia, WhatsApp da empresa e abas IA Vero, Detalhes (ingresso, primeiro contato, prazo da R1 e previsão de fechamento), Atividades (registro por canal e totais), Qualificação (Concluir qualificação), Agendas (R1/R2 e contadores), Produtos, Diagnóstico, Tarefas, Notas, Propostas e Histórico.
+- **Regras do funil:** Lead → Tentativa com uma tentativa registrada; Tentativa → Qualificação com a qualificação concluída; Qualificação → R1 com a R1 agendada; R1 → R2 com a R2 agendada; R2 → Negociação com proposta gerada (consórcio, seguros, planejamento ou investimentos). **Pipeline › Perdidos** (líder e administrador) mostra onde e por que (MP) os leads foram perdidos.
+- **Produtos (cross-sell/up-sell)**, **Diagnóstico financeiro** (ferramenta da Vero Planejamento ligada ao CRM) e **IA Vero** (motor interno + IA generativa opcional): detalhes em `docs/ESPECIFICACAO.md` §20 e `docs/INTEGRACOES.md` §11–12.
+- **Ferramentas por área:** `public/ferramentas/` (simulador de consórcio e diagnóstico financeiro na marca Vero), geradas por `node scripts/build-tools.js --diag <Diagnostico.html> --sim <Simulador.html>`.
+
 ## Configuração local (senhas e chaves)
 
 Senhas e chaves (Google, SMTP) ficam no arquivo `config.env`, na pasta do sistema, fora do Git (`.gitignore`). Modelo em `config.env.exemplo`. O servidor lê o arquivo ao iniciar (`npm start`, `npm run local` e os atalhos) e o instalador do Ubuntu o leva para `/etc/vero-consorcios.env`.

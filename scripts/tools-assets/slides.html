@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Poppins,sans-serif;background:#222}
+.s{width:1920px;height:1080px;position:relative;overflow:hidden;display:flex;flex-direction:column;padding:110px 140px}
+.dark{background:radial-gradient(120% 120% at 0% 0%,#1B263B 0%,#0D1B2A 55%,#08121D 100%);color:#E0E1DD}
+.light{background:linear-gradient(160deg,#ffffff 0%,#F4F6F9 55%,#E8ECF1 100%);color:#0D1B2A}
+.bar{position:absolute;left:0;right:0;top:0;height:10px;background:linear-gradient(90deg,#415A77,#778DA9,#A9B8CB)}
+.foot{position:absolute;left:140px;right:140px;bottom:60px;display:flex;justify-content:space-between;align-items:center;font-size:22px;letter-spacing:.08em;color:#778DA9}
+.foot img{height:56px}
+.cap{font-size:24px;font-weight:600;letter-spacing:.32em;text-transform:uppercase;color:#778DA9}
+h1{font-size:76px;line-height:1.08;font-weight:600;letter-spacing:-.01em;margin-top:22px;max-width:1500px}
+h1:after{content:"";display:block;width:120px;height:8px;border-radius:8px;margin-top:30px;background:linear-gradient(90deg,#415A77,#A9B8CB)}
+.sub{font-size:32px;font-weight:300;margin-top:30px;max-width:1450px;color:#415A77}
+.dark .sub{color:#A9B8CB}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:30px;margin-top:48px}
+.card{background:#fff;border:2px solid #DDE3EA;border-radius:28px;padding:34px 32px;box-shadow:0 30px 60px -36px rgba(13,27,42,.35)}
+.card svg{width:64px;height:64px;color:#415A77}
+.card h3{font-size:31px;font-weight:600;margin-top:18px;line-height:1.2}
+.card p{font-size:23px;font-weight:300;line-height:1.45;margin-top:14px;color:#415A77}
+.steps{display:grid;grid-template-columns:repeat(4,1fr);gap:30px;margin-top:80px}
+.step{border-top:6px solid #778DA9;padding-top:34px}
+.step b{font-size:72px;font-weight:700;color:#A9B8CB;line-height:1}
+.step h3{font-size:36px;font-weight:600;margin-top:18px}
+.step p{font-size:25px;font-weight:300;line-height:1.45;margin-top:12px;color:#415A77}
+.cols{display:grid;grid-template-columns:repeat(3,1fr);gap:40px;margin-top:80px}
+.col{border-radius:28px;padding:50px 44px;background:#0D1B2A;color:#E0E1DD}
+.col:nth-child(2){background:#1B263B}.col:nth-child(3){background:#415A77}
+.col svg{width:60px;height:60px;color:#A9B8CB}
+.col h3{font-size:38px;font-weight:600;margin-top:26px}
+.col p{font-size:26px;font-weight:300;line-height:1.45;margin-top:14px;color:#C9D3DF}
+.cover{justify-content:center}
+.cover .logo{width:1100px}
+.cover .tag{font-size:44px;font-weight:300;margin-top:60px;max-width:1300px;line-height:1.3}
+.cover .tag strong{font-weight:600;color:#fff}
+.mock{width:1600px;height:1000px;padding:80px 90px}
+.mock .row{display:grid;grid-template-columns:repeat(3,1fr);gap:28px;margin-top:56px}
+.kpi{background:#fff;border:2px solid #DDE3EA;border-radius:24px;padding:30px}
+.kpi small{font-size:22px;color:#778DA9;letter-spacing:.06em;text-transform:uppercase}
+.kpi strong{display:block;font-size:46px;font-weight:600;margin-top:8px}
+.track{height:16px;border-radius:16px;background:#E3E8EE;margin-top:18px;overflow:hidden}.track span{display:block;height:100%;background:linear-gradient(90deg,#415A77,#778DA9)}
+.list{margin-top:40px;display:grid;gap:18px}
+.li{display:flex;justify-content:space-between;align-items:center;background:#fff;border:2px solid #DDE3EA;border-radius:20px;padding:22px 28px;font-size:26px}
+.li em{font-style:normal;font-size:20px;padding:6px 16px;border-radius:99px;background:#E3E8EE;color:#415A77}
+</style></head><body>
+
+<section class="s dark cover" id="s1"><div class="bar"></div>
+  <img class="logo" src="vero-planejamento-dark.png" alt="">
+  <p class="tag">Planejamento financeiro com <strong>clareza, método e acompanhamento</strong> para cada fase da sua vida.</p>
+  <div class="foot"><span>DIAGNÓSTICO FINANCEIRO · APRESENTAÇÃO INSTITUCIONAL</span><span>veroconsorciosbr.com.br</span></div>
+</section>
+
+<section class="s light" id="s2" style="padding-top:90px"><div class="bar"></div>
+  <p class="cap">Quem somos</p>
+  <h1>Uma assessoria completa para a sua vida financeira</h1>
+  <p class="sub">A Vero reúne, num só atendimento, as soluções que ajudam você a organizar, proteger e fazer crescer o seu patrimônio.</p>
+  <div class="cards">
+    <div class="card"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12c.55 0 1-.45.95-1A10 10 0 0 0 13 2.05c-.55-.05-1 .4-1 .95v8a1 1 0 0 0 1 1z"/><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/></svg><h3>Planejamento financeiro</h3><p>Fluxo de caixa, dívidas, aposentadoria e sucessão organizados em um só plano.</p></div>
+    <div class="card"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .71-1.53l7-6a2 2 0 0 1 2.58 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><h3>Consórcio</h3><p>Aquisição planejada de imóveis, veículos e serviços, com estratégia de contemplação.</p></div>
+    <div class="card"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg><h3>Seguros</h3><p>Proteção da renda, da família e do patrimônio contra os imprevistos.</p></div>
+    <div class="card"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M22 7 13.5 15.5 8.5 10.5 2 17"/><path d="M16 7h6v6"/></svg><h3>Investimentos</h3><p>Reserva de emergência, previdência e carteira alinhadas aos seus objetivos.</p></div>
+  </div>
+  <div class="foot"><span>VERO PLANEJAMENTO</span><img src="vero-planejamento-light.png" alt=""></div>
+</section>
+
+<section class="s light" id="s3"><div class="bar"></div>
+  <p class="cap">Como funciona</p>
+  <h1>Do diagnóstico ao plano de ação, passo a passo</h1>
+  <p class="sub">Um processo simples, conduzido por um planejador da Vero, para transformar números em decisões.</p>
+  <div class="steps">
+    <div class="step"><b>01</b><h3>Conexão</h3><p>Entendemos seus objetivos, sua família e o seu momento de vida.</p></div>
+    <div class="step"><b>02</b><h3>Coleta</h3><p>Renda, despesas, patrimônio, dívidas e proteção, levantados com você.</p></div>
+    <div class="step"><b>03</b><h3>Diagnóstico</h3><p>A Estrela Vero mostra a nota de cada pilar e as prioridades.</p></div>
+    <div class="step"><b>04</b><h3>Plano de ação</h3><p>Decisões por prazo, responsáveis e acompanhamento contínuo.</p></div>
+  </div>
+  <div class="foot"><span>VERO PLANEJAMENTO</span><img src="vero-planejamento-light.png" alt=""></div>
+</section>
+
+<section class="s light" id="s4"><div class="bar"></div>
+  <p class="cap">O que você recebe</p>
+  <h1>Clareza hoje e um caminho para os próximos anos</h1>
+  <div class="cols">
+    <div class="col"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></svg><h3>Diagnóstico completo</h3><p>A leitura da sua vida financeira: fluxo de caixa, patrimônio, proteção e futuro.</p></div>
+    <div class="col"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/></svg><h3>Plano de ação</h3><p>Prioridades de curto, médio e longo prazo, com as decisões de cada etapa.</p></div>
+    <div class="col"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg><h3>Acompanhamento</h3><p>Reuniões periódicas para revisar o plano, as metas e os resultados.</p></div>
+  </div>
+  <div class="foot"><span>VERO PLANEJAMENTO · veroconsorciosbr.com.br</span><img src="vero-planejamento-light.png" alt=""></div>
+</section>
+
+<section class="s light mock" id="s5">
+  <img src="vero-planejamento-light.png" alt="" style="height:90px;width:auto;align-self:flex-start">
+  <div class="row">
+    <div class="kpi"><small>Reserva de emergência</small><strong>6 de 6 meses</strong><div class="track"><span style="width:100%"></span></div></div>
+    <div class="kpi"><small>Plano de ação</small><strong>8 de 12 ações</strong><div class="track"><span style="width:66%"></span></div></div>
+    <div class="kpi"><small>Meta de aposentadoria</small><strong>em dia</strong><div class="track"><span style="width:48%"></span></div></div>
+  </div>
+  <div class="list">
+    <div class="li">Revisão trimestral do plano<em>agendada</em></div>
+    <div class="li">Proteção da renda (seguro de vida)<em>em andamento</em></div>
+    <div class="li">Organização do fluxo de caixa<em>concluída</em></div>
+  </div>
+</section>
+</body></html>

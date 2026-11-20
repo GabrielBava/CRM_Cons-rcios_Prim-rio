@@ -1,7 +1,7 @@
 // 6. Propostas: esteira de follow-up (D0 a D10), panorama com probabilidade de fechamento e nova proposta a partir do cadastro.
 import { get, post, patch, download } from '../api.js';
 import { html, render, $, on, state, selectOptions, opts, userItems, table, badge, fmtMoney, fmtDate, fmtDateTime, relTime, optLabel, K, can, modal, field, toast, toastError, empty, subnav } from '../ui.js';
-import { proposalDetail, openProposalSimulator } from '../forms.js';
+import { proposalDetail, openProposalSimulator, newProposalFlow } from '../forms.js';
 import { probBadge } from './dashboard.js';
 
 let saved = { status: 'andamento' };
@@ -83,12 +83,14 @@ export async function show(view, { params }) {
   await load();
 }
 
+const AREA_LABEL = { consorcio: 'Consórcio', seguros: 'Seguros', planejamento: 'Planejamento', investimentos: 'Investimentos' };
+
 function card(p) {
   const nf = p.next_followup;
   const script = nf ? state.meta.constants.proposal_cadence.find((c) => nf.title.startsWith(c.title.split(' · ')[0]))?.script : '';
   return html`<article class="opp-card prop-card lvl-${p.level}">
     <a href="#" data-prop="${p.id}" class="title">${p.contact_name}</a>
-    <div class="small muted">${p.code} · ${optLabel('categoria_credito', p.category)} · ${p.owner_name || '—'}</div>
+    <div class="small muted">${p.code} · ${p.area && p.area !== 'consorcio' ? html`<span class="chip-sm area area-${p.area}">${AREA_LABEL[p.area]}</span>` : optLabel('categoria_credito', p.category)} · ${p.owner_name || '—'}</div>
     <div class="small">${fmtMoney(p.credit_value)}${p.initial_installment ? ` · parcela ${fmtMoney(p.initial_installment)}` : ''}</div>
     <div>${probBadge(p)}</div>
     ${nf ? html`<div class="small ${nf.overdue ? 'overdue' : ''}">▸ ${nf.title.replace(/ \(PR-\d+\)$/, '')} (${relTime(nf.due_at)})</div>` : ''}
@@ -136,8 +138,8 @@ function overview(rows) {
     [
       { label: 'Proposta', render: (p) => html`<a href="#" data-prop="${p.id}">${String(p.code).replace(/-v\d+$/, '')}</a> <small>v${p.version}</small>` },
       { label: 'Cliente', render: (p) => html`<a href="#/leads/${p.contact_id}">${p.contact_name}</a><br><small>${p.contact_code}</small>` },
-      { label: 'Categoria', render: (p) => optLabel('categoria_credito', p.category) },
-      { label: 'Crédito', render: (p) => html`${fmtMoney(p.credit_value)}${p.initial_installment ? html`<br><small>parcela ${fmtMoney(p.initial_installment)}</small>` : ''}`, cls: 'num' },
+      { label: 'Área / categoria', render: (p) => (p.area && p.area !== 'consorcio' ? html`<span class="chip-sm area area-${p.area}">${AREA_LABEL[p.area]}</span>${p.description ? html`<br><small>${String(p.description).slice(0, 60)}</small>` : ''}` : html`Consórcio<br><small>${optLabel('categoria_credito', p.category) || ''}</small>`) },
+      { label: 'Valor', render: (p) => html`${fmtMoney(p.credit_value)}${p.initial_installment ? html`<br><small>parcela ${fmtMoney(p.initial_installment)}</small>` : ''}`, cls: 'num' },
       { label: 'Gerada / enviada', render: (p) => html`${fmtDate(p.created_at)}<br><small>${p.presented_at ? `enviada ${fmtDate(p.presented_at)}` : 'não enviada'}</small>` },
       { label: 'Situação', render: (p) => html`${badge(K('proposal_status', p.status), `st-${p.status}`)}<br><small>${['rascunho', 'apresentada', 'em_analise'].includes(p.status) ? `esteira: ${p.cadence_stage}` : ''}</small>` },
       { label: 'Chance', render: (p) => html`<span title="${p.factors.map(([l, v]) => `${l} (${v > 0 ? '+' : ''}${v})`).join('\n')}">${probBadge(p)}</span><br><small>ponderado ${fmtMoney(p.weighted)}</small>` },
@@ -159,7 +161,7 @@ async function newProposal() {
     body: html`<p class="hint">A proposta é sempre vinculada ao cadastro do cliente. Busque pelo nome, telefone ou ID (ex.: C-000010).</p>
       <div class="field full"><label>Cliente</label><input type="search" name="q" placeholder="Nome, telefone ou ID" autocomplete="off"></div>
       <div class="pick-results"></div><div class="opp-pick"></div>`,
-    submitLabel: 'Abrir o simulador',
+    submitLabel: 'Continuar',
     onMount(form) {
       let t;
       form.q.addEventListener('input', () => {
@@ -181,7 +183,9 @@ async function newProposal() {
     async onSubmit(d) {
       if (!chosen) throw new Error('Escolha o cliente.');
       if (!d.opportunity_id) throw new Error('O cliente precisa ter um negócio aberto.');
-      await openProposalSimulator(chosen, Number(d.opportunity_id));
+      const opp = await get(`/api/oportunidades/${d.opportunity_id}`);
+      // Consórcio (simulador ou registro), seguros, planejamento financeiro ou investimentos
+      await newProposalFlow({ ...opp, contact_name: chosen.name }, chosen, { simulations: opp.simulations || [] });
       return true;
     },
   });

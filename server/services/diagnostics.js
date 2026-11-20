@@ -1,0 +1,107 @@
+'use strict';
+/**
+ * Diagnóstico financeiro (Ferramentas › Planejamento financeiro e aba Diagnóstico do lead).
+ *
+ * A ferramenta (public/ferramentas/diagnostico-financeiro.html) abre com ?crm=<id>: busca os dados do cliente no CRM,
+ * preenche o cadastro do diagnóstico e, a cada alteração, devolve o diagnóstico para cá. Assim o diagnóstico fica
+ * guardado no CRM (abre de qualquer computador) e a aba do lead mostra o resumo e o link do diagnóstico completo.
+ */
+const { audit, loadContact } = require('../core');
+const { badRequest, notFound, nowIso } = require('../util');
+
+const MAX_DATA = 4 * 1024 * 1024;
+const TOOL_PATH = 'ferramentas/diagnostico-financeiro.html';
+const toolUrl = (id) => `${TOOL_PATH}?crm=${id}#/clientes/crm-${id}`;
+
+const titleOf = (x) => (x && typeof x === 'object' ? x.titulo || x.nome || x.descricao || x.tipo || x.area || null : null);
+const list = (v) => (Array.isArray(v) ? v : []);
+const filled = (o) => (o && typeof o === 'object' ? Object.values(o).filter((v) => v !== '' && v != null && !(Array.isArray(v) && !v.length)).length : 0);
+
+/**
+ * Resumo para a aba do lead: situação da coleta, objetivos, plano de ação e recomendações. A "Estrela Vero" (nota por
+ * pilar) e a matriz de oportunidades entram quando a ferramenta passar a enviar esses números.
+ */
+function summarize(d) {
+  if (!d || typeof d !== 'object') return null;
+  const plano = list(d.plano).map((p) => ({ titulo: titleOf(p) || 'Ação', area: p.area || null, prazo: p.prazo || p.quando || null })).slice(0, 12);
+  return {
+    coleta_finalizada: !!d.coletaFinalizada,
+    recomendacoes_finalizadas: !!d.recomendacoesFinalizadas,
+    objetivos: list(d.objetivos).map((o) => titleOf(o)).filter(Boolean).slice(0, 10),
+    plano,
+    recomendacoes: list(d.recomendacoes).length,
+    dependentes: list(d.dependentes).length,
+    patrimonio_itens: list(d.imoveis).length + list(d.moveis).length,
+    dividas_itens: list(d.financiamentos).length + list(d.emprestimos).length + list(d.cartoes).length,
+    consorcios: list(d.consorcios).length,
+    campos_cadastro: filled(d.cadastro),
+    estrela: d.estrela && typeof d.estrela === 'object' ? d.estrela : null,
+    atualizado_em: d.atualizadoEm || null,
+  };
+}
+
+const publicRow = (r) => (r ? { id: r.id, contact_id: r.contact_id, status: r.status, created_at: r.created_at, updated_at: r.updated_at, completed_at: r.completed_at, created_by_name: r.created_by_name, summary: r.summary ? JSON.parse(r.summary) : null, url: toolUrl(r.id) } : null);
+
+function forContact(db, user, contactId) {
+  const c = loadContact(db, user, contactId);
+  const rows = db.prepare('SELECT d.id, d.contact_id, d.status, d.summary, d.created_at, d.updated_at, d.completed_at, u.name AS created_by_name FROM diagnostics d LEFT JOIN users u ON u.id = d.created_by WHERE d.contact_id = ? ORDER BY d.id DESC').all(c.id);
+  return { current: publicRow(rows[0]), history: rows.slice(1).map(publicRow) };
+}
+
+/** Abre o diagnóstico do cliente: retoma o que está em andamento ou cria um novo. */
+function start(db, user, data = {}) {
+  const c = loadContact(db, user, data.contact_id, { write: true });
+  const open = db.prepare("SELECT id FROM diagnostics WHERE contact_id = ? AND status = 'em_andamento' ORDER BY id DESC LIMIT 1").get(c.id);
+  if (open && !data.new) return { id: open.id, url: toolUrl(open.id), created: false };
+  const opp = data.opportunity_id ? db.prepare('SELECT id FROM opportunities WHERE id = ? AND contact_id = ?').get(Number(data.opportunity_id), c.id) : db.prepare("SELECT id FROM opportunities WHERE contact_id = ? AND status = 'aberta' ORDER BY id DESC LIMIT 1").get(c.id);
+  const now = nowIso();
+  const id = Number(db.prepare("INSERT INTO diagnostics (contact_id, opportunity_id, status, created_by, created_at, updated_at) VALUES (?, ?, 'em_andamento', ?, ?, ?)").run(c.id, opp?.id ?? null, user.id, now, now).lastInsertRowid);
+  audit(db, user, 'diagnostic', id, 'iniciado', null, c.id);
+  return { id, url: toolUrl(id), created: true };
+}
+
+function load(db, user, id, { write = false } = {}) {
+  const d = db.prepare('SELECT * FROM diagnostics WHERE id = ?').get(Number(id));
+  if (!d) throw notFound('Diagnóstico não encontrado.');
+  const c = loadContact(db, user, d.contact_id, { write });
+  return { d, c };
+}
+
+/** Dados para a ferramenta: o cadastro do cliente (para preencher) e o diagnóstico salvo. */
+function forTool(db, user, id) {
+  const { d, c } = load(db, user, id);
+  const phone = c.whatsapp || c.phone1 || '';
+  return {
+    id: d.id, status: d.status, client_id: `crm-${d.id}`,
+    prefill: { nome: c.name, email: c.email || '', telefone: phone, nascimento: c.birth_date || '', ocupacao: c.profession || '' },
+    contact: { id: c.id, code: c.code, name: c.name },
+    consultant: { name: user.name, email: user.email },
+    data: d.data ? JSON.parse(d.data) : null,
+    crm_url: `#/leads/${c.id}`,
+  };
+}
+
+/** A ferramenta devolve o diagnóstico (salvamento automático). Coleta finalizada conclui o diagnóstico. */
+function saveFromTool(db, user, id, body = {}) {
+  const { d } = load(db, user, id, { write: true });
+  if (!body.data || typeof body.data !== 'object') throw badRequest('Diagnóstico vazio.');
+  const json = JSON.stringify(body.data);
+  if (json.length > MAX_DATA) throw badRequest('Diagnóstico grande demais para salvar.');
+  const sum = summarize(body.data);
+  const now = nowIso();
+  const done = sum.coleta_finalizada || sum.recomendacoes_finalizadas;
+  db.prepare('UPDATE diagnostics SET data = ?, summary = ?, updated_at = ?, status = ?, completed_at = ? WHERE id = ?')
+    .run(json, JSON.stringify(sum), now, done || d.status === 'concluido' ? 'concluido' : 'em_andamento', done ? d.completed_at || now : d.completed_at, d.id);
+  if (done && d.status !== 'concluido') audit(db, user, 'diagnostic', d.id, 'concluido', null, d.contact_id);
+  return { ok: true, status: done || d.status === 'concluido' ? 'concluido' : 'em_andamento' };
+}
+
+function conclude(db, user, id) {
+  const { d } = load(db, user, id, { write: true });
+  const now = nowIso();
+  db.prepare("UPDATE diagnostics SET status = 'concluido', completed_at = COALESCE(completed_at, ?), updated_at = ? WHERE id = ?").run(now, now, d.id);
+  audit(db, user, 'diagnostic', d.id, 'concluido', null, d.contact_id);
+  return { ok: true };
+}
+
+module.exports = { forContact, start, forTool, saveFromTool, conclude, summarize, TOOL_PATH };

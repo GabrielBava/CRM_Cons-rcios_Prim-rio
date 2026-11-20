@@ -135,6 +135,21 @@ function whatsappCard(w) {
   </section>`;
 }
 
+/** IA Vero: motor interno (sempre ligado) e, opcionalmente, a IA generativa da Anthropic (Claude) com a chave da empresa. */
+function aiCard(a) {
+  return html`<section class="card integ">
+    <div class="section-head"><h3>IA Vero (assistente do painel do lead)</h3>${badge(a.generative ? 'IA generativa ligada' : 'Motor interno', a.generative ? 'ok' : 'muted')}</div>
+    <p>A aba <strong>IA Vero</strong> do painel do lead sugere o próximo passo, o canal, perguntas SPIN, o checklist BANT, respostas para objeções no WhatsApp e o score. O <strong>motor interno</strong> funciona sempre, sem custo e sem enviar dados para fora. A base de conhecimento fica em <a href="#/ferramentas/ia">Ferramentas › Base da IA Vero</a>.</p>
+    <p class="small">Opcional: com a <strong>IA generativa</strong> (Claude, da Anthropic) ligada, as perguntas livres do chat são respondidas pelo modelo ${a.model}, com os dados do lead como contexto (nome, etapa, atividades e qualificação — sem CPF). Se o modelo estiver indisponível, a resposta sai do motor interno. Requer a biblioteca oficial instalada no servidor (<code>npm install @anthropic-ai/sdk</code>) e a chave da API.</p>
+    <ul class="small"><li>Biblioteca no servidor: ${a.sdk_installed ? badge('instalada', 'ok') : badge('não instalada', 'warn')}</li><li>Chave da API: ${a.has_key ? badge(a.from_env ? 'definida no config.env' : 'salva (cifrada)', 'ok') : badge('não informada', 'muted')}</li></ul>
+    ${a.can_configure ? html`<form data-ai-form class="grid" novalidate>
+      ${a.from_env ? '' : field({ name: 'api_key', label: a.has_key ? 'Chave da API (já salva; preencha só para trocar)' : 'Chave da API da Anthropic', type: 'password', placeholder: 'sk-ant-…' })}
+      ${field({ name: 'enabled', label: 'Ligar a IA generativa nas perguntas do chat (dados do lead são enviados à Anthropic)', type: 'checkbox', value: a.enabled, full: true })}
+      <div class="inline-actions full"><button class="btn primary" type="submit">Salvar</button></div>
+    </form>` : ''}
+  </section>`;
+}
+
 /** E-mail (SMTP): a ficha de adesão sai do endereço da empresa (padrão noreply@veroconsorciosbr.com.br). */
 function emailCard(st) {
   return html`<section class="card integ">
@@ -364,7 +379,8 @@ const RENDER = {
     const g = await get('/api/google/status').catch(() => null);
     const em = await get('/api/email/status').catch(() => null);
     const wa = await get('/api/whatsapp/status').catch(() => null);
-    render(box, html`${g ? googleCard(g) : ''}${wa ? whatsappCard(wa) : ''}${em ? emailCard(em) : ''}<div class="alert">Nenhuma integração é considerada conectada sem validação: o status "Ativa" só pode ser marcado após o recebimento de ao menos um evento real processado com sucesso. Detalhes técnicos em <code>docs/INTEGRACOES.md</code>.</div>
+    const ai = await get('/api/ia/status').catch(() => null);
+    render(box, html`${g ? googleCard(g) : ''}${wa ? whatsappCard(wa) : ''}${em ? emailCard(em) : ''}${ai ? aiCard(ai) : ''}<div class="alert">Nenhuma integração é considerada conectada sem validação: o status "Ativa" só pode ser marcado após o recebimento de ao menos um evento real processado com sucesso. Detalhes técnicos em <code>docs/INTEGRACOES.md</code>.</div>
       ${list.map((i) => html`<section class="card integ" data-key="${i.key}">
         <div class="section-head"><h3>${i.name}</h3>${statusIntegration(i.effective_status, i.effective_status_label)}</div>
         <p>${i.description}</p>
@@ -399,6 +415,17 @@ const RENDER = {
         const r = await post('/api/email/teste', { base: location.href.split('#')[0], logo_url: new URL('img/vero-logo-dark.png', document.baseURI).href });
         if (r.sent) toast(`E-mail de teste enviado para ${r.to}.`);
         else toastError(new Error(r.reason === 'nao_configurado' ? 'Configure o servidor SMTP primeiro.' : `Falha no envio: ${r.error}`));
+      } catch (ex) {
+        toastError(ex);
+      }
+    });
+    on(box, 'submit', '[data-ai-form]', async (e, f) => {
+      e.preventDefault();
+      try {
+        const d = formData(f);
+        await put('/api/ia/config', { api_key: d.api_key || undefined, enabled: !!f.enabled.checked });
+        toast('IA Vero configurada.');
+        redraw();
       } catch (ex) {
         toastError(ex);
       }

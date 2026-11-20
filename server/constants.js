@@ -14,6 +14,8 @@ const ACTIVITY_TYPES = {
   email_recebido: { label: 'E-mail recebido', channel: 'email' },
   direct_enviado: { label: 'Direct enviado (Instagram)', channel: 'direct', outbound: true, attempt: true },
   direct_recebido: { label: 'Direct recebido (Instagram)', channel: 'direct' },
+  linkedin_enviado: { label: 'DM enviada (LinkedIn)', channel: 'linkedin', outbound: true, attempt: true },
+  linkedin_recebido: { label: 'DM recebida (LinkedIn)', channel: 'linkedin' },
   conversa_presencial: { label: 'Conversa presencial', channel: 'presencial' },
   conversa_video: { label: 'Conversa por vídeo', channel: 'video' },
   reuniao_agendada: { label: 'Reunião agendada', system: true },

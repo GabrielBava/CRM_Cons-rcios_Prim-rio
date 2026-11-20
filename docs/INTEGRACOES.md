@@ -230,6 +230,20 @@ Tela: **Comunicação › WhatsApp**. Configuração: **Configurações › Inte
 - **Mídia:** `GET /api/whatsapp/midia/:id` baixa a foto, o áudio ou o documento recebido pela API da Meta.
 - **Modo de teste:** sem a conta conectada, o administrador pode ligar o modo de teste: as mensagens ficam só no CRM (marcadas "teste"), para treinar a equipe.
 
+## 11. IA Vero: motor interno e IA generativa opcional (Claude)
+
+Tela: aba **IA Vero** do painel do lead. Configuração: **Configurações › Integrações › IA Vero** (administrador).
+
+- **Motor interno (padrão):** regras da plataforma sobre os dados do CRM (etapa, atividades, qualificação, reuniões, propostas, produtos e diagnóstico) e a Base da IA Vero. Sem custo e sem enviar dados para fora.
+- **IA generativa (opcional):** responde as perguntas livres do chat com o modelo `claude-opus-5-5` (Anthropic), com os dados do lead como contexto (resumo, etapa, próximo passo, alertas, canal, BANT, itens em aberto e oportunidades; sem CPF). Requisitos no servidor: a biblioteca oficial (`npm install @anthropic-ai/sdk`) e a chave da API (`ANTHROPIC_API_KEY` no `config.env` ou salva cifrada pela tela). Usa o fallback de modelo do lado do servidor da Anthropic (`server-side-fallback-2026-07-01`, `fallbacks: "default"`): se o modelo principal estiver indisponível, a Anthropic responde com o modelo reserva padrão. Recusa, limite de uso, chave inválida ou falha de rede: a resposta sai do motor interno, com o aviso.
+- **Rotas:** `GET /api/ia/leads/:id` (insights), `GET|POST /api/ia/leads/:id/conversa` (histórico e pergunta), `POST /api/ia/avaliar` (👍/👎 na resposta ou no item da base), `GET|POST|PATCH /api/ia/conhecimento` (base; cadastro pela liderança), `GET /api/ia/status`, `PUT /api/ia/config` (administrador).
+
+## 12. Diagnóstico financeiro (ferramenta da Vero Planejamento)
+
+- **Abrir:** `POST /api/diagnosticos` `{ contact_id, opportunity_id?, new? }` devolve a URL `ferramentas/diagnostico-financeiro.html?crm=<id>#/clientes/crm-<id>` (retoma o que está em andamento; `new: true` cria outro).
+- **Ponte:** a página busca `GET /api/diagnosticos/:id/dados` (cadastro para preencher, consultor e o diagnóstico salvo) e grava o cliente no armazenamento do navegador que a ferramenta lê; cada alteração volta por `PUT /api/diagnosticos/:id/dados` `{ data }` (até 4 MB; coleta ou recomendações finalizadas concluem). `POST /api/diagnosticos/:id/concluir` conclui manualmente. `GET /api/cadastros/:id/diagnostico` traz o atual (com o resumo) e o histórico.
+- **Sem `?crm`** a ferramenta funciona sozinha, como o arquivo original (os dados ficam só no navegador). A IA da própria ferramenta (chave informada pelo usuário nas configurações dela) chama `api.anthropic.com` direto do navegador.
+
 ## Exportação para discadora
 
 **Prospects e leads › Lista para discadora** gera um CSV com `id_lead;nome;telefone;telefone_2;responsavel`, respeitando os filtros da tela. A lista exclui automaticamente cadastros com oposição a ligações ou a todos os canais, cadastros sem telefone e cadastros anonimizados. O `id_lead` é o que a discadora deve devolver nos eventos.

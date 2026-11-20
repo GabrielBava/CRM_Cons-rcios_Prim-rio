@@ -703,6 +703,12 @@ async function whatsapp(view, openId, params) {
       const r = await post('/api/whatsapp/conversas', { contact_id: Number(params.contato) });
       await loadList();
       await openConv(r.id);
+      // Resposta sugerida pela IA Vero (?texto=): fica pronta no campo de mensagem para revisar e enviar
+      const box = $('[data-compose] [name=body]', view);
+      if (params.texto && box) {
+        box.value = params.texto;
+        box.focus();
+      }
     } catch (e) {
       toastError(e);
     }

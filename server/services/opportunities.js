@@ -12,12 +12,12 @@ const {
   isManager,
   optionLabel,
 } = require('../core');
-const { badRequest, notFound, forbidden, clean, toNumber, toIso, uuid, nowIso } = require('../util');
+const { badRequest, notFound, forbidden, clean, toNumber, toIso, uuid, nowIso, toDateOnly } = require('../util');
 const { tx, nextCode, getSetting } = require('../db');
 const { insertActivity, listActivities } = require('./activities');
 
 const OPP_FIELDS = [
-  'title', 'product_id', 'priority', 'company_contact_id', 'credit_category', 'credit_value', 'term_months', 'installment_min',
+  'expected_close_date', 'title', 'product_id', 'priority', 'company_contact_id', 'credit_category', 'credit_value', 'term_months', 'installment_min',
   'installment_max', 'quotas', 'payment_modality', 'strategy', 'contemplation_type', 'bid_own_resources', 'fgts_available',
   'embedded_bid_interest', 'urgency', 'objective', 'qualification_criteria', 'next_action', 'next_action_at', 'owner_id', 'custom',
   'pause_reason', 'objective_type', 'product_type', 'credit_purpose', 'financial_moment', 'employment_type', 'has_fgts', 'decision_maker',
@@ -180,6 +180,10 @@ function normalizeOpp(db, data, contactId) {
     o.priority = data.priority;
   }
   if (data.next_action_at !== undefined) o.next_action_at = toIso(data.next_action_at);
+  if (data.expected_close_date !== undefined) {
+    o.expected_close_date = data.expected_close_date ? toDateOnly(data.expected_close_date) : null;
+    if (data.expected_close_date && !o.expected_close_date) throw badRequest('Previsão de fechamento inválida.');
+  }
   if (data.product_id !== undefined) {
     o.product_id = data.product_id ? Number(data.product_id) : null;
     if (o.product_id && !db.prepare('SELECT 1 FROM products WHERE id = ?').get(o.product_id)) throw badRequest('Produto inválido.');
@@ -333,6 +337,74 @@ function fillQualification(db, user, id, data) {
   const after = db.prepare('SELECT * FROM opportunities WHERE id = ?').get(before.id);
   return { filled: Object.keys(candidate), ignored, qualification: qualificationStatus(after, loadContactKind(db, before.contact_id)) };
 }
+/**
+ * "Concluir qualificação": salva os campos enviados, exige ao menos um campo de qualificação preenchido e registra a
+ * conclusão (critério da etapa Qualificação). Se o negócio está em Lead ou Tentativa de contato, avança para Qualificação.
+ */
+function concludeQualification(db, user, id, data = {}) {
+  const before = loadOpp(db, user, id, { write: true });
+  const fields = data.fields && typeof data.fields === 'object' ? { ...data.fields } : {};
+  delete fields.owner_id;
+  if (Object.keys(fields).length) updateOpportunity(db, user, before.id, fields);
+  const o = db.prepare('SELECT * FROM opportunities WHERE id = ?').get(before.id);
+  const filled = QUALIFICATION_FIELDS.filter(([f]) => !isEmpty(o[f]));
+  if (!filled.length) throw badRequest('Preencha ao menos um campo da qualificação antes de concluir.');
+  const now = nowIso();
+  if (!o.qualified_at) {
+    db.prepare('UPDATE opportunities SET qualified_at = ?, qualified_by = ?, updated_at = ? WHERE id = ?').run(now, user.id, now, o.id);
+    audit(db, user, 'opportunity', o.id, 'qualificacao_concluida', { campos: filled.map(([, l]) => l) }, o.contact_id);
+    insertActivity(db, { contact_id: o.contact_id, opportunity_id: o.id, type: 'observacao', notes: `Qualificação concluída (${filled.length} campo(s) preenchido(s)).`, user_id: user.id });
+  }
+  const moved = advanceTo(db, user, o.id, 'qualificado', ['prospect', 'lead', 'tentativa'], 'Qualificação concluída');
+  return { qualified_at: o.qualified_at || now, filled: filled.length, moved };
+}
+
+/**
+ * Avanço automático (regra de fluxo): leva o negócio aberto para a etapa `key` quando ele está numa das etapas `from`
+ * e cumpre os critérios. Falhas não interrompem a ação que disparou o avanço (atividade, qualificação...).
+ */
+function advanceTo(db, user, oppId, key, from, reason) {
+  const o = db.prepare('SELECT o.id, o.status, s.key AS stage_key FROM opportunities o JOIN pipeline_stages s ON s.id = o.stage_id WHERE o.id = ?').get(oppId);
+  const to = db.prepare('SELECT id FROM pipeline_stages WHERE key = ? AND active = 1').get(key);
+  if (!o || !to || o.status !== 'aberta' || !from.includes(o.stage_key)) return false;
+  try {
+    moveStage(db, user, o.id, { stage_id: to.id, reason }, { allowSkip: true });
+    return key;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Funil de perdidos (espelho do funil comercial, sem Venda): onde cada lead foi perdido e por qual motivo (MP).
+ * Líder e administrador. q: from/to (data da perda), owner_id, area.
+ */
+function lostBoard(db, user, q = {}) {
+  if (!['admin', 'gestor'].includes(user.role)) throw forbidden('O funil de perdidos é do líder de equipe e do administrador.');
+  const stages = db.prepare("SELECT id, key, name, position FROM pipeline_stages WHERE active = 1 AND kind = 'aberta' ORDER BY position").all();
+  const { where, params } = oppFilters(db, user, { ...q, closed_days: undefined, stage_id: undefined });
+  where.push("o.status = 'perdida'");
+  const from = toIso(q.from) || new Date(Date.now() - (Number(q.days) || 90) * 86400000).toISOString();
+  where.push('o.closed_at >= ?');
+  params.push(from);
+  if (q.to) {
+    where.push('o.closed_at < ?');
+    params.push(toIso(q.to));
+  }
+  const rows = decorate(db, db.prepare(`${OPP_SELECT} WHERE ${where.join(' AND ')} ORDER BY o.closed_at DESC`).all(...params));
+  const reasons = Object.fromEntries(db.prepare("SELECT value, label FROM options WHERE list = 'motivo_perda'").all().map((r) => [r.value, r.label]));
+  const byReason = (cards) => {
+    const m = {};
+    for (const c of cards) m[c.lost_reason || 'sem_motivo'] = (m[c.lost_reason || 'sem_motivo'] || 0) + 1;
+    return Object.entries(m).map(([value, n]) => ({ value, label: reasons[value] || 'Sem motivo', n })).sort((a, b) => b.n - a.n);
+  };
+  const first = stages[0];
+  const out = stages.map((s) => {
+    const cards = rows.filter((r) => (r.lost_from_stage_id || first?.id) === s.id);
+    return { ...s, count: cards.length, total_value: cards.reduce((t, r) => t + (r.deal_value || 0), 0), reasons: byReason(cards), cards };
+  });
+  return { from, stages: out, total: rows.length, reasons: byReason(rows) };
+}
 const loadContactKind = (db, contactId) => db.prepare('SELECT kind FROM contacts WHERE id = ?').get(contactId)?.kind || 'PF';
 
 function validateStrategy(db, user, id) {
@@ -380,6 +452,8 @@ function moveStage(db, user, id, data, opts = {}) {
       upd.lost_reason = lostReason;
       upd.lost_notes = clean(data.lost_notes);
       upd.closed_at = now;
+      // Funil de perdidos: a etapa (aberta) em que o lead estava quando foi perdido
+      upd.lost_from_stage_id = from?.kind === 'aberta' ? from.id : o.lost_from_stage_id ?? from?.id ?? null;
     } else if (to.kind === 'ganho') {
       upd.closed_at = now;
     } else if (to.kind === 'nutricao') {
@@ -522,7 +596,8 @@ function oppFilters(db, user, q) {
 const OPP_SELECT = `SELECT o.*, c.name AS contact_name, c.code AS contact_code, c.kind AS contact_kind, c.origin AS contact_origin, c.campaign AS contact_campaign,
   (SELECT COALESCE(co.campaign_name, co.utm_campaign) FROM contact_origins co WHERE co.contact_id = c.id AND COALESCE(co.campaign_name, co.utm_campaign) IS NOT NULL ORDER BY co.id DESC LIMIT 1) AS origin_campaign,
   c.trade_name AS contact_company, c.phone1 AS contact_phone, c.whatsapp AS contact_whatsapp, c.email AS contact_email, s.rot_days AS stage_rot_days, s.position AS stage_position,
-  cu.name AS co_owner_name, (SELECT COUNT(*) FROM activities a WHERE a.contact_id = c.id AND a.type IN ('ligacao_realizada','tentativa_sem_atendimento','mensagem_enviada','email_enviado','direct_enviado')) AS attempts,
+  cu.name AS co_owner_name, (SELECT COUNT(*) FROM activities a WHERE a.contact_id = c.id AND a.type IN ('ligacao_realizada','tentativa_sem_atendimento','mensagem_enviada','email_enviado','direct_enviado','linkedin_enviado')) AS attempts,
+  (SELECT name FROM users qb WHERE qb.id = o.qualified_by) AS qualified_by_name, c.first_contact_at AS contact_first_contact_at,
   c.created_at AS contact_created_at, c.temperature AS contact_temperature, c.relationship AS contact_relationship,
   (SELECT MAX(pr.credit_value) FROM proposals pr WHERE pr.opportunity_id = o.id AND pr.status IN ('rascunho','apresentada','em_analise','aprovada')) AS proposal_value,
   (SELECT COUNT(*) FROM proposals pr WHERE pr.opportunity_id = o.id AND pr.status <> 'substituida') AS proposal_count,
@@ -795,6 +870,9 @@ function reorderStages(db, user, ids) {
 }
 
 module.exports = {
+  concludeQualification,
+  advanceTo,
+  lostBoard,
   QUALIFICATION_FIELDS,
   R1_FILLABLE,
   qualificationStatus,

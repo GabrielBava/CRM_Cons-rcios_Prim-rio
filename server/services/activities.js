@@ -139,7 +139,7 @@ function createActivity(db, user, data) {
   const returnAt = toIso(data.return_at);
   const nextAction = clean(data.next_action);
 
-  return tx(db, () => {
+  const id = tx(db, () => {
     const id = insertActivity(db, {
       contact_id: contact.id,
       company_contact_id: companyContact?.id,
@@ -178,6 +178,14 @@ function createActivity(db, user, data) {
     }
     return id;
   });
+  // Regra de fluxo: registrar o contato com um lead na etapa "Lead" já o leva para "Tentativa de contato"
+  const { CONTACT_TYPES } = require('./pipeline');
+  if (CONTACT_TYPES.includes(type)) {
+    const opps = require('./opportunities');
+    const open = db.prepare("SELECT o.id FROM opportunities o JOIN pipeline_stages s ON s.id = o.stage_id WHERE o.contact_id = ? AND o.status = 'aberta' AND s.key IN ('prospect', 'lead')").all(contact.id);
+    for (const o of open) opps.advanceTo(db, user, o.id, 'tentativa', ['prospect', 'lead'], `Tentativa de contato registrada (${ACTIVITY_TYPES[type].label})`);
+  }
+  return id;
 }
 
 // Fase do relacionamento em que a atividade ocorreu: pré-venda (antes da 1ª proposta), venda (até a conversão) e pós-venda

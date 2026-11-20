@@ -47,7 +47,7 @@ export async function show(view, { key, id, params }) {
     ${crmTabs('funil')}
     <div class="page-head"><div><h1>Pipeline</h1><p class="muted small">0 Prospect · 1 Lead · 2 Tentativa · 3 Qualificação · 4 R1 · 5 R2 · 6 Negociação · 7 Venda — para todas as áreas (consórcio, planejamento, seguros e investimentos).</p></div>
       <div class="actions">
-        <div class="seg small"><button class="btn small ${s.mode !== 'lista' ? 'active' : ''}" data-mode="kanban">Kanban</button><button class="btn small ${s.mode === 'lista' ? 'active' : ''}" data-mode="lista">Lista</button></div>
+        <div class="seg small"><button class="btn small ${!['lista', 'perdidos'].includes(s.mode) ? 'active' : ''}" data-mode="kanban">Comercial</button><button class="btn small ${s.mode === 'lista' ? 'active' : ''}" data-mode="lista">Lista</button>${manager ? html`<button class="btn small ${s.mode === 'perdidos' ? 'active' : ''}" data-mode="perdidos" title="Funil de perdidos: onde cada lead foi perdido e o motivo (MP)">Perdidos</button>` : ''}</div>
         ${can.admin() ? html`<button class="btn" data-act="export">Exportar CSV</button>` : ''}
       </div></div>
     <form class="filters" data-f>
@@ -77,7 +77,7 @@ export async function show(view, { key, id, params }) {
       <button type="button" class="btn ghost" data-act="bulk-cancel">Cancelar</button></div>
   </div>`);
   const form = $('[data-f]', view);
-  let mode = s.mode || 'kanban';
+  let mode = s.mode === 'perdidos' && !manager ? 'kanban' : s.mode || 'kanban';
   let archived = !!s.archived;
   let data = null;
   let bulk = false;
@@ -107,6 +107,10 @@ export async function show(view, { key, id, params }) {
         const ids = new Set(allCards().map((c) => c.id));
         [...selected].forEach((sid) => !ids.has(sid) && selected.delete(sid));
         draw();
+      } else if (mode === 'perdidos') {
+        const q = query();
+        const r = await get('/api/funil/perdidos', { q: q.q, owner_id: q.owner_id, area: q.area, origin: q.origin, category: q.category, days: q.closed_days === '3650' ? 3650 : q.closed_days || 90 });
+        render(box, lostBoardView(r));
       } else {
         const r = await get('/api/oportunidades', { ...query(), limit: 200 });
         render(box, oppTable(r.rows));
@@ -129,6 +133,7 @@ export async function show(view, { key, id, params }) {
     mode = b.dataset.mode;
     $$('[data-mode]', view).forEach((x) => x.classList.toggle('active', x === b));
     $('.board-tools', view).hidden = mode !== 'kanban';
+    $('.page-head h1', view).textContent = mode === 'perdidos' ? 'Pipeline de perdidos' : 'Pipeline';
     if (mode !== 'kanban') {
       bulk = false;
       selected.clear();
@@ -486,4 +491,24 @@ async function showOpp(view, id) {
     proposalDetail(a.dataset.prop, reload);
   });
   await reload();
+}
+
+/**
+ * Funil de perdidos (líder e administrador): espelho do funil comercial, sem Venda. Cada coluna mostra os leads perdidos
+ * naquela etapa e os motivos (MP) mais frequentes.
+ */
+function lostBoardView(r) {
+  const max = Math.max(1, ...r.stages.map((s) => s.count));
+  return html`<div class="lost-wrap">
+    <div class="lost-summary"><div><small>Perdidos no período</small><strong>${r.total}</strong><small>desde ${fmtDate(r.from)}</small></div>
+      <div class="lost-reasons">${r.reasons.length ? r.reasons.slice(0, 9).map((x) => html`<span class="mp-chip"><strong>${x.n}</strong> ${x.label}</span>`) : html`<span class="muted small">Nenhuma perda no período.</span>`}</div></div>
+    <div class="kanban lost-board">${r.stages.map((s) => html`<section class="column kind-perdido-col">
+      <header><strong>${s.name}</strong><span class="count">${s.count}</span>${s.total_value ? html`<small class="muted">${fmtMoney(s.total_value)}</small>` : ''}</header>
+      <div class="lost-bar"><span style="width:${Math.round((s.count / max) * 100)}%"></span></div>
+      ${s.reasons.length ? html`<ul class="lost-mp">${s.reasons.map((x) => html`<li><span>${x.label}</span><strong>${x.n}</strong></li>`)}</ul>` : ''}
+      <div class="cards">${s.cards.length ? s.cards.map((o) => html`<article class="opp-card lost-card"><a href="#/leads/${o.contact_id}" data-drawer="${o.contact_id}" data-opp="${o.id}"><strong>${o.contact_name}</strong></a>
+        <small class="muted">${o.code} · ${o.owner_name || 'sem responsável'}</small>
+        <div class="badges"><span class="badge danger">${optLabel('motivo_perda', o.lost_reason) || 'Sem motivo'}</span>${o.deal_value ? html` <small>${fmtMoney(o.deal_value)}</small>` : ''}</div>
+        ${o.lost_notes ? html`<p class="small">${o.lost_notes}</p>` : ''}<small class="muted">Perdido em ${fmtDate(o.closed_at)}</small></article>`) : html`<p class="muted small empty-col">Nenhuma perda nesta etapa.</p>`}</div>
+    </section>`)}</div></div>`;
 }

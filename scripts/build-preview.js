@@ -73,6 +73,11 @@ const css = ['tokens.css', 'app.css', 'brand.css'].map((f) => fs.readFileSync(pa
 // Logos e ícones da marca
 fs.mkdirSync(path.join(OUT, 'img'), { recursive: true });
 for (const f of fs.readdirSync(path.join(ROOT, 'public', 'img'))) if (/\.(webp|png)$/.test(f) && !/^vero-logo-.*\.png$/.test(f)) fs.copyFileSync(path.join(ROOT, 'public', 'img', f), path.join(OUT, 'img', f));
+// Ferramentas (diagnóstico financeiro): na versão de teste abre sem a ponte com o CRM (fica só no navegador)
+if (fs.existsSync(path.join(ROOT, 'public', 'ferramentas', 'diagnostico-financeiro.html'))) {
+  fs.mkdirSync(path.join(OUT, 'ferramentas'), { recursive: true });
+  fs.copyFileSync(path.join(ROOT, 'public', 'ferramentas', 'diagnostico-financeiro.html'), path.join(OUT, 'ferramentas', 'diagnostico-financeiro.html'));
+}
 const previewCss = fs.readFileSync(path.join(ROOT, 'preview', 'preview.css'), 'utf8');
 const page = `<title>Vero Consórcios</title>
 <link rel="icon" type="image/png" href="img/favicon.png">

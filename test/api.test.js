@@ -617,16 +617,25 @@ test('funil: passagem sequencial com critérios de entrada; voltar exige motivo;
   const skip = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('negociacao').id });
   assert.equal(skip.status, 400);
   assert.match(skip.data.error, /pular etapas/);
-  // Lead → Tentativa de contato: sem restrição
+  // Lead → Tentativa de contato: exige ao menos uma tentativa registrada; registrar a atividade já avança o lead
   const crit = await call('c1', 'GET', `/api/oportunidades/${opp.id}/criterios`);
   assert.equal(crit.data.next_stage.key, 'tentativa');
-  assert.equal(crit.data.criteria.length, 0);
-  assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('tentativa').id })).status, 200);
-  // Lead qualificado exige objetivo, categoria de interesse, crédito desejado e prioridade (curto, médio ou longo prazo)
+  assert.deepEqual(crit.data.criteria.map((c) => c.key), ['tentativa_registrada']);
+  const t0 = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('tentativa').id });
+  assert.equal(t0.status, 400);
+  assert.deepEqual(t0.data.details.missing.map((m) => m.key), ['tentativa_registrada']);
+  assert.equal((await call('c1', 'POST', '/api/atividades', { contact_id: c.data.id, type: 'linkedin_enviado', notes: 'DM no LinkedIn' })).status, 200);
+  assert.equal((await call('c1', 'GET', `/api/oportunidades/${opp.id}`)).data.stage_id, st('tentativa').id, 'atividade de contato leva o lead para Tentativa');
+  // Tentativa → Qualificação: só com a qualificação concluída (ao menos um campo preenchido + "Concluir qualificação")
   const q = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('qualificado').id });
   assert.equal(q.status, 400);
-  assert.deepEqual(q.data.details.missing.map((m) => m.key), ['qualificacao']);
-  assert.match(q.data.details.missing[0].label, /objetivo, valor estimado e prioridade/);
+  assert.deepEqual(q.data.details.missing.map((m) => m.key), ['qualificacao_concluida']);
+  assert.match(q.data.details.missing[0].label, /Qualificação do cliente concluída/);
+  assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/concluir-qualificacao`, {})).status, 400, 'qualificação vazia');
+  const cq = await call('c1', 'POST', `/api/oportunidades/${opp.id}/concluir-qualificacao`, { fields: { objective_type: 'aquisicao', urgency: 'medio' } });
+  assert.equal(cq.status, 200, JSON.stringify(cq.data));
+  assert.equal(cq.data.moved, 'qualificado');
+  assert.ok(cq.data.qualified_at);
   // Voltar exige motivo
   assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('lead').id })).status, 400);
   assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('lead').id, reason: 'Registrado por engano' })).status, 200);
@@ -649,7 +658,9 @@ test('pipeline 0–7: Prospect vai direto para Tentativa; Ganho agenda a R1 e le
   const c = await call('c1', 'POST', '/api/cadastros', { name: 'Prospect Direto', phone1: '11 94444-1010', origin: 'indicacao', relationship: 'prospect' });
   const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
   assert.equal(opp.stage_id, st('prospect').id);
-  assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('tentativa').id })).status, 200, 'Prospect → Tentativa sem restrição');
+  assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('tentativa').id })).status, 400, 'Prospect → Tentativa só com tentativa registrada');
+  assert.equal((await call('c1', 'POST', '/api/atividades', { contact_id: c.data.id, type: 'tentativa_sem_atendimento', notes: 'Não atendeu' })).status, 200);
+  assert.equal((await call('c1', 'GET', `/api/oportunidades/${opp.id}`)).data.stage_id, st('tentativa').id, 'Prospect vai direto para Tentativa ao registrar o contato');
   // Sem R1 agendada não entra em R1; pular etapas sem o "Ganho" não é permitido
   const noR1 = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('r1').id });
   assert.equal(noR1.status, 400);
@@ -672,12 +683,13 @@ test('pipeline 0–7: Prospect vai direto para Tentativa; Ganho agenda a R1 e le
   assert.equal(g1.status, 200, JSON.stringify(g1.data));
   assert.equal(g1.data.kind, 'r1');
   assert.equal(g1.data.moved, false);
-  assert.match(g1.data.move_error, /objetivo, valor estimado e prioridade/);
+  assert.match(g1.data.move_error, /Qualificação do cliente concluída/);
   assert.equal(g1.data.google.reason, 'nao_configurado');
   assert.match(g1.data.calendar_link, /^https:\/\/calendar\.google\.com\/calendar\/render\?action=TEMPLATE/);
   assert.match(g1.data.calendar_link, /add=prospect.direto%40exemplo.com/);
   // Com a qualificação preenchida (no próprio pop-up do Ganho), o "ganho" leva o lead direto para a R1
-  await call('c1', 'PATCH', `/api/oportunidades/${opp.id}`, { objective_type: 'aquisicao', credit_category: 'imovel', credit_value: 300000, urgency: 'curto' });
+  const cq = await call('c1', 'POST', `/api/oportunidades/${opp.id}/concluir-qualificacao`, { fields: { objective_type: 'aquisicao', credit_category: 'imovel', credit_value: 300000, urgency: 'curto' } });
+  assert.equal(cq.data.moved, 'qualificado');
   const won = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('r1').id, ganho: true });
   assert.equal(won.status, 200, JSON.stringify(won.data));
   const after = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data;
@@ -693,9 +705,11 @@ test('pipeline 0–7: Prospect vai direto para Tentativa; Ganho agenda a R1 e le
   // Pop-up direto na Qualificação → R1 (outro lead): agendar move junto
   const c2 = await call('c1', 'POST', '/api/cadastros', { name: 'Ganho Direto', phone1: '11 94445-2011', origin: 'site', relationship: 'lead' });
   const o2 = (await call('c1', 'GET', `/api/cadastros/${c2.data.id}`)).data.opportunities[0];
-  await call('c1', 'PATCH', `/api/oportunidades/${o2.id}`, { objective_type: 'aquisicao', credit_value: 90000, urgency: 'medio', business_area: 'planejamento' });
+  await call('c1', 'POST', '/api/atividades', { contact_id: c2.data.id, type: 'mensagem_enviada', notes: 'WhatsApp' });
+  const cq2 = await call('c1', 'POST', `/api/oportunidades/${o2.id}/concluir-qualificacao`, { fields: { objective_type: 'aquisicao', credit_value: 90000, urgency: 'medio', business_area: 'planejamento' } });
+  assert.equal(cq2.data.moved, 'qualificado', 'Lead → (Tentativa) → Qualificação');
   const g2 = await call('c1', 'POST', '/api/r1/agendar', { contact_id: c2.data.id, opportunity_id: o2.id, start_at: start.toISOString(), end_at: new Date(start.getTime() + 30 * 60000).toISOString(), email: 'ganho.direto@exemplo.com', move_to_r1: true });
-  assert.equal(g2.data.moved, true, 'planejamento não exige categoria de consórcio');
+  assert.equal(g2.data.moved, true, 'Qualificação → R1 ao agendar');
   // Modelo da R1 em HTML: nome, foto e contato do especialista + nome do cliente
   await call('c1', 'PATCH', '/api/perfil', { whatsapp: '51 98912-1113', job_title: 'Especialista em consórcios' });
   const page = await fetch(`${base}/api/r1/modelo?task_id=${g1.data.task_id}`, { headers: { Cookie: sessions.c1 } });
@@ -727,7 +741,8 @@ test('R1 e R2: Não compareceu (NS), Remarcar (R), confirmar presença, Concluir
   const st = (k) => stages.find((s) => s.key === k).id;
   const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Reuniões', phone1: '11 94445-2020', email: 'reunioes@exemplo.com', origin: 'indicacao', relationship: 'lead' });
   const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
-  await call('c1', 'PATCH', `/api/oportunidades/${opp.id}`, { objective_type: 'aquisicao', credit_category: 'imovel', credit_value: 250000, urgency: 'curto' });
+  await call('c1', 'POST', '/api/atividades', { contact_id: c.data.id, type: 'ligacao_realizada', notes: 'Conversa inicial' });
+  await call('c1', 'POST', `/api/oportunidades/${opp.id}/concluir-qualificacao`, { fields: { objective_type: 'aquisicao', credit_category: 'imovel', credit_value: 250000, urgency: 'curto' } });
   const at = (days, h = 15) => {
     const d = new Date(Date.now() + days * 86400000);
     d.setUTCHours(h, 0, 0, 0);
@@ -784,11 +799,26 @@ test('R1 e R2: Não compareceu (NS), Remarcar (R), confirmar presença, Concluir
   k = await card();
   assert.equal(k.stage_key, 'r2');
   assert.equal(k.meetings.r2.state, 'agendada');
-  // Negociação só com a R2 realizada; Concluir a R2 leva o negócio para Negociação
-  assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('negociacao') })).status, 400);
-  const done = await call('c1', 'POST', `/api/reunioes/${r2.data.task_id}/resultado`, { result: 'realizada', notes: 'Proposta apresentada' });
-  assert.equal(done.data.moved, 'negociacao');
+  // Negociação só com proposta gerada (qualquer área): concluir a R2 sem proposta mantém o negócio em R2 com o aviso
+  const neg0 = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('negociacao') });
+  assert.equal(neg0.status, 400);
+  assert.ok(neg0.data.details.missing.some((m) => m.key === 'proposta_gerada'));
+  const done = await call('c1', 'POST', `/api/reunioes/${r2.data.task_id}/resultado`, { result: 'realizada', notes: 'Cliente gostou' });
+  assert.equal(done.status, 200);
+  assert.ok(!done.data.moved);
+  assert.match(done.data.hint, /Gere a proposta/);
+  assert.equal((await card()).stage_key, 'r2');
+  // Proposta de seguros (sem plano de consórcio): exige descrição; ao gerar, o negócio vai para Negociação
+  assert.equal((await call('c1', 'POST', '/api/propostas', { opportunity_id: opp.id, area: 'seguros', credit_value: 1200 })).status, 400);
+  assert.equal((await call('c1', 'POST', '/api/propostas', { opportunity_id: opp.id, area: 'xyz', description: 'x' })).status, 400);
+  const pr = await call('c1', 'POST', '/api/propostas', { opportunity_id: opp.id, area: 'seguros', description: 'Seguro de vida — capital R$ 500 mil, prêmio mensal R$ 180', credit_value: 500000 });
+  assert.equal(pr.status, 200, JSON.stringify(pr.data));
+  assert.equal(pr.data.moved, 'negociacao');
   assert.equal((await card()).stage_key, 'negociacao');
+  const props = (await call('c1', 'GET', `/api/propostas?contact_id=${c.data.id}&area=seguros`)).data;
+  const listed = props.rows.find((p) => p.id === pr.data.id);
+  assert.ok(listed, 'aparece em Propostas');
+  assert.equal(listed.area, 'seguros');
   // Outro usuário (leitura) não registra resultado
   assert.equal((await call('leitor', 'POST', `/api/reunioes/${r2.data.task_id}/confirmar`, {})).status, 403);
 });
@@ -2103,7 +2133,7 @@ test('calendário 360: só leitura, reúne tarefas, R1/R2, atividades e o one-on
   assert.equal(oo.status, 200, JSON.stringify(oo.data));
   assert.ok((await call('gestor', 'GET', '/api/time/one-on-ones')).data.some((t) => t.id === oo.data.id && t.member_name === 'Cons 1'));
   // Calendário do especialista: o próprio, com o one-on-one e as atividades registradas
-  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Calendário', phone1: '11 94446-3001', origin: 'site', relationship: 'lead' });
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Calendário', phone1: '11 93817-5501', origin: 'site', relationship: 'lead' });
   await call('c1', 'POST', '/api/atividades', { contact_id: c.data.id, type: 'ligacao_realizada', result: 'atendida' });
   await call('c1', 'POST', '/api/tarefas', { contact_id: c.data.id, type: 'ligar', title: 'Ligar de volta', due_at: day(1, 13) });
   const from = new Date(Date.now() - 86400000).toISOString();
@@ -2314,4 +2344,151 @@ test('WhatsApp da empresa: webhook da Meta (verificação e assinatura), convers
   const blocked = await call('c1', 'POST', `/api/whatsapp/conversas/${start.data.id}/mensagens`, { template: 'retomar_contato' });
   assert.equal(blocked.status, 400);
   assert.match(blocked.data.error, /oposição/);
+});
+
+test('funil de perdidos: espelho do funil com a etapa da perda e os motivos (MP); só líder e administrador', async () => {
+  const stages = (await call('c1', 'GET', '/api/meta')).data.stages;
+  const st = (k) => stages.find((s) => s.key === k).id;
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Perdido na Qualificação', phone1: '11 93817-5511', origin: 'site', relationship: 'lead' });
+  const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
+  await call('c1', 'POST', '/api/atividades', { contact_id: c.data.id, type: 'mensagem_enviada', notes: 'WhatsApp' });
+  await call('c1', 'POST', `/api/oportunidades/${opp.id}/concluir-qualificacao`, { fields: { objective_type: 'aquisicao' } });
+  assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('perdido'), lost_reason: 'preco', lost_notes: 'Parcela alta' })).status, 200);
+  assert.equal((await call('c1', 'GET', '/api/funil/perdidos')).status, 403, 'especialista não vê o funil de perdidos');
+  const r = await call('gestor', 'GET', '/api/funil/perdidos?days=30');
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.ok(!r.data.stages.some((s) => s.key === 'venda'), 'sem a coluna Venda');
+  const q = r.data.stages.find((s) => s.key === 'qualificado');
+  const card = q.cards.find((x) => x.id === opp.id);
+  assert.ok(card, 'perdido aparece na etapa em que estava');
+  assert.equal(card.lost_reason, 'preco');
+  assert.ok(q.reasons.some((x) => x.value === 'preco' && x.n >= 1));
+  assert.ok(r.data.reasons.some((x) => x.value === 'preco'));
+  assert.equal((await call('admin', 'GET', '/api/funil/perdidos')).status, 200);
+});
+
+test('produtos do lead: quatro áreas com oportunidades, faixa de captação em investimentos e potencial somado', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Cross-sell', phone1: '11 93817-5502', origin: 'indicacao', relationship: 'lead' });
+  assert.equal((await call('c1', 'POST', '/api/produtos-lead', { contact_id: c.data.id, area: 'seguros' })).status, 400, 'oportunidade obrigatória');
+  assert.equal((await call('c1', 'POST', '/api/produtos-lead', { contact_id: c.data.id, area: 'seguros', sub_type: 'reserva_emergencia' })).status, 400, 'oportunidade de outra área');
+  assert.equal((await call('c1', 'POST', '/api/produtos-lead', { contact_id: c.data.id, area: 'seguros', sub_type: 'vida_familia', value_range: 'ate_50k' })).status, 400, 'faixa só em investimentos');
+  const a = await call('c1', 'POST', '/api/produtos-lead', { contact_id: c.data.id, area: 'seguros', sub_type: 'vida_familia', description: 'Proteção da renda', value: 300000, notes: 'Dois filhos' });
+  assert.equal(a.status, 200, JSON.stringify(a.data));
+  const b = await call('c1', 'POST', '/api/produtos-lead', { contact_id: c.data.id, area: 'investimentos', sub_type: 'migracao_carteira', value_range: '200k_500k' });
+  assert.equal(b.status, 200, JSON.stringify(b.data));
+  await call('c1', 'POST', '/api/produtos-lead', { contact_id: c.data.id, area: 'consorcio', sub_type: 'veiculo', value: 90000 });
+  let l = (await call('c1', 'GET', `/api/cadastros/${c.data.id}/produtos`)).data;
+  assert.equal(l.rows.length, 3);
+  assert.equal(l.totals.investimentos.potential, 350000, 'faixa usa o valor de referência');
+  assert.equal(l.potential, 300000 + 350000 + 90000);
+  assert.equal((await call('c1', 'PATCH', `/api/produtos-lead/${a.data.id}`, { status: 'descartado' })).status, 200);
+  l = (await call('c1', 'GET', `/api/cadastros/${c.data.id}/produtos`)).data;
+  assert.equal(l.totals.seguros.count, 0, 'descartado sai do potencial');
+  assert.equal((await call('c2', 'GET', `/api/cadastros/${c.data.id}/produtos`)).status, 404, 'outro especialista não vê (fora do escopo)');
+  assert.equal((await call('leitor', 'POST', '/api/produtos-lead', { contact_id: c.data.id, area: 'consorcio', sub_type: 'imovel' })).status, 403);
+  assert.equal((await call('c1', 'DELETE', `/api/produtos-lead/${b.data.id}`)).status, 200);
+});
+
+test('diagnóstico financeiro: abre com os dados do cliente, salva pela ferramenta, conclui e mostra o resumo no lead', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Diagnóstico', phone1: '11 93817-5503', email: 'diag@exemplo.com', origin: 'site', relationship: 'lead' });
+  assert.equal((await call('c1', 'GET', `/api/cadastros/${c.data.id}/diagnostico`)).data.current, null);
+  const s = await call('c1', 'POST', '/api/diagnosticos', { contact_id: c.data.id });
+  assert.equal(s.status, 200, JSON.stringify(s.data));
+  assert.match(s.data.url, /^ferramentas\/diagnostico-financeiro\.html\?crm=\d+#\/clientes\/crm-\d+$/);
+  assert.equal((await call('c1', 'POST', '/api/diagnosticos', { contact_id: c.data.id })).data.id, s.data.id, 'retoma o que está em andamento');
+  const t = await call('c1', 'GET', `/api/diagnosticos/${s.data.id}/dados`);
+  assert.equal(t.data.prefill.nome, 'Cliente Diagnóstico');
+  assert.equal(t.data.prefill.email, 'diag@exemplo.com');
+  assert.equal(t.data.client_id, `crm-${s.data.id}`);
+  assert.equal(t.data.consultant.name, 'Cons 1');
+  assert.equal((await call('c2', 'GET', `/api/diagnosticos/${s.data.id}/dados`)).status, 404);
+  // Salvamento automático pela ferramenta; coleta finalizada conclui
+  assert.equal((await call('c1', 'PUT', `/api/diagnosticos/${s.data.id}/dados`, {})).status, 400);
+  const save = await call('c1', 'PUT', `/api/diagnosticos/${s.data.id}/dados`, { data: { id: `crm-${s.data.id}`, cadastro: { nome: 'Cliente Diagnóstico' }, objetivos: [{ titulo: 'Reserva' }], plano: [] } });
+  assert.equal(save.data.status, 'em_andamento');
+  const done = await call('c1', 'PUT', `/api/diagnosticos/${s.data.id}/dados`, { data: { id: `crm-${s.data.id}`, coletaFinalizada: true, objetivos: [{ titulo: 'Reserva' }, { titulo: 'Imóvel' }], plano: [{ titulo: 'Montar a reserva', prazo: 'curto' }], imoveis: [{}], cartoes: [{}] } });
+  assert.equal(done.data.status, 'concluido');
+  const v = (await call('c1', 'GET', `/api/cadastros/${c.data.id}/diagnostico`)).data.current;
+  assert.equal(v.status, 'concluido');
+  assert.deepEqual(v.summary.objetivos, ['Reserva', 'Imóvel']);
+  assert.equal(v.summary.plano[0].titulo, 'Montar a reserva');
+  assert.equal(v.summary.patrimonio_itens, 1);
+  // Novo diagnóstico (o concluído vai para o histórico)
+  const n = await call('c1', 'POST', '/api/diagnosticos', { contact_id: c.data.id, new: true });
+  assert.notEqual(n.data.id, s.data.id);
+  assert.equal((await call('c1', 'GET', `/api/cadastros/${c.data.id}/diagnostico`)).data.history.length, 1);
+  // A página da ferramenta é servida com política própria (script embutido, mesma origem)
+  const page = await fetch(`${base}/ferramentas/diagnostico-financeiro.html`);
+  if (page.status === 200) assert.match(page.headers.get('content-security-policy'), /script-src 'self' 'unsafe-inline' blob:/);
+});
+
+test('IA Vero: insights do lead (próximo passo, canal, BANT, objeções), chat interno, avaliação, base da equipe e IA generativa opcional', async () => {
+  const assistant = require('../server/services/assistant');
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Lead da IA', phone1: '11 93817-5504', origin: 'instagram', relationship: 'lead' });
+  const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
+  await call('c1', 'POST', '/api/atividades', { contact_id: c.data.id, type: 'ligacao_realizada', result: 'nao_atendida' });
+  await call('c1', 'PATCH', `/api/oportunidades/${opp.id}`, { objective_type: 'aquisicao', credit_category: 'imovel' });
+  const ins = await call('c1', 'GET', `/api/ia/leads/${c.data.id}`);
+  assert.equal(ins.status, 200, JSON.stringify(ins.data));
+  assert.equal(ins.data.stage.key, 'tentativa');
+  assert.match(ins.data.next, /qualificação/i);
+  assert.ok(ins.data.canal.channel && ins.data.canal.reason);
+  assert.deepEqual(ins.data.bant.map((b) => b.key), ['B', 'A', 'N', 'T']);
+  assert.equal(ins.data.bant.find((b) => b.key === 'N').ok, true);
+  assert.ok(ins.data.objections.length >= 5);
+  assert.ok(ins.data.questions.length >= 3);
+  assert.ok(ins.data.r1_deadline, 'prazo da R1 a partir do primeiro contato');
+  assert.equal((await call('c2', 'GET', `/api/ia/leads/${c.data.id}`)).status, 404);
+  // Chat com o motor interno
+  const st = (await call('c1', 'GET', '/api/ia/status')).data;
+  assert.equal(st.generative, false);
+  assert.ok(st.suggestions.length >= 5);
+  const a1 = await call('c1', 'POST', `/api/ia/leads/${c.data.id}/conversa`, { message: 'Objeção: está caro' });
+  assert.equal(a1.status, 200, JSON.stringify(a1.data));
+  assert.equal(a1.data.engine, 'interna');
+  assert.match(a1.data.answer, /Objeção/);
+  const a2 = await call('c1', 'POST', `/api/ia/leads/${c.data.id}/conversa`, { message: 'Qual canal e horário tentar?' });
+  assert.match(a2.data.answer, /Canal sugerido/);
+  assert.equal((await call('c1', 'POST', `/api/ia/leads/${c.data.id}/conversa`, { message: '' })).status, 400);
+  assert.equal((await call('c1', 'POST', '/api/ia/avaliar', { message_id: a1.data.id, rating: 1 })).status, 200);
+  const hist = (await call('c1', 'GET', `/api/ia/leads/${c.data.id}/conversa`)).data;
+  assert.equal(hist.length, 4);
+  assert.equal(hist.find((m) => m.id === a1.data.id).rating, 1);
+  // Base de conhecimento: só a liderança cadastra; o item aparece nas objeções do lead
+  assert.equal((await call('c1', 'POST', '/api/ia/conhecimento', { kind: 'objecao', title: 'x', content: 'y' })).status, 403);
+  const kb = await call('gestor', 'POST', '/api/ia/conhecimento', { kind: 'objecao', title: 'Vou falar com meu sócio', content: 'Claro, {nome}! Marcamos com vocês dois?' });
+  assert.equal(kb.status, 200, JSON.stringify(kb.data));
+  const ins2 = (await call('c1', 'GET', `/api/ia/leads/${c.data.id}`)).data;
+  const fromKb = ins2.objections.find((o) => o.kb_id === kb.data.id);
+  assert.equal(fromKb.response, 'Claro, Lead! Marcamos com vocês dois?');
+  assert.equal((await call('c1', 'POST', '/api/ia/avaliar', { kb_id: kb.data.id, rating: -1 })).status, 200);
+  // IA generativa (opcional): só o administrador liga; cliente da API simulado nos testes
+  assert.equal((await call('c1', 'PUT', '/api/ia/config', { enabled: true })).status, 403);
+  const seen = [];
+  assistant.setClientFactory(() => ({ beta: { messages: { create: async (req) => { seen.push(req); return { stop_reason: 'end_turn', content: [{ type: 'thinking', thinking: '...' }, { type: 'text', text: 'Resposta da IA generativa.' }] }; } } } }));
+  try {
+    const cfg = await call('admin', 'PUT', '/api/ia/config', { enabled: true, api_key: 'sk-ant-teste' });
+    assert.equal(cfg.status, 200, JSON.stringify(cfg.data));
+    assert.equal(cfg.data.generative, true);
+    const g = await call('c1', 'POST', `/api/ia/leads/${c.data.id}/conversa`, { message: 'Como conduzir a próxima conversa?' });
+    assert.equal(g.data.engine, 'claude');
+    assert.equal(g.data.answer, 'Resposta da IA generativa.');
+    assert.equal(seen[0].model, 'claude-opus-5-5');
+    assert.deepEqual(seen[0].betas, ['server-side-fallback-2026-07-01']);
+    assert.equal(seen[0].fallbacks, 'default');
+    assert.equal(seen[0].system[0].cache_control.type, 'ephemeral');
+    assert.ok(!JSON.stringify(seen[0]).includes('sk-ant-teste'), 'a chave não vai no conteúdo');
+    assert.equal(seen[0].messages[seen[0].messages.length - 1].content, 'Como conduzir a próxima conversa?');
+    // Recusa ou erro do modelo: responde com o motor interno
+    assistant.setClientFactory(() => ({ beta: { messages: { create: async () => ({ stop_reason: 'refusal', content: [] }) } } }));
+    const r = await call('c1', 'POST', `/api/ia/leads/${c.data.id}/conversa`, { message: 'Checklist BANT' });
+    assert.equal(r.data.engine, 'interna');
+    assistant.setClientFactory(() => ({ beta: { messages: { create: async () => { throw new Error('rede'); } } } }));
+    const e = await call('c1', 'POST', `/api/ia/leads/${c.data.id}/conversa`, { message: 'Checklist BANT' });
+    assert.equal(e.data.engine, 'interna');
+    assert.match(e.data.note, /motor interno/);
+  } finally {
+    assistant.setClientFactory(null);
+    await call('admin', 'PUT', '/api/ia/config', { enabled: false });
+  }
 });

@@ -207,10 +207,11 @@ function createRouter(db) {
 
   /* ---------- Regras do funil ---------- */
   add('GET', '/api/funil/regras', () => ({ rules: Object.entries(pipeline.RULES).map(([key, r]) => ({ key, label: r.label, hint: r.hint })), stage_rules: pipeline.stageRules(db), sequential: require('./db').getSetting(db, 'funnel_sequential') !== false }));
-  add('GET', '/api/oportunidades/:id/criterios', ({ user, params }) => {
+  add('GET', '/api/oportunidades/:id/criterios', ({ user, params, query }) => {
     const o = opps.loadOpp(db, user, params.id);
     const c = db.prepare('SELECT * FROM contacts WHERE id = ?').get(o.contact_id);
-    const next = pipeline.nextStage(db, o);
+    // stage_id: critérios de uma etapa específica (usado ao arrastar o cartão); sem ele, os da próxima etapa
+    const next = query.stage_id ? db.prepare('SELECT * FROM pipeline_stages WHERE id = ?').get(Number(query.stage_id)) : pipeline.nextStage(db, o);
     return { next_stage: next, criteria: next ? pipeline.evaluate(db, o, c, next) : [] };
   });
 
@@ -331,6 +332,31 @@ function createRouter(db) {
   add('POST', '/api/oportunidades/:id/validar-estrategia', ({ user, params }) => (opps.validateStrategy(db, user, params.id), { ok: true }));
   // Qualificação vinda de fora (ex.: transcrição da R1): completa só os campos vazios
   add('POST', '/api/oportunidades/:id/qualificacao', ({ user, params, body }) => opps.fillQualification(db, user, params.id, body));
+  add('POST', '/api/oportunidades/:id/concluir-qualificacao', ({ user, params, body }) => opps.concludeQualification(db, user, params.id, body));
+  add('GET', '/api/funil/perdidos', ({ user, query }) => opps.lostBoard(db, user, query));
+
+  /* ---------- Produtos do lead (cross-sell/up-sell), diagnóstico financeiro e IA Vero ---------- */
+  const leadProducts = require('./services/leadproducts');
+  const diagnostics = require('./services/diagnostics');
+  const assistant = require('./services/assistant');
+  add('GET', '/api/cadastros/:id/produtos', ({ user, params }) => leadProducts.listProducts(db, user, params.id));
+  add('POST', '/api/produtos-lead', ({ user, body }) => leadProducts.saveProduct(db, user, body));
+  add('PATCH', '/api/produtos-lead/:id', ({ user, params, body }) => leadProducts.saveProduct(db, user, { ...body, id: params.id }));
+  add('DELETE', '/api/produtos-lead/:id', ({ user, params }) => leadProducts.deleteProduct(db, user, params.id));
+  add('GET', '/api/cadastros/:id/diagnostico', ({ user, params }) => diagnostics.forContact(db, user, params.id));
+  add('POST', '/api/diagnosticos', ({ user, body }) => diagnostics.start(db, user, body));
+  add('GET', '/api/diagnosticos/:id/dados', ({ user, params }) => diagnostics.forTool(db, user, params.id));
+  add('PUT', '/api/diagnosticos/:id/dados', ({ user, params, body }) => diagnostics.saveFromTool(db, user, params.id, body), { bodyLimit: 5e6 });
+  add('POST', '/api/diagnosticos/:id/concluir', ({ user, params }) => diagnostics.conclude(db, user, params.id));
+  add('GET', '/api/ia/status', ({ user }) => assistant.status(db, user));
+  add('PUT', '/api/ia/config', ({ user, body }) => assistant.saveConfig(db, user, body));
+  add('GET', '/api/ia/leads/:id', ({ user, params }) => assistant.insights(db, user, params.id));
+  add('GET', '/api/ia/leads/:id/conversa', ({ user, params }) => assistant.history(db, user, params.id));
+  add('POST', '/api/ia/leads/:id/conversa', ({ user, params, body }) => assistant.chat(db, user, params.id, body));
+  add('POST', '/api/ia/avaliar', ({ user, body }) => assistant.rate(db, user, body));
+  add('GET', '/api/ia/conhecimento', () => assistant.listKnowledge(db));
+  add('POST', '/api/ia/conhecimento', ({ user, body }) => assistant.saveKnowledge(db, user, body));
+  add('PATCH', '/api/ia/conhecimento/:id', ({ user, params, body }) => assistant.saveKnowledge(db, user, { ...body, id: params.id }));
   // Transcrição da R1: anexar, conferir os campos identificados e aplicar (só completa campos vazios)
   add('GET', '/api/r1/campos', () => require('./services/r1').templateFields(db));
   add('POST', '/api/oportunidades/:id/transcricoes', ({ user, params, body }) => require('./services/r1').attachTranscript(db, user, params.id, body), { bodyLimit: 4e6 });

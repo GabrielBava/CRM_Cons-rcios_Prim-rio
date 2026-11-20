@@ -1,7 +1,7 @@
 -- =====================================================================
 -- Vero Consórcios (ERP/CRM) — DDL completo do banco (SQLite)
 -- Gerado por scripts/ddl.js a partir de um banco novo, com todas as migrações aplicadas.
--- 77 tabelas · 213 chaves estrangeiras declaradas · 58 índices
+-- 81 tabelas · 224 chaves estrangeiras declaradas · 61 índices
 --
 -- Observações
 --  - O SQLite verifica as chaves estrangeiras na gravação (PRAGMA foreign_keys = ON), não na criação:
@@ -472,7 +472,11 @@ CREATE TABLE IF NOT EXISTS opportunities (
   temperature TEXT,
   temperature_reason TEXT,
   business_area TEXT NOT NULL DEFAULT 'consorcio', r1_won_at TEXT,
-  co_owner_id INTEGER REFERENCES users(id)
+  co_owner_id INTEGER REFERENCES users(id),
+  expected_close_date TEXT,
+  qualified_at TEXT,
+  qualified_by INTEGER REFERENCES users(id),
+  lost_from_stage_id INTEGER REFERENCES pipeline_stages(id)
 );
 CREATE INDEX IF NOT EXISTS idx_opp_contact ON opportunities(contact_id);
 CREATE INDEX IF NOT EXISTS idx_opp_owner ON opportunities(owner_id);
@@ -768,7 +772,9 @@ CREATE TABLE IF NOT EXISTS proposals (
   quota_values TEXT,
   quota_split_notes TEXT,
   administrator_id INTEGER REFERENCES administrators(id),
-  plan_other INTEGER NOT NULL DEFAULT 0
+  plan_other INTEGER NOT NULL DEFAULT 0,
+  area TEXT NOT NULL DEFAULT 'consorcio',
+  description TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_prop_opp ON proposals(opportunity_id);
 
@@ -1375,6 +1381,68 @@ CREATE TABLE IF NOT EXISTS company_documents (
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_company_docs ON company_documents(folder_id, status);
+
+-- ---------------------------------------------------------------------
+-- Produtos do lead, diagnóstico financeiro e IA Vero
+-- ---------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS lead_products (
+  id INTEGER PRIMARY KEY,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id),
+  opportunity_id INTEGER REFERENCES opportunities(id),
+  area TEXT NOT NULL CHECK (area IN ('consorcio','planejamento','seguros','investimentos')),
+  sub_type TEXT,
+  description TEXT,
+  value REAL,
+  value_range TEXT,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'potencial' CHECK (status IN ('potencial','em_andamento','convertido','descartado')),
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lead_products ON lead_products(contact_id, area);
+
+CREATE TABLE IF NOT EXISTS diagnostics (
+  id INTEGER PRIMARY KEY,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id),
+  opportunity_id INTEGER REFERENCES opportunities(id),
+  status TEXT NOT NULL DEFAULT 'em_andamento' CHECK (status IN ('em_andamento','concluido')),
+  data TEXT,
+  summary TEXT,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_diagnostics_contact ON diagnostics(contact_id);
+
+CREATE TABLE IF NOT EXISTS ai_knowledge (
+  id INTEGER PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('objecao','pergunta','dica','mensagem')),
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  stage_key TEXT,
+  area TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  likes INTEGER NOT NULL DEFAULT 0,
+  dislikes INTEGER NOT NULL DEFAULT 0,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ai_messages (
+  id INTEGER PRIMARY KEY,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id),
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  role TEXT NOT NULL CHECK (role IN ('user','assistant')),
+  content TEXT NOT NULL,
+  engine TEXT,
+  rating INTEGER,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ai_messages ON ai_messages(contact_id, user_id, id);
 
 -- ---------------------------------------------------------------------
 -- Comunicação (Inbox, Tickets e WhatsApp)

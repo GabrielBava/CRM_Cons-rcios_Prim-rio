@@ -147,7 +147,8 @@ function seedDemo(db, password) {
       }
       if (st === 'qualificado') {
         activities.createActivity(db, owner, { contact_id: contactId, opportunity_id: opp.id, type: 'ligacao_realizada', result: 'atendida', duration: 240 + i * 11, notes: 'Conversa sobre objetivo, prazo e parcela possível.', occurred_at: when });
-        opps.updateOpportunity(db, owner, opp.id, {
+        // Qualificação preenchida e concluída (o lead passa de Tentativa para Qualificação)
+        opps.concludeQualification(db, owner, opp.id, { fields: {
           objective_type: i % 3 ? 'aquisicao' : 'investimento', urgency: rnd(['curto', 'medio', 'longo'], i), installment_max: 1500 + i * 50, term_months: 200,
           strategy: rnd(['aquisicao', 'planejamento', 'formacao_patrimonial'], i), product_type: 'primario', employment_type: rnd(['clt', 'pj', 'empresario'], i), has_fgts: i % 2 ? 'sim' : 'nao',
           credit_purpose_type: rnd(['moradia', 'imovel_investimento', 'terreno_construcao'], i), installment_min: 1200 + i * 40, has_bid_resources: rnd(['sim', 'nao', 'nao_sabe'], i), credit_category: 'imovel',
@@ -155,7 +156,7 @@ function seedDemo(db, password) {
           has_property: i % 4 === 1 ? 'sim' : 'nao', property_type: i % 4 === 1 ? rnd(['apartamento', 'casa', 'terreno'], i) : undefined,
           property_value: i % 4 === 1 ? 420000 + i * 10000 : undefined, property_free_liens: i % 4 === 1 ? (i % 8 === 1 ? 'sim' : 'nao') : undefined,
           ...(rnd(['sim', 'nao', 'nao_sabe'], i) === 'sim' ? { bid_own_resources: 30000 + i * 2500, bid_source: rnd(['reserva', 'fgts', 'reserva_fgts'], i) } : {}),
-        });
+        } });
       }
       if (st === 'r1') {
         const last = upto === k;
@@ -332,6 +333,50 @@ function seedDemo(db, password) {
       if (i === 12) contacts.updateContact(db, admin, id, { referred_by_id: ids[9] });
     });
 
+    // Funil de perdidos: leads perdidos em etapas diferentes, cada um com o motivo (MP); o último segue aberto na R2
+    [['Otávio Nogueira', 'tentativa', 'sem_contato', '6 tentativas sem resposta em 10 dias.'], ['Priscila Duarte', 'qualificado', 'preco', 'Achou a parcela alta para o momento.'],
+      ['Renato Siqueira', 'r1', 'momento', 'Vai esperar a venda do carro.'], ['Simone Castro', 'r2', 'decisor', 'O sócio não aprovou o investimento.'], ['Ulisses Prado', 'qualificado', 'perfil', 'Busca crédito imediato (perfil de financiamento).'],
+      ['Tiago Monteiro', 'r2', null, null]]
+      .forEach(([name, upto, reason, notes], k) => {
+        const owner = k % 2 ? c2 : c1;
+        const { id } = contacts.createContact(db, owner, { kind: 'PF', name, relationship: 'lead', phone1: `(11) 96666-20${k}0`, email: `${name.split(' ')[0].toLowerCase()}.perdido@example.com`, origin: rnd(origins, k + 3), owner_id: owner.id, credit_value: 180000 + k * 40000 }, { skipDuplicateCheck: true });
+        const opp = db.prepare('SELECT * FROM opportunities WHERE contact_id = ?').get(id);
+        advance(owner, id, opp, upto, 20 + k);
+        if (!reason) return; // R2 agendada, ainda sem proposta (aberto)
+        opps.moveStage(db, owner, opp.id, { stage_id: stageId.perdido, lost_reason: reason, lost_notes: notes });
+        db.prepare('UPDATE opportunities SET closed_at = ? WHERE id = ?').run(ago(k * 4 + 1, 16), opp.id);
+      });
+
+    // Produtos (cross-sell e up-sell) mapeados nos leads e um diagnóstico financeiro concluído
+    const leadProducts = require('./services/leadproducts');
+    const prodOwner = (cid) => db.prepare('SELECT u.* FROM contacts c JOIN users u ON u.id = c.owner_id WHERE c.id = ?').get(cid) || admin;
+    [[3, 'seguros', 'vida_familia', 'Proteção da renda: dois filhos pequenos e a parcela do consórcio.', 500000, null, 'potencial'],
+      [3, 'investimentos', 'reserva_emergencia', 'Tem a reserva parada na poupança.', null, '50k_200k', 'potencial'],
+      [4, 'planejamento', 'aposentadoria', 'Quer se aposentar aos 55 anos.', null, null, 'em_andamento'],
+      [5, 'consorcio', 'veiculo', 'Trocar o carro da família em 2 anos.', 120000, null, 'potencial'],
+      [6, 'investimentos', 'migracao_carteira', 'Carteira de R$ 350 mil no banco, sem acompanhamento.', 350000, '200k_500k', 'em_andamento'],
+      [6, 'seguros', 'residencial_empresarial', 'Seguro da loja vence em março.', 3200, null, 'potencial']]
+      .forEach(([i, area, sub, desc, value, range, status]) => {
+        if (!ids[i]) return;
+        leadProducts.saveProduct(db, prodOwner(ids[i]), { contact_id: ids[i], area, sub_type: sub, description: desc, value, value_range: range, status });
+      });
+    if (ids[4]) {
+      const diagnostics = require('./services/diagnostics');
+      const dOwner = prodOwner(ids[4]);
+      const d = diagnostics.start(db, dOwner, { contact_id: ids[4] });
+      diagnostics.saveFromTool(db, dOwner, d.id, { data: {
+        id: `crm-${d.id}`, versaoDados: 10, coletaFinalizada: true, atualizadoEm: ago(1), cadastro: { nome: db.prepare('SELECT name FROM contacts WHERE id = ?').get(ids[4]).name },
+        objetivos: [{ titulo: 'Reserva de emergência de 6 meses' }, { titulo: 'Imóvel para morar em 3 anos' }, { titulo: 'Aposentadoria aos 55' }],
+        plano: [{ titulo: 'Montar a reserva com 15% da renda', prazo: 'curto' }, { titulo: 'Consórcio de imóvel com lance planejado', prazo: 'médio' }, { titulo: 'Seguro de vida para proteger a renda', prazo: 'curto' }, { titulo: 'Previdência privada (PGBL)', prazo: 'longo' }],
+        dependentes: [{ nome: 'Filho' }], imoveis: [], moveis: [{ tipo: 'Carro' }], financiamentos: [], emprestimos: [], cartoes: [{ banco: 'Cartão' }], recomendacoes: [],
+      } });
+    }
+    // Base da IA Vero: itens cadastrados pela liderança
+    const assistant = require('./services/assistant');
+    assistant.saveKnowledge(db, gestor, { kind: 'objecao', title: 'Vou falar com meu sócio', content: 'Faz todo sentido, {nome}. Que tal marcarmos 20 minutos com vocês dois? Assim eu explico direto para ele e vocês decidem juntos, sem telefone sem fio.' });
+    assistant.saveKnowledge(db, gestor, { kind: 'dica', title: 'Confirmação da R1', content: 'Confirme a R1 na véspera pelo WhatsApp e no dia com 1 hora de antecedência: reduz o no-show pela metade.' });
+    assistant.saveKnowledge(db, gestor, { kind: 'mensagem', title: 'Retomar depois do no-show', content: 'Oi, {nome}! Senti sua falta na nossa conversa. Imprevistos acontecem: posso te mandar dois horários para remarcarmos?', stage_key: 'r1' });
+
     // Prospects e leads recebidos ainda sem especialista (fila de distribuição)
     [['Roberta Farias', 'meta_ads', 'lead', 0.2], ['Samuel Pinto', 'site', 'lead', 3], ['Viviane Rocha', 'instagram', 'lead', 26], ['Wagner Lopes', 'evento', 'prospect', 50]].forEach(([name, origin, rel, hours], k) => {
       const { id } = contacts.createContact(db, admin, { kind: 'PF', name, relationship: rel, phone1: `(11) 97777-10${k}0`, email: `${name.split(' ')[0].toLowerCase()}.fila@example.com`, origin, owner_id: '', credit_value: 150000 + k * 50000 }, { skipDuplicateCheck: true });
@@ -353,6 +398,10 @@ function seedDemo(db, password) {
       contemplated_at: dateAgo(1), contemplation_type: 'lance_fidelidade', bid_value: r2(kc.credit_value * 0.2),
       contemplation_credit: r2(kc.credit_value * 1.045), net_to_pay: r2(kc.credit_value * 0.9), client_choice: 'faturamento',
     });
+  }
+  // Ingresso no CRM antes do primeiro contato (as atividades do demo são retroativas)
+  for (const c of db.prepare('SELECT id, created_at, first_contact_at FROM contacts WHERE first_contact_at IS NOT NULL AND first_contact_at < created_at').all()) {
+    db.prepare('UPDATE contacts SET created_at = ? WHERE id = ?').run(new Date(Date.parse(c.first_contact_at) - DAY / 3).toISOString(), c.id);
   }
   seedTreasuryDemo(db, { admin, gestor, c1, PDF });
   seedPeopleDemo(db, { admin, gestor, c1, c2, team, PDF });

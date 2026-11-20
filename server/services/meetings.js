@@ -212,11 +212,13 @@ function r1Title(db, contactName, kind = 'r1') {
 function r1Context(db, user, contactId, req, kind = 'r1') {
   kind = kindOf(kind);
   const c = loadContact(db, user, contactId);
-  const opps = db.prepare("SELECT o.id, o.code, o.status, s.name AS stage_name, s.key AS stage_key, s.position AS stage_position, o.business_area, o.objective_type, o.credit_value, o.urgency, o.credit_category FROM opportunities o JOIN pipeline_stages s ON s.id = o.stage_id WHERE o.contact_id = ? AND o.status IN ('aberta','pausada') ORDER BY o.id DESC").all(c.id);
+  const opps = db.prepare("SELECT o.id, o.code, o.status, s.name AS stage_name, s.key AS stage_key, s.position AS stage_position, o.business_area, o.objective_type, o.credit_value, o.urgency, o.credit_category, o.qualified_at FROM opportunities o JOIN pipeline_stages s ON s.id = o.stage_id WHERE o.contact_id = ? AND o.status IN ('aberta','pausada') ORDER BY o.id DESC").all(c.id);
   const pending = db.prepare("SELECT id, title, due_at, ends_at, meeting_url FROM tasks WHERE contact_id = ? AND type = 'reuniao' AND status = 'pendente' AND COALESCE(meeting_kind, 'r1') = ? ORDER BY due_at").all(c.id, kind);
   const g = googleStatus(db, user, req);
+  const { CONTACT_TYPES } = require('./pipeline');
+  const attempted = !!db.prepare(`SELECT 1 FROM activities WHERE contact_id = ? AND type IN (${CONTACT_TYPES.map(() => '?').join(',')}) LIMIT 1`).get(c.id, ...CONTACT_TYPES);
   return {
-    contact: { id: c.id, code: c.code, name: c.name, email: c.email || null, phone: c.whatsapp || c.phone1 || null },
+    contact: { id: c.id, code: c.code, name: c.name, email: c.email || null, phone: c.whatsapp || c.phone1 || null, contact_attempted: attempted },
     opportunities: opps,
     pending,
     kind,
@@ -504,7 +506,9 @@ async function meetingResult(db, user, taskId, data = {}) {
   const kind = t.meeting_kind || 'r1';
   if (result === 'realizada') db.prepare('UPDATE tasks SET attended_at = COALESCE(attended_at, ?) WHERE id = ?').run(nowIso(), t.id);
   const out = { ok: true, result, kind };
-  if (result === 'realizada' && kind === 'r2' && t.opportunity_id) {
+  if (result === 'realizada' && kind === 'r2' && t.opportunity_id && !db.prepare("SELECT 1 FROM proposals WHERE opportunity_id = ? AND status <> 'substituida'").get(t.opportunity_id)) {
+    out.hint = 'R2 concluída. Gere a proposta (consórcio, seguros, planejamento ou investimentos) para levar o negócio para Negociação.';
+  } else if (result === 'realizada' && kind === 'r2' && t.opportunity_id) {
     const o = db.prepare('SELECT o.status, s.key AS stage_key FROM opportunities o JOIN pipeline_stages s ON s.id = o.stage_id WHERE o.id = ?').get(t.opportunity_id);
     const neg = db.prepare("SELECT id FROM pipeline_stages WHERE key = 'negociacao' AND active = 1").get();
     if (o?.status === 'aberta' && o.stage_key === 'r2' && neg) {

@@ -99,14 +99,18 @@ function pickContact(K = 'R1') {
   });
 }
 
-/** Campos de qualificação exigidos para o lead chegar à R1 (o "Ganho" pula as etapas, mas não os critérios). */
+/** Campos da qualificação mostrados no "Ganho" quando a qualificação ainda não foi concluída (basta um preenchido). */
 const QUAL_FIELDS = [
   { name: 'objective_type', label: 'Objetivo', list: 'objetivo' },
   { name: 'credit_value', label: 'Valor estimado', type: 'money' },
   { name: 'urgency', label: 'Prioridade (quando quer)', list: 'urgencia' },
   { name: 'credit_category', label: 'Categoria (consórcio)', list: 'categoria_credito', consorcio: true },
 ];
-const missingQual = (o) => (o ? QUAL_FIELDS.filter((f) => !o[f.name] && (!f.consorcio || (o.business_area || 'consorcio') === 'consorcio')) : []);
+/** Canal do contato que gerou o agendamento (vale como a tentativa de contato exigida pela etapa Tentativa). */
+const ATTEMPT_TYPES = [
+  { value: 'ligacao_realizada', label: 'Telefone (ligação)' }, { value: 'mensagem_enviada', label: 'WhatsApp' }, { value: 'email_enviado', label: 'E-mail' },
+  { value: 'direct_enviado', label: 'Direct (Instagram)' }, { value: 'linkedin_enviado', label: 'LinkedIn (DM)' }, { value: 'conversa_presencial', label: 'Conversa presencial' },
+];
 
 /**
  * Abre o pop-up de agendamento da R1 ou da R2. opts: contactId (opcional: sem ele, pergunta o cliente), oppId, kind
@@ -132,7 +136,11 @@ export async function scheduleMeetingDialog({ contactId = null, oppId = null, ki
   const opp = ctx.opportunities.find((o) => o.id === Number(oppId)) || ctx.opportunities[0];
   const target = state.meta.stages.find((st) => st.key === kind);
   const canMove = opp && opp.status === 'aberta' && target && opp.stage_key !== kind && (opp.stage_position ?? 0) < target.position;
-  const qual = won || (moveTo && kind === 'r1') ? missingQual(opp) : [];
+  // Ganho (ou arrastar para a R1) antes da hora: o pop-up pede o que falta das etapas anteriores — o canal do contato
+  // (Tentativa) e a qualificação (Qualificação); ao agendar, a atividade é registrada e a qualificação concluída.
+  const gate = !!opp && opp.status === 'aberta' && (won || (moveTo && kind === 'r1')) && ['prospect', 'lead', 'tentativa', 'qualificado'].includes(opp.stage_key);
+  const needAttempt = gate && !c.contact_attempted;
+  const qual = gate && !opp.qualified_at ? QUAL_FIELDS.filter((f) => !f.consorcio || (opp.business_area || 'consorcio') === 'consorcio') : [];
   const result = await modal({
     title: won ? `Ganho — agendar a R1 de ${c.name}` : `Agendar ${K} — ${c.name}`,
     wide: true,
@@ -149,8 +157,10 @@ export async function scheduleMeetingDialog({ contactId = null, oppId = null, ki
         ${field({ name: 'title', label: 'Título da reunião', value: ctx.title, required: true, full: true })}
         ${field({ name: 'video', label: 'Videoconferência (Google Meet) e convite por e-mail para o cliente', type: 'checkbox', value: true, full: true })}
         ${canMove && !won ? field({ name: 'move_to_stage', label: `Mover o negócio ${opp.code} de "${opp.stage_name}" para "${target.name}"`, type: 'checkbox', value: moveTo, full: true }) : ''}
-        ${qual.length ? html`<fieldset class="full qual-inline"><legend>Qualificação para entrar na R1</legend><p class="hint">Faltam estes dados do lead (critério da etapa Qualificação):</p><div class="grid">
-          ${qual.map((f) => (f.list ? field({ name: f.name, label: f.label, type: 'select', options: opts(f.list), required: true }) : field({ name: f.name, label: f.label, type: f.type, required: true })))}</div></fieldset>` : ''}
+        ${needAttempt ? html`<fieldset class="full qual-inline"><legend>Tentativa de contato</legend><p class="hint">Ainda não há contato registrado com o lead. Informe como foi o contato que gerou o agendamento (fica em Atividades).</p><div class="grid">
+          ${field({ name: 'attempt_type', label: 'Canal do contato', type: 'select', options: ATTEMPT_TYPES, required: true, full: true })}</div></fieldset>` : ''}
+        ${qual.length ? html`<fieldset class="full qual-inline"><legend>Concluir a qualificação</legend><p class="hint">Para entrar na R1 o lead precisa da qualificação concluída. Preencha ao menos um campo: ao agendar, a qualificação é concluída.</p><div class="grid">
+          ${qual.map((f) => (f.list ? field({ name: f.name, label: f.label, type: 'select', options: opts(f.list), value: opp[f.name] }) : field({ name: f.name, label: f.label, type: f.type, value: opp[f.name] })))}</div></fieldset>` : ''}
         ${field({ name: 'notes', label: 'Observações (vão na descrição do evento)', type: 'textarea', rows: 2, full: true })}
       </div>`,
     submitLabel: won ? 'Agendar R1 (ganho)' : `Agendar ${K}`,
@@ -163,10 +173,10 @@ export async function scheduleMeetingDialog({ contactId = null, oppId = null, ki
       const endAt = new Date(`${d.date}T${d.end}:00`);
       if (endAt <= startAt) throw new Error('O término precisa ser depois do início.');
       const oppIdSel = Number(d.opportunity_id) || opp?.id;
-      if (qual.length && oppIdSel) {
-        const q = Object.fromEntries(qual.map((f) => [f.name, d[f.name]]));
-        await patch(`/api/oportunidades/${oppIdSel}`, q);
-      }
+      const q = Object.fromEntries(qual.map((f) => [f.name, d[f.name]]).filter(([, v]) => v != null && v !== ''));
+      if (qual.length && !Object.keys(q).length) throw new Error('Preencha ao menos um campo da qualificação para concluir.');
+      if (needAttempt) await post('/api/atividades', { contact_id: c.id, opportunity_id: oppIdSel, type: d.attempt_type, notes: `Contato que gerou o agendamento da ${K}.`, occurred_at: new Date().toISOString() });
+      if (qual.length && oppIdSel) await post(`/api/oportunidades/${oppIdSel}/concluir-qualificacao`, { fields: q });
       return post('/api/reunioes/agendar', {
         kind, contact_id: c.id, opportunity_id: oppIdSel, email: d.email, title: d.title, notes: d.notes,
         start_at: startAt.toISOString(), end_at: endAt.toISOString(), video: d.video,

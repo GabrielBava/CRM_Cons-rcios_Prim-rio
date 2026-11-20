@@ -24,6 +24,7 @@ const DOMAINS = [
   ['Integrações', ['integrations', 'integration_logs', 'inbound_events', 'call_events']],
   ['Pessoas (RH)', ['employees', 'employee_contracts', 'employee_benefits', 'employee_files', 'employee_history']],
   ['Central de documentos', ['doc_folders', 'company_documents']],
+  ['Produtos do lead, diagnóstico financeiro e IA Vero', ['lead_products', 'diagnostics', 'ai_knowledge', 'ai_messages']],
   ['Comunicação (Inbox, Tickets e WhatsApp)', ['chat_conversations', 'chat_members', 'chat_messages', 'tickets', 'ticket_events', 'ticket_files', 'wa_conversations', 'wa_messages']],
   ['Financeiro da empresa', ['fin_accounts', 'fin_cost_centers', 'fin_categories', 'fin_partners', 'fin_payment_methods', 'fin_titles', 'fin_installments', 'fin_allocations', 'fin_notes', 'fin_files']],
 ];

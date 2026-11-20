@@ -45,12 +45,20 @@ function createApp({ dbFile = process.env.CRM_DB || path.join(__dirname, '..', '
   // Landing page e simulador: páginas independentes com script embutido (sem acesso à sessão do CRM)
   const SITE_CSP = "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://www.googletagmanager.com https://connect.facebook.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https:; frame-src https://www.youtube-nocookie.com https://www.youtube.com https://player.vimeo.com; frame-ancestors 'self'; base-uri 'none'; form-action 'self'";
 
+  // Ferramentas (diagnóstico financeiro e simulador de consórcio): HTML com script embutido, mesma origem do CRM (a ponte
+  // do diagnóstico lê e grava pelo /api com a sessão). O diagnóstico pode chamar a IA da Anthropic com a chave do usuário.
+  const TOOLS_CSP = "default-src 'self'; script-src 'self' 'unsafe-inline' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://api.anthropic.com; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'none'; form-action 'self'";
+
   function serveStatic(req, res, pathname) {
     if (pathname === '/lp' || pathname === '/simulador') {
       res.writeHead(301, { Location: `${pathname}/` });
       return res.end();
     }
     if (/^\/(lp|simulador)\//.test(pathname)) res.setHeader('Content-Security-Policy', SITE_CSP);
+    if (/^\/ferramentas\//.test(pathname)) {
+      res.setHeader('Content-Security-Policy', TOOLS_CSP);
+      res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    }
     let p = pathname === '/' ? '/index.html' : pathname.endsWith('/') ? `${pathname}index.html` : pathname;
     const file = path.normalize(path.join(PUBLIC_DIR, p));
     if (!file.startsWith(PUBLIC_DIR)) {

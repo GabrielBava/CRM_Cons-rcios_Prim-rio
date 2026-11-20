@@ -319,6 +319,22 @@ export function moveStage(opp, stageId) {
     }).then(() => null);
   }
   const from = stageById(opp.stage_id);
+  // Regras de passagem (avanço): Tentativa exige uma tentativa registrada; Qualificação, a qualificação concluída;
+  // Negociação, uma proposta gerada. Faltando, abre o pop-up que resolve o critério (e o negócio avança junto).
+  const forward = from?.kind === 'aberta' && to.kind === 'aberta' && to.position > from.position;
+  if (forward && ['tentativa', 'qualificado', 'negociacao'].includes(to.key)) {
+    return get(`/api/oportunidades/${opp.id}/criterios`, { stage_id: to.id })
+      .then(async (r) => {
+        const miss = (k) => r.criteria.some((c) => c.key === k && !c.ok);
+        let optouts = opp.optouts || opp.contact_optouts || [];
+        if (typeof optouts === 'string') try { optouts = JSON.parse(optouts); } catch { optouts = []; }
+        if (miss('tentativa_registrada')) return attemptDialog({ id: opp.contact_id, name: opp.contact_name, optouts }, { opportunity_id: opp.id, stageName: to.name });
+        if (miss('qualificacao_concluida')) return qualifyDialog(opp.id);
+        if (miss('proposta_gerada')) return proposalNeededDialog(opp);
+        return moveStageDialog(opp, to, from);
+      })
+      .catch((e) => (toastError(e), null));
+  }
   // Até a R1 (Prospect, Lead, Tentativa ou Qualificação) → R1: abre o agendamento da R1 ("Ganho") e move junto.
   // R1 → R2: abre o agendamento da R2. Já existe reunião futura marcada: só move.
   const meetingKind = (to.key === 'r1' && from?.kind === 'aberta' && from.position < to.position) ? 'r1' : (to.key === 'r2' && from?.kind === 'aberta' && from.position < to.position) ? 'r2' : null;
@@ -348,7 +364,7 @@ export function moveStage(opp, stageId) {
 
 /** Atividades que liberam o "Perdido" (mesma lista do servidor). */
 const WORK_TYPES = ['ligacao_realizada', 'tentativa_sem_atendimento', 'ligacao_recebida', 'mensagem_enviada', 'mensagem_recebida', 'email_enviado', 'email_recebido',
-  'direct_enviado', 'direct_recebido', 'conversa_presencial', 'conversa_video', 'reuniao_realizada', 'reuniao_nao_realizada', 'observacao'];
+  'direct_enviado', 'direct_recebido', 'linkedin_enviado', 'linkedin_recebido', 'conversa_presencial', 'conversa_video', 'reuniao_realizada', 'reuniao_nao_realizada', 'observacao'];
 
 /** Motivos de perda (MP): as 9 categorias, cada uma com a explicação, e o detalhe do que aconteceu. */
 export function lostDialog(opp, to = state.meta.stages.find((s) => s.kind === 'perdido'), { force = false } = {}) {
@@ -406,6 +422,165 @@ function moveStageDialog(opp, to, from) {
       }
     },
   });
+}
+
+/* ------------------------- Regras de passagem: tentativa, qualificação e proposta ------------------------- */
+
+/** Canais do registro rápido de atividade (bloco "Registrar atividade" e pop-up da tentativa). */
+export const CONTACT_CHANNELS = [
+  { key: 'ligacao', label: 'Telefone', icon: 'telefone', type: 'ligacao_realizada' },
+  { key: 'whatsapp', label: 'WhatsApp', icon: 'whatsapp', type: 'mensagem_enviada' },
+  { key: 'email', label: 'E-mail', icon: 'email', type: 'email_enviado' },
+  { key: 'direct', label: 'Direct', icon: 'direct', type: 'direct_enviado' },
+  { key: 'linkedin', label: 'LinkedIn', icon: 'linkedin', type: 'linkedin_enviado' },
+];
+
+const INBOUND_OF = { ligacao_realizada: 'ligacao_recebida', mensagem_enviada: 'mensagem_recebida', email_enviado: 'email_recebido', direct_enviado: 'direct_recebido', linkedin_enviado: 'linkedin_recebido' };
+
+/**
+ * Registro de uma tentativa de contato (Lead → Tentativa): escolhe o canal, o resultado e a observação. Ao salvar, o
+ * servidor registra a atividade e leva o lead de Prospect/Lead para "Tentativa de contato".
+ */
+export function attemptDialog(contact, { opportunity_id, channel = 'ligacao', stageName = 'Tentativa de contato', quick = false } = {}) {
+  const blocked = contact.optouts || [];
+  return modal({
+    title: `${quick ? 'Registrar atividade' : 'Registrar tentativa de contato'} — ${contact.name || ''}`,
+    wide: true,
+    submitLabel: quick ? 'Registrar' : 'Registrar e avançar',
+    body: html`${quick ? '' : html`<p class="hint">Para o lead entrar em <strong>${stageName}</strong> é preciso ao menos uma tentativa de contato registrada. Escolha o canal usado:</p>`}
+      ${blocked.length ? html`<div class="alert danger small">Oposição a contato: ${blocked.includes('todos') ? 'todos os canais' : blocked.map((c) => K('contact_channels', c)).join(', ')}.</div>` : ''}
+      <div class="chan-pick" role="radiogroup" aria-label="Canal">${CONTACT_CHANNELS.map((c) => html`<label class="chan-opt ch-${c.key}"><input type="radio" name="type" value="${c.type}" ${c.key === channel ? raw('checked') : ''}><span>${icon(c.icon, 20)}<strong>${c.label}</strong></span></label>`)}</div>
+      ${quick ? html`<div class="seg-pick" role="radiogroup" aria-label="Sentido"><label><input type="radio" name="direction" value="out" checked><span>Fiz o contato (enviei / liguei)</span></label><label><input type="radio" name="direction" value="in"><span>O cliente fez contato (recebi)</span></label></div>` : ''}
+      <div class="grid">
+        <div class="field call-only"><label>Resultado da ligação</label><select name="result"><option value="">Não informado</option>${opts('resultado_ligacao').map((o) => html`<option value="${o.value}">${o.label}</option>`)}</select></div>
+        ${field({ name: 'notes', label: 'Observação / motivo do contato', type: 'textarea', rows: 2, full: true, placeholder: 'Ex.: liguei para apresentar a Vero; não atendeu, deixei mensagem no WhatsApp.' })}
+        ${field({ name: 'next_action', label: 'Próxima ação', placeholder: 'ex.: Tentar de novo amanhã às 10h' })}
+        ${field({ name: 'return_at', label: 'Data de retorno', type: 'datetime', help: 'Cria a tarefa de retorno.' })}
+      </div>`,
+    onMount(form) {
+      const sync = () => ($('.call-only', form).hidden = form.querySelector('input[name=type]:checked')?.value !== 'ligacao_realizada' || form.querySelector('input[name=direction]:checked')?.value === 'in');
+      form.addEventListener('change', sync);
+      sync();
+    },
+    async onSubmit(d) {
+      if (!d.type) throw new Error('Escolha o canal.');
+      const inbound = d.direction === 'in';
+      delete d.direction;
+      if (d.type !== 'ligacao_realizada' || inbound) delete d.result;
+      const payload = { ...d, contact_id: contact.id, opportunity_id, occurred_at: new Date().toISOString() };
+      if (inbound) payload.type = INBOUND_OF[d.type] || d.type;
+      else if (d.type === 'ligacao_realizada' && ['nao_atendida', 'ocupado', 'caixa_postal', 'numero_invalido', 'interrompida'].includes(d.result)) payload.type = 'tentativa_sem_atendimento';
+      await post('/api/atividades', payload);
+      toast(quick ? 'Atividade registrada.' : 'Tentativa registrada: o lead está em Tentativa de contato.');
+      return true;
+    },
+  });
+}
+
+/**
+ * Concluir a qualificação (Tentativa → Qualificação): o formulário da qualificação com o botão "Concluir qualificação".
+ * Ao menos um campo precisa estar preenchido; ao concluir, o negócio vai para a etapa Qualificação.
+ */
+export async function qualifyDialog(oppId) {
+  let o;
+  try {
+    o = await get(`/api/oportunidades/${oppId}`);
+  } catch (e) {
+    toastError(e);
+    return null;
+  }
+  return modal({
+    title: `Qualificação — ${o.contact_name || o.code}`,
+    wide: true,
+    submitLabel: 'Concluir qualificação',
+    body: html`<p class="hint">Preencha o que conseguiu levantar com o cliente (ao menos um campo) e clique em <strong>Concluir qualificação</strong>: o lead vai para a etapa Qualificação. O que ficar em branco pode ser completado depois da R1.</p>
+      ${o.qualified_at ? html`<div class="alert ok-alert small">Qualificação concluída em ${fmtDateTime(o.qualified_at)}${o.qualified_by_name ? ` por ${o.qualified_by_name}` : ''}.</div>` : ''}
+      <div class="grid">${field({ name: 'business_area', label: 'Área responsável', type: 'select', options: opts('area_negocio'), value: o.business_area || 'consorcio', allowEmpty: false })}${qualFormFields(o, o.contact_kind || 'PF')}</div>`,
+    onMount(form) {
+      bindQualForm(form);
+    },
+    async onSubmit(d) {
+      const fields = Object.fromEntries(Object.entries(d).filter(([, v]) => v != null && v !== ''));
+      const r = await post(`/api/oportunidades/${o.id}/concluir-qualificacao`, { fields });
+      toast(r.moved ? 'Qualificação concluída: o lead está em Qualificação.' : 'Qualificação concluída.');
+      return r;
+    },
+  });
+}
+
+/** Áreas da proposta (a de consórcio usa o plano/administradora; as outras, descrição e valor). */
+export const PROPOSAL_AREAS = [
+  { value: 'consorcio', label: 'Consórcio', icon: 'consorcio' },
+  { value: 'seguros', label: 'Seguros', icon: 'seguros' },
+  { value: 'planejamento', label: 'Planejamento financeiro', icon: 'planejamento' },
+  { value: 'investimentos', label: 'Investimentos', icon: 'investimentos' },
+];
+
+/** Proposta de seguros, planejamento financeiro ou investimentos: descrição, valor, validade e link. */
+export function areaProposalForm(opp, area = 'seguros') {
+  const a = PROPOSAL_AREAS.find((x) => x.value === area) || PROPOSAL_AREAS[1];
+  const ph = { seguros: 'Ex.: Seguro de vida — capital de R$ 500 mil, prêmio mensal de R$ 180, seguradora X.', planejamento: 'Ex.: Planejamento financeiro completo — 6 encontros, honorário de R$ 2.400.', investimentos: 'Ex.: Migração de carteira de R$ 350 mil para a assessoria — perfil moderado.' }[a.value];
+  return modal({
+    title: `Proposta de ${a.label.toLowerCase()} — ${opp.contact_name || opp.code}`,
+    wide: true,
+    submitLabel: 'Gerar proposta',
+    body: html`<div class="grid">
+      ${field({ name: 'description', label: 'Descrição da proposta', type: 'textarea', rows: 3, full: true, required: true, placeholder: ph })}
+      ${field({ name: 'credit_value', label: a.value === 'seguros' ? 'Valor (capital segurado ou prêmio, R$)' : a.value === 'investimentos' ? 'Valor da captação (R$)' : 'Valor da proposta (R$)', type: 'money' })}
+      ${field({ name: 'valid_until', label: 'Validade', type: 'date' })}
+      ${field({ name: 'link_url', label: 'Link ou arquivo da proposta (URL)', type: 'url', full: true })}
+      ${field({ name: 'notes', label: 'Observações', type: 'textarea', rows: 2, full: true })}
+      ${field({ name: 'status', label: 'Salvar como', type: 'select', options: [{ value: 'rascunho', label: 'Rascunho' }, { value: 'apresentada', label: 'Apresentada ao cliente' }], value: 'apresentada', allowEmpty: false })}
+    </div>`,
+    async onSubmit(d) {
+      const r = await post('/api/propostas', { ...d, area: a.value, opportunity_id: opp.id });
+      toast(r.moved ? `Proposta ${r.code} gerada: o negócio foi para Negociação.` : `Proposta ${r.code} gerada.`);
+      return r;
+    },
+  });
+}
+
+/** Escolha da área e abre o formulário certo (consórcio: simulador ou registro com plano). */
+export async function newProposalFlow(opp, contact, { simulations = [] } = {}) {
+  const area = await modal({
+    title: `Gerar proposta — ${opp.contact_name || contact?.name || opp.code}`,
+    body: html`<p class="hint">A proposta aparece em Propostas e libera a etapa Negociação. Escolha a área:</p>
+      <div class="area-pick">${PROPOSAL_AREAS.map((x) => html`<button type="button" class="area-card area-${x.value}" data-area="${x.value}">${icon(x.icon, 22)}<strong>${x.label}</strong></button>`)}</div>`,
+    onMount(form, close) {
+      on(form, 'click', '[data-area]', (e, b) => close(b.dataset.area));
+    },
+  });
+  if (!area) return null;
+  if (area !== 'consorcio') return areaProposalForm(opp, area);
+  const how = await modal({
+    title: 'Proposta de consórcio',
+    body: html`<div class="area-pick two"><button type="button" class="area-card" data-how="sim">${icon('simulador', 22)}<strong>Gerar pelo simulador</strong><small>Abre o simulador com o cliente; a proposta volta para o CRM.</small></button>
+      <button type="button" class="area-card" data-how="form">${icon('propostas', 22)}<strong>Registrar proposta</strong><small>Plano, administradora, crédito e condições.</small></button></div>`,
+    onMount(form, close) {
+      on(form, 'click', '[data-how]', (e, b) => close(b.dataset.how));
+    },
+  });
+  if (how === 'sim') return openProposalSimulator(contact || { id: opp.contact_id, name: opp.contact_name }, opp.id);
+  if (how === 'form') return proposalForm(opp, simulations);
+  return null;
+}
+
+/** R2 → Negociação sem proposta: explica a regra e leva para a geração da proposta. */
+async function proposalNeededDialog(opp) {
+  const go = await modal({
+    title: 'Negociação exige proposta',
+    body: html`<p>Para o negócio <strong>${opp.code}</strong> entrar em <strong>Negociação</strong>, gere a proposta para o cliente — de consórcio, seguros, planejamento financeiro ou investimentos. Ela aparece em Propostas e o negócio avança automaticamente.</p>`,
+    submitLabel: 'Gerar proposta',
+    onSubmit: () => true,
+  });
+  if (!go) return null;
+  let full = opp;
+  try {
+    full = await get(`/api/oportunidades/${opp.id}`);
+  } catch {
+    /* segue com o que tem */
+  }
+  return newProposalFlow(full, null, { simulations: full.simulations || [] });
 }
 
 /* ------------------------- Simulador ------------------------- */
@@ -655,7 +830,12 @@ function proposalBlocks(p) {
       ${row('Validade', p.valid_until ? fmtDate(p.valid_until) : null)}
       ${row('Link', p.link_url ? html`<a href="${p.link_url}" target="_blank" rel="noopener noreferrer">abrir a proposta</a>` : null)}
     </dl></div>
-    <div class="qual-block"><h4>Características do plano</h4><dl>
+    ${p.area && p.area !== 'consorcio' ? html`<div class="qual-block"><h4>Proposta de ${(PROPOSAL_AREAS.find((x) => x.value === p.area)?.label || p.area).toLowerCase()}</h4><dl>
+      ${row('Área', PROPOSAL_AREAS.find((x) => x.value === p.area)?.label)}
+      ${row('Valor', p.credit_value != null ? fmtMoney(p.credit_value) : null)}
+      ${row('Descrição', p.description, true)}
+      ${p.notes ? row('Observações', p.notes, true) : ''}
+    </dl></div></div>` : html`<div class="qual-block"><h4>Características do plano</h4><dl>
       ${row('Plano', p.plan_other ? html`Outros <small class="muted">condições informadas pelo especialista</small>` : p.product_name ? html`${p.plan_code ? html`<strong>${p.plan_code}</strong> · ` : ''}${p.product_name}` : null)}
       ${row('Administradora', p.administrator_name)}
       ${row('Categoria', optLabel('categoria_credito', p.category))}
@@ -681,7 +861,7 @@ function proposalBlocks(p) {
       ${quotas.length ? row('Cotas', html`<span class="quota-chips">${quotas.map((v, i) => html`<span class="chip-sm">${i + 1}ª ${fmtMoney(v)}</span>`)}</span>`, true) : ''}
       ${row('Lógica da divisão', p.quota_split_notes, true)}
     </dl></div>
-  </div>`;
+  </div>`}`;
 }
 
 export function proposalForm(opp, simulations = [], { simulation_id } = {}) {

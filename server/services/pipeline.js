@@ -5,7 +5,9 @@
  * - Cada etapa tem critérios de entrada verificados no servidor (configuráveis em Configurações › Funil).
  * - Voltar etapas é permitido com justificativa. Nutrição e Perdido podem ser usados a qualquer momento, com motivo.
  * - "Venda" só é alcançada pela confirmação do pagamento na tela de Vendas.
- * - Prospect e Lead vão direto para "Tentativa de contato", sem restrição (a etapa Lead pode ser pulada).
+ * - Prospect → Lead é livre. Lead → Tentativa exige uma tentativa de contato registrada (registrar a atividade no
+ *   painel do lead já avança). Tentativa → Qualificação exige a qualificação concluída. Qualificação → R1 exige a R1
+ *   agendada; R1 → R2, a R2 agendada (com a R1 feita); R2 → Negociação, uma proposta gerada (qualquer área).
  * - Pipeline geral para todas as áreas (consórcio, planejamento, seguros, investimentos):
  *   0 Prospect · 1 Lead · 2 Tentativa de contato · 3 Qualificação · 4 R1 · 5 R2 · 6 Negociação · 7 Venda;
  *   Nutrição futura e Perdido são arquivados. O cliente que faltou à R1 fica na coluna R1 marcado como NS (no-show).
@@ -26,9 +28,19 @@ const RULES = {
     check: (db, o, c) => !!c.origin,
   },
   tentativa_registrada: {
-    label: 'Ao menos uma tentativa de contato registrada',
-    hint: 'Registre a ligação ou a mensagem em "Registrar atividade".',
-    check: (db, o, c) => !!db.prepare(`SELECT 1 FROM activities WHERE contact_id = ? AND type IN (${ATTEMPT_TYPES.map(() => '?').join(',')}) LIMIT 1`).get(c.id, ...ATTEMPT_TYPES),
+    label: 'Ao menos uma tentativa de contato registrada (telefone, WhatsApp, e-mail, direct ou LinkedIn)',
+    hint: 'Registre a tentativa em Atividades: ao salvar, o lead avança para Tentativa de contato.',
+    check: (db, o, c) => !!db.prepare(`SELECT 1 FROM activities WHERE contact_id = ? AND type IN (${CONTACT_TYPES.map(() => '?').join(',')}) LIMIT 1`).get(c.id, ...CONTACT_TYPES),
+  },
+  qualificacao_concluida: {
+    label: 'Qualificação do cliente concluída',
+    hint: 'Preencha a qualificação (ao menos um campo) e clique em "Concluir qualificação".',
+    check: (db, o) => !!o.qualified_at,
+  },
+  proposta_gerada: {
+    label: 'Proposta gerada para o cliente (consórcio, seguros, planejamento ou investimentos)',
+    hint: 'Gere a proposta: ela aparece em Propostas e libera a Negociação.',
+    check: (db, o) => !!db.prepare("SELECT 1 FROM proposals WHERE opportunity_id = ? AND status NOT IN ('substituida') LIMIT 1").get(o.id),
   },
   contato_efetivo: {
     label: 'Conversa efetiva com o lead registrada',
@@ -92,20 +104,22 @@ function meeting(db, contactId, kind, cond) {
 /** Critérios de entrada padrão de cada etapa. */
 const DEFAULT_STAGE_RULES = {
   prospect: [],
-  lead: ['contato_valido', 'origem'],
-  tentativa: [],
-  qualificado: ['qualificacao'],
+  lead: [],
+  tentativa: ['tentativa_registrada'],
+  qualificado: ['qualificacao_concluida'],
   r1: ['r1_agendada'],
   r2: ['r1_realizada', 'r2_agendada'],
-  negociacao: ['r2_realizada'],
+  negociacao: ['proposta_gerada'],
   venda: ['venda_confirmada'],
   nutricao: [],
   perdido: [],
 };
 
+/** Atividades de contato com o lead (qualquer canal): liberam a Tentativa de contato. */
+const CONTACT_TYPES = ['ligacao_realizada', 'tentativa_sem_atendimento', 'ligacao_recebida', 'mensagem_enviada', 'mensagem_recebida', 'email_enviado', 'email_recebido',
+  'direct_enviado', 'direct_recebido', 'linkedin_enviado', 'linkedin_recebido', 'conversa_presencial', 'conversa_video', 'reuniao_realizada'];
 /** Atividades que contam para poder dar o lead como perdido (o que o especialista fez de fato). */
-const WORK_TYPES = ['ligacao_realizada', 'tentativa_sem_atendimento', 'ligacao_recebida', 'mensagem_enviada', 'mensagem_recebida', 'email_enviado', 'email_recebido',
-  'direct_enviado', 'direct_recebido', 'conversa_presencial', 'conversa_video', 'reuniao_realizada', 'reuniao_nao_realizada', 'observacao'];
+const WORK_TYPES = [...CONTACT_TYPES, 'reuniao_nao_realizada', 'observacao'];
 const hasWork = (db, contactId) => !!db.prepare(`SELECT 1 FROM activities WHERE contact_id = ? AND type IN (${WORK_TYPES.map(() => '?').join(',')}) LIMIT 1`).get(contactId, ...WORK_TYPES);
 
 function stageRules(db) {
@@ -193,4 +207,4 @@ function validateMove(db, user, opp, from, to, data = {}, opts = {}) {
   return { forced: force && missing.length > 0 };
 }
 
-module.exports = { RULES, DEFAULT_STAGE_RULES, stageRules, evaluate, nextStage, validateMove, openStages, mainStages, hasWork, WORK_TYPES };
+module.exports = { RULES, DEFAULT_STAGE_RULES, stageRules, evaluate, nextStage, validateMove, openStages, mainStages, hasWork, WORK_TYPES, CONTACT_TYPES };

@@ -876,6 +876,7 @@ const DEFAULT_OPTIONS = {
     ['whatsapp', 'WhatsApp'],
     ['email', 'E-mail'],
     ['direct', 'Direct (Instagram)'],
+    ['linkedin', 'LinkedIn (DM)'],
     ['presencial', 'Presencial'],
     ['video', 'Vídeo'],
     ['sms', 'SMS'],
@@ -1257,6 +1258,34 @@ function seedDefaults(db) {
     }
     db.prepare("INSERT INTO settings (key, value) VALUES ('migr_v11_pipeline', 'true')").run();
   }
+  // Regras de etapas v12: Lead → Tentativa exige atividade; Tentativa → Qualificação exige a qualificação concluída;
+  // R2 → Negociação exige proposta. Negócios que já passaram da Qualificação ficam com ela concluída; os perdidos
+  // guardam a etapa em que foram perdidos (funil de perdidos).
+  if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_v12_regras'").get()) {
+    const qpos = db.prepare("SELECT position FROM pipeline_stages WHERE key = 'qualificado'").get()?.position;
+    if (qpos != null) {
+      db.prepare(`UPDATE opportunities SET qualified_at = COALESCE(qualified_at, stage_entered_at) WHERE qualified_at IS NULL
+        AND (status IN ('ganha') OR stage_id IN (SELECT id FROM pipeline_stages WHERE kind = 'aberta' AND position >= ?))`).run(qpos);
+    }
+    for (const o of db.prepare("SELECT o.id FROM opportunities o JOIN pipeline_stages s ON s.id = o.stage_id WHERE s.kind = 'perdido' AND o.lost_from_stage_id IS NULL").all()) {
+      const h = db.prepare("SELECT h.from_stage_id FROM stage_history h JOIN pipeline_stages s ON s.id = h.to_stage_id WHERE h.opportunity_id = ? AND s.kind = 'perdido' ORDER BY h.moved_at DESC, h.id DESC LIMIT 1").get(o.id);
+      if (h?.from_stage_id) db.prepare('UPDATE opportunities SET lost_from_stage_id = ? WHERE id = ?').run(h.from_stage_id, o.id);
+    }
+    const custom = db.prepare("SELECT value FROM settings WHERE key = 'stage_rules'").get();
+    const parsed = custom ? JSON.parse(custom.value || 'null') : null;
+    if (parsed && typeof parsed === 'object') {
+      const rules = parsed;
+      rules.lead = [];
+      rules.tentativa = ['tentativa_registrada'];
+      rules.qualificado = ['qualificacao_concluida'];
+      rules.negociacao = ['proposta_gerada'];
+      db.prepare("UPDATE settings SET value = ? WHERE key = 'stage_rules'").run(JSON.stringify(rules));
+    }
+    if (db.prepare("SELECT COUNT(*) AS n FROM options WHERE list = 'canal'").get().n && !db.prepare("SELECT 1 FROM options WHERE list = 'canal' AND value = 'linkedin'").get()) {
+      db.prepare("INSERT INTO options (list, value, label, position, flags) VALUES ('canal', 'linkedin', 'LinkedIn (DM)', 4, '{}')").run();
+    }
+    db.prepare("INSERT INTO settings (key, value) VALUES ('migr_v12_regras', 'true')").run();
+  }
   // Central de documentos: pastas padrão (o administrador cria subpastas dentro delas)
   if (db.prepare('SELECT COUNT(*) AS n FROM doc_folders').get().n === 0) {
     const ins = db.prepare('INSERT INTO doc_folders (name, description, position, system, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)');
@@ -1374,6 +1403,8 @@ const ADDED_COLUMNS = {
     ['property_free_liens', 'TEXT'], ['pays_rent', 'TEXT'], ['rent_value', 'REAL'], ['temperature', 'TEXT'], ['temperature_reason', 'TEXT'],
     // Plataforma multiárea: área responsável (consórcio, planejamento, seguros, investimentos); "ganho" do pré-vendas = R1 agendada
     ['business_area', "TEXT NOT NULL DEFAULT 'consorcio'"], ['r1_won_at', 'TEXT'], ['co_owner_id', 'INTEGER REFERENCES users(id)'],
+    // Previsão de fechamento (editável), qualificação concluída (libera a etapa Qualificação) e etapa em que o lead foi perdido
+    ['expected_close_date', 'TEXT'], ['qualified_at', 'TEXT'], ['qualified_by', 'INTEGER REFERENCES users(id)'], ['lost_from_stage_id', 'INTEGER REFERENCES pipeline_stages(id)'],
   ],
   proposals: [
     ['simulator_token_hash', 'TEXT'], ['simulator_token_expires_at', 'TEXT'], ['generated_at', 'TEXT'], ['pdf_attachment_id', 'INTEGER REFERENCES attachments(id)'],
@@ -1385,6 +1416,8 @@ const ADDED_COLUMNS = {
     ['quota_split_strategy', 'TEXT'], ['quota_values', 'TEXT'], ['quota_split_notes', 'TEXT'],
     // Administradora da proposta e plano "Outros" (condições livres, quando o plano não está cadastrado)
     ['administrator_id', 'INTEGER REFERENCES administrators(id)'], ['plan_other', 'INTEGER NOT NULL DEFAULT 0'],
+    // Propostas de todas as áreas: consórcio (simulador) e seguros, planejamento financeiro e investimentos (registro direto)
+    ['area', "TEXT NOT NULL DEFAULT 'consorcio'"], ['description', 'TEXT'],
   ],
   pre_sales: [
     ['payment_method', 'TEXT'], ['payment_sent_at', 'TEXT'], ['payment_date', 'TEXT'], ['payment_attachment_id', 'INTEGER'],
@@ -2157,6 +2190,66 @@ CREATE TABLE IF NOT EXISTS wa_messages (
   status_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_wa_messages ON wa_messages(conversation_id, id);
+
+-- Produtos do lead: oportunidades de cross-sell e up-sell nas 4 áreas (consórcio, planejamento, seguros, investimentos)
+CREATE TABLE IF NOT EXISTS lead_products (
+  id INTEGER PRIMARY KEY,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id),
+  opportunity_id INTEGER REFERENCES opportunities(id),
+  area TEXT NOT NULL CHECK (area IN ('consorcio','planejamento','seguros','investimentos')),
+  sub_type TEXT,
+  description TEXT,
+  value REAL,
+  value_range TEXT,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'potencial' CHECK (status IN ('potencial','em_andamento','convertido','descartado')),
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lead_products ON lead_products(contact_id, area);
+
+-- Diagnóstico financeiro do lead (ferramenta de Planejamento): dados coletados, resumo e situação
+CREATE TABLE IF NOT EXISTS diagnostics (
+  id INTEGER PRIMARY KEY,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id),
+  opportunity_id INTEGER REFERENCES opportunities(id),
+  status TEXT NOT NULL DEFAULT 'em_andamento' CHECK (status IN ('em_andamento','concluido')),
+  data TEXT,
+  summary TEXT,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_diagnostics_contact ON diagnostics(contact_id);
+
+-- IA da plataforma: base de conhecimento (objeções, perguntas, dicas), conversas por lead e avaliações das respostas
+CREATE TABLE IF NOT EXISTS ai_knowledge (
+  id INTEGER PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('objecao','pergunta','dica','mensagem')),
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  stage_key TEXT,
+  area TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  likes INTEGER NOT NULL DEFAULT 0,
+  dislikes INTEGER NOT NULL DEFAULT 0,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ai_messages (
+  id INTEGER PRIMARY KEY,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id),
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  role TEXT NOT NULL CHECK (role IN ('user','assistant')),
+  content TEXT NOT NULL,
+  engine TEXT,
+  rating INTEGER,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ai_messages ON ai_messages(contact_id, user_id, id);
 `;
 
 /**

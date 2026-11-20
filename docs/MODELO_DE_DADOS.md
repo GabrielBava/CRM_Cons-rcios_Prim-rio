@@ -2,7 +2,7 @@
 
 Gerado por `scripts/ddl.js` (rode `node scripts/ddl.js` depois de mudar o esquema). O DDL completo está em [`DDL.sql`](DDL.sql).
 
-**77 tabelas**, **213 chaves estrangeiras** declaradas e **17 relacionamentos lógicos** (sem FOREIGN KEY no banco, garantidos pela aplicação).
+**81 tabelas**, **224 chaves estrangeiras** declaradas e **17 relacionamentos lógicos** (sem FOREIGN KEY no banco, garantidos pela aplicação).
 
 ## Visão geral do fluxo comercial
 
@@ -116,6 +116,8 @@ erDiagram
 | `opportunities` | `created_by` | `users(id)` | — |
 | `opportunities` | `updated_by` | `users(id)` | — |
 | `opportunities` | `co_owner_id` | `users(id)` | — |
+| `opportunities` | `qualified_by` | `users(id)` | — |
+| `opportunities` | `lost_from_stage_id` | `pipeline_stages(id)` | — |
 | `stage_history` | `opportunity_id` | `opportunities(id)` | — |
 | `stage_history` | `from_stage_id` | `pipeline_stages(id)` | — |
 | `stage_history` | `to_stage_id` | `pipeline_stages(id)` | — |
@@ -289,6 +291,20 @@ erDiagram
 | `company_documents` | `previous_id` | `company_documents(id)` | — |
 | `company_documents` | `uploaded_by` | `users(id)` | — |
 
+### Produtos do lead, diagnóstico financeiro e IA Vero
+
+| Tabela | Coluna | Referência | Regra |
+|---|---|---|---|
+| `lead_products` | `contact_id` | `contacts(id)` | — |
+| `lead_products` | `opportunity_id` | `opportunities(id)` | — |
+| `lead_products` | `created_by` | `users(id)` | — |
+| `diagnostics` | `contact_id` | `contacts(id)` | — |
+| `diagnostics` | `opportunity_id` | `opportunities(id)` | — |
+| `diagnostics` | `created_by` | `users(id)` | — |
+| `ai_knowledge` | `created_by` | `users(id)` | — |
+| `ai_messages` | `contact_id` | `contacts(id)` | — |
+| `ai_messages` | `user_id` | `users(id)` | — |
+
 ### Comunicação (Inbox, Tickets e WhatsApp)
 
 | Tabela | Coluna | Referência | Regra |
@@ -415,7 +431,7 @@ Colunas acrescentadas por migração (o SQLite não permite incluir chave estran
 
 **`pipeline_stages`** — `id` (PK), `name`, `position`, `kind`, `active`, `created_at`, `key`, `playbook`, `rot_days`, `training_id`
 
-**`opportunities`** — `id` (PK), `code`, `uid`, `contact_id` (FK), `company_contact_id` (FK), `title`, `product_id` (FK), `stage_id` (FK), `status`, `priority`, `credit_category`, `credit_value`, `term_months`, `installment_min`, `installment_max`, `quotas`, `payment_modality`, `strategy`, `strategy_validated_by` (FK), `strategy_validated_at`, `contemplation_type`, `bid_own_resources`, `fgts_available`, `embedded_bid_interest`, `urgency`, `objective`, `qualification_criteria`, `next_action`, `next_action_at`, `lost_reason`, `lost_notes`, `pause_reason`, `custom`, `stage_entered_at`, `last_activity_at`, `closed_at`, `owner_id` (FK), `created_by` (FK), `updated_by` (FK), `created_at`, `updated_at`, `objective_type`, `product_type`, `credit_purpose`, `financial_moment`, `employment_type`, `has_fgts`, `decision_maker`, `existing_products`, `existing_consortium_value`, `existing_consortium_admin`, `existing_financing_balance`, `existing_financing_cet`, `existing_financing_bank`, `credit_purpose_type`, `has_bid_resources`, `had_consortium`, `has_financing`, `decision_notes`, `housing_purpose`, `bid_source`, `has_property`, `property_type`, `property_value`, `property_free_liens`, `pays_rent`, `rent_value`, `temperature`, `temperature_reason`, `business_area`, `r1_won_at`, `co_owner_id` (FK)
+**`opportunities`** — `id` (PK), `code`, `uid`, `contact_id` (FK), `company_contact_id` (FK), `title`, `product_id` (FK), `stage_id` (FK), `status`, `priority`, `credit_category`, `credit_value`, `term_months`, `installment_min`, `installment_max`, `quotas`, `payment_modality`, `strategy`, `strategy_validated_by` (FK), `strategy_validated_at`, `contemplation_type`, `bid_own_resources`, `fgts_available`, `embedded_bid_interest`, `urgency`, `objective`, `qualification_criteria`, `next_action`, `next_action_at`, `lost_reason`, `lost_notes`, `pause_reason`, `custom`, `stage_entered_at`, `last_activity_at`, `closed_at`, `owner_id` (FK), `created_by` (FK), `updated_by` (FK), `created_at`, `updated_at`, `objective_type`, `product_type`, `credit_purpose`, `financial_moment`, `employment_type`, `has_fgts`, `decision_maker`, `existing_products`, `existing_consortium_value`, `existing_consortium_admin`, `existing_financing_balance`, `existing_financing_cet`, `existing_financing_bank`, `credit_purpose_type`, `has_bid_resources`, `had_consortium`, `has_financing`, `decision_notes`, `housing_purpose`, `bid_source`, `has_property`, `property_type`, `property_value`, `property_free_liens`, `pays_rent`, `rent_value`, `temperature`, `temperature_reason`, `business_area`, `r1_won_at`, `co_owner_id` (FK), `expected_close_date`, `qualified_at`, `qualified_by` (FK), `lost_from_stage_id` (FK)
 
 **`stage_history`** — `id` (PK), `opportunity_id` (FK), `from_stage_id` (FK), `to_stage_id` (FK), `from_stage_name`, `to_stage_name`, `seconds_in_previous`, `reason`, `user_id` (FK), `moved_at`
 
@@ -443,7 +459,7 @@ Colunas acrescentadas por migração (o SQLite não permite incluir chave estran
 
 **`simulation_links`** — `id` (PK), `token_hash`, `contact_id` (FK), `opportunity_id` (FK), `created_by` (FK), `origin_screen`, `created_at`, `expires_at`, `first_used_at`, `last_used_at`, `revoked_at`
 
-**`proposals`** — `id` (PK), `code`, `contact_id` (FK), `opportunity_id` (FK), `simulation_id` (FK), `version`, `previous_id` (FK), `product_id` (FK), `credit_value`, `term_months`, `initial_installment`, `payment_modality`, `admin_fee_pct`, `reserve_fund_pct`, `insurance_pct`, `other_costs`, `readjustment_index`, `readjustment_assumptions`, `strategy`, `status`, `link_url`, `valid_until`, `notes`, `presented_at`, `owner_id` (FK), `created_by` (FK), `created_at`, `updated_at`, `simulator_token_hash`, `simulator_token_expires_at`, `generated_at`, `pdf_attachment_id` (FK), `accepted_at`, `accepted_channel`, `accepted_by` (FK), `refusal_reason`, `category`, `sent_channel`, `last_response_at`, `last_response`, `refusal_notes`, `refused_at`, `retake_at`, `has_adhesion`, `adhesion_pct`, `adhesion_months`, `reducer_pct`, `readjustment_rate`, `bid_deduction`, `contemplation_month`, `embedded_bid_pct`, `quotas`, `quota_split_strategy`, `quota_values`, `quota_split_notes`, `administrator_id` (FK), `plan_other`
+**`proposals`** — `id` (PK), `code`, `contact_id` (FK), `opportunity_id` (FK), `simulation_id` (FK), `version`, `previous_id` (FK), `product_id` (FK), `credit_value`, `term_months`, `initial_installment`, `payment_modality`, `admin_fee_pct`, `reserve_fund_pct`, `insurance_pct`, `other_costs`, `readjustment_index`, `readjustment_assumptions`, `strategy`, `status`, `link_url`, `valid_until`, `notes`, `presented_at`, `owner_id` (FK), `created_by` (FK), `created_at`, `updated_at`, `simulator_token_hash`, `simulator_token_expires_at`, `generated_at`, `pdf_attachment_id` (FK), `accepted_at`, `accepted_channel`, `accepted_by` (FK), `refusal_reason`, `category`, `sent_channel`, `last_response_at`, `last_response`, `refusal_notes`, `refused_at`, `retake_at`, `has_adhesion`, `adhesion_pct`, `adhesion_months`, `reducer_pct`, `readjustment_rate`, `bid_deduction`, `contemplation_month`, `embedded_bid_pct`, `quotas`, `quota_split_strategy`, `quota_values`, `quota_split_notes`, `administrator_id` (FK), `plan_other`, `area`, `description`
 
 ### Pré-venda, vendas, cancelamentos e comissões
 
@@ -506,6 +522,16 @@ Colunas acrescentadas por migração (o SQLite não permite incluir chave estran
 **`doc_folders`** — `id` (PK), `parent_id` (FK), `name`, `description`, `position`, `system`, `created_by` (FK), `created_at`, `updated_at`
 
 **`company_documents`** — `id` (PK), `folder_id` (FK), `title`, `description`, `doc_number`, `issuer`, `issue_date`, `expires_at`, `tags`, `filename`, `mime`, `size`, `content`, `version`, `previous_id` (FK), `status`, `expiry_alerted_at`, `uploaded_by` (FK), `created_at`, `updated_at`
+
+### Produtos do lead, diagnóstico financeiro e IA Vero
+
+**`lead_products`** — `id` (PK), `contact_id` (FK), `opportunity_id` (FK), `area`, `sub_type`, `description`, `value`, `value_range`, `notes`, `status`, `created_by` (FK), `created_at`, `updated_at`
+
+**`diagnostics`** — `id` (PK), `contact_id` (FK), `opportunity_id` (FK), `status`, `data`, `summary`, `created_by` (FK), `created_at`, `updated_at`, `completed_at`
+
+**`ai_knowledge`** — `id` (PK), `kind`, `title`, `content`, `stage_key`, `area`, `active`, `likes`, `dislikes`, `created_by` (FK), `created_at`, `updated_at`
+
+**`ai_messages`** — `id` (PK), `contact_id` (FK), `user_id` (FK), `role`, `content`, `engine`, `rating`, `created_at`
 
 ### Comunicação (Inbox, Tickets e WhatsApp)
 
