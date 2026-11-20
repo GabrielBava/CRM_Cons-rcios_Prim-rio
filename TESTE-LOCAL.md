@@ -139,8 +139,9 @@ cliques em `iniciar-windows.bat`. Ao fechar a área restrita, tudo é apagado.
 
 ### H. R1: agendamento, Google Agenda, presença e modelo
 
-1. No CRM, arraste um card de **Lead qualificado** para **R1**: abre o pop-up "Agendar R1" (cliente, e-mail, data, início e
-   término de 15 em 15 minutos, 30 minutos por padrão, título "[R1] Cliente | Vero Consórcios").
+1. No Pipeline, arraste um card até **R1** (ou abra o lead e clique em **Ganho**): abre o pop-up "Agendar R1" (cliente,
+   e-mail, data, início e término de 15 em 15 minutos, 30 minutos por padrão, título "[R1] Cliente | Vero Consórcios").
+   Se faltar a qualificação (objetivo, valor estimado, prioridade e, no consórcio, a categoria), os campos aparecem no pop-up.
 2. Com o `config.env` deste pacote, o Google já está configurado: no pop-up clique em **Conectar Google Agenda** (uma vez)
    e depois em **Agendar R1**. O evento entra na sua agenda com o Google Meet, o cliente recebe o convite e a confirmação
    por e-mail (`noreply@`), e o link do Meet fica salvo na R1. Sem o Google, use "Abrir no Google Agenda" e cole o link.
@@ -148,9 +149,18 @@ cliques em `iniciar-windows.bat`. Ao fechar a área restrita, tudo é apagado.
 4. **R1 feita:** entre no Meet no horário e peça para alguém de fora da empresa entrar (ex.: um celular sem a sua conta).
    Em até 5 minutos (ou no botão "Verificar presença" da tarefa) a reunião vira "R1 feita" com o horário.
    Só você na sala, ou só colegas da Vero, não conta.
-4. Cliente faltou? Mova de **R1** para **R1 bolo** (justificativa opcional) e use "Agendar R1" para remarcar.
-5. No painel lateral (clique no nome do card): botão **Agendar R1**, engrenagem para **trocar o responsável** (com motivo)
-   e **Editar** nas informações de negócio.
+5. Cliente faltou? No bloco **R1** do painel do lead clique em **Não compareceu**: o cartão fica na coluna R1 com a marca
+   **NS** (amarela). **Remarcar** abre a nova data e o cartão ganha a marca **R** (azul); o mesmo link do Meet continua valendo.
+6. **Concluir** a R1 libera o **Agendar R2** (arraste o card para R2 ou use o bloco R2). Concluir a R2 leva o negócio para Negociação.
+7. **Perdido** só aparece liberado depois de registrar uma atividade (Telefone, WhatsApp, E-mail ou Direct) e pede o motivo MP1 a MP9.
+8. No painel lateral: engrenagem para **trocar o responsável** (com motivo) e **Editar** no bloco do negócio (área, co-responsável,
+   valor estimado e qualificação).
+
+### H2. Menu lateral e Gestão do time
+
+1. O botão no canto superior esquerdo recolhe o menu (fica só o símbolo da Vero e os ícones); clique de novo para expandir.
+2. Entre como **gestora@demo.local** ou admin: **Gestão do time › Organograma do time** (quem lidera quem, com os números do mês)
+   e **Dashboard squad** (leads, tentativas, R1 agendadas/feitas, no-show, remarcações, R2, vendas, SLA e motivos de perda).
 
 ### I. Planos, proposta e nova versão
 

@@ -323,7 +323,11 @@ function createRouter(db) {
   add('GET', '/api/oportunidades/:id', ({ user, params }) => opps.getOpportunity(db, user, params.id));
   add('PATCH', '/api/oportunidades/:id', ({ user, params, body }) => opps.updateOpportunity(db, user, params.id, body));
   add('POST', '/api/oportunidades/lote', ({ user, body }) => opps.bulkAction(db, user, body));
-  add('POST', '/api/oportunidades/:id/etapa', ({ user, params, body }) => opps.moveStage(db, user, params.id, body));
+  // "Ganho" (R1 agendada): o lead vai de Prospect, Lead, Tentativa ou Qualificação direto para a R1 (critérios das etapas puladas continuam valendo)
+  add('POST', '/api/oportunidades/:id/etapa', ({ user, params, body }) => {
+    const to = db.prepare('SELECT key FROM pipeline_stages WHERE id = ?').get(Number(body.stage_id));
+    return opps.moveStage(db, user, params.id, body, { allowSkip: !!body.ganho && to?.key === 'r1' });
+  });
   add('POST', '/api/oportunidades/:id/validar-estrategia', ({ user, params }) => (opps.validateStrategy(db, user, params.id), { ok: true }));
   // Qualificação vinda de fora (ex.: transcrição da R1): completa só os campos vazios
   add('POST', '/api/oportunidades/:id/qualificacao', ({ user, params, body }) => opps.fillQualification(db, user, params.id, body));
@@ -349,8 +353,13 @@ function createRouter(db) {
   add('POST', '/api/tarefas/:id/presenca', ({ user, params }) => meetings.checkAttendance(db, params.id, user));
 
   /* ---------- R1 e Google Agenda ---------- */
-  add('GET', '/api/r1/contexto', ({ user, query, req }) => meetings.r1Context(db, user, query.contact_id, req));
+  add('GET', '/api/r1/contexto', ({ user, query, req }) => meetings.r1Context(db, user, query.contact_id, req, query.kind));
   add('POST', '/api/r1/agendar', ({ user, body, req }) => meetings.scheduleR1(db, user, body, req));
+  // R1 e R2: agendar (kind), concluir ou não compareceu, remarcar e confirmar presença
+  add('POST', '/api/reunioes/agendar', ({ user, body, req }) => meetings.scheduleR1(db, user, body, req));
+  add('POST', '/api/reunioes/:id/resultado', ({ user, params, body }) => meetings.meetingResult(db, user, params.id, body));
+  add('POST', '/api/reunioes/:id/remarcar', ({ user, params, body, req }) => meetings.rescheduleMeeting(db, user, params.id, body, req));
+  add('POST', '/api/reunioes/:id/confirmar', ({ user, params, body }) => meetings.confirmMeeting(db, user, params.id, body));
   add('GET', '/api/integracao', ({ user }) => require('./services/onboarding').status(db, user));
   add('POST', '/api/integracao/:step/concluir', ({ user, params }) => require('./services/onboarding').completeStep(db, user, params.step));
   add('GET', '/api/r1/modelo', ({ user, res, query }) => meetings.serveR1Model(db, user, res, query));
@@ -431,6 +440,10 @@ function createRouter(db) {
     }
     return d;
   }, { integration: true });
+
+  /* ---------- Gestão do time (líder e administrador) ---------- */
+  add('GET', '/api/time/organograma', ({ user }) => require('./services/team').orgChart(db, user));
+  add('GET', '/api/time/squad', ({ user, query }) => require('./services/team').squadDashboard(db, user, query));
 
   /* ---------- Colaboradores (RH) ---------- */
   add('GET', '/api/colaboradores', ({ user, query }) => people.listEmployees(db, user, query));

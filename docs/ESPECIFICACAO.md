@@ -88,35 +88,39 @@ Os campos **recomendados** aparecem destacados. Um aviso lista o que falta compl
 
 ## 3. Etapas do funil e regras de movimentação
 
-O funil tem 10 etapas, nesta ordem:
+O pipeline é o mesmo para todas as áreas da empresa (consórcio, planejamento financeiro, seguros e investimentos; cada negócio tem a **área responsável** e um co-responsável opcional) e tem 8 etapas principais e 2 arquivadas:
 
-1. **Prospect**: contato ainda sem interesse demonstrado
-2. **Lead**: demonstrou interesse (um lead já entra aqui)
-3. **Tentativa de contato**
-4. **Lead qualificado**
-5. **R1**: reunião de diagnóstico agendada
+0. **Prospect**: contato ainda sem interesse demonstrado
+1. **Lead**: demonstrou interesse (um lead já entra aqui)
+2. **Tentativa de contato**: ligações, WhatsApp, e-mail e direct
+3. **Qualificação**
+4. **R1**: reunião de diagnóstico agendada (o "Ganho" do pré-vendas)
+5. **R2**: apresentação da proposta e da estratégia
 6. **Negociação**
-7. **Follow-up**: proposta enviada
-8. **Venda** (tipo ganho)
-9. **Nutrição futura** (tipo nutrição)
-10. **Perdido** (tipo perda)
+7. **Venda** (tipo ganho)
+- **Nutrição futura** (arquivado)
+- **Perdido** (arquivado; motivo MP1 Preço, MP2 Momento, MP3 Empresa, MP4 Perfil/Qualificação, MP5 Tempo, MP6 Processo, MP7 Cadastro, MP8 Decisor, MP9 Sem contato)
 
 **Regras de passagem (modelo Pipedrive).** O negócio só entra numa etapa quando cumpre os critérios dela, verificados no servidor:
 
 | Etapa | Critérios padrão para entrar |
 |---|---|
 | Lead | Telefone, WhatsApp ou e-mail cadastrado; origem informada |
-| Tentativa de contato | Ao menos uma tentativa de contato registrada |
-| Lead qualificado | Conversa efetiva registrada; qualificação (objetivo, crédito, parcela possível e prazo) |
-| R1 | R1 agendada (tarefa de reunião) |
-| Negociação | R1 realizada; dados da R1 (quem decide, momento financeiro, produtos que já possui) |
-| Follow-up | Proposta registrada e enviada ao cliente |
+| Tentativa de contato | Sem restrição (Prospect e Lead vão direto) |
+| Qualificação | Objetivo, valor estimado e prioridade (curto, médio ou longo prazo); no consórcio, também a categoria |
+| R1 | R1 agendada (pendente ou realizada; um no-show não conta) |
+| R2 | R1 realizada e R2 agendada |
+| Negociação | R2 realizada (concluir a R2 move sozinho) |
 | Venda | Venda com pagamento confirmado |
 
+- **Ganho:** no painel do lead, até a R1, o botão verde abre o agendamento da R1; ao salvar, o negócio vai direto para a coluna R1 (as etapas puladas continuam exigindo os seus critérios, e o pop-up pede a qualificação que faltar).
+- **Reuniões:** o bloco R1/R2 do painel tem Concluir, Remarcar, Não compareceu e Confirmar presença. No-show deixa a marca **NS** no cartão da coluna R1 até a remarcação (marca **R**); a remarcação mantém o link do Meet e atualiza o evento do Google Agenda.
+- **Perdido** só depois de ao menos uma atividade registrada (o administrador pode forçar, com justificativa).
+- **Cartão:** área, origem e campanha, valor estimado, temperatura e PF/PJ, SLA da atividade (no prazo, atenção, estourado), score de 0 a 100 e próxima ação.
 - A passagem é **sequencial**: não é possível pular etapas. O administrador pode forçar, com justificativa, e a passagem fica registrada na auditoria como "etapa forçada".
 - **Venda** só é alcançada pela confirmação do pagamento em Vendas (aceite → pré-venda → boleto → pagamento). Não se arrasta um negócio para Venda.
 - Voltar etapas é permitido, com motivo.
-- **Perdido** exige motivo (lista configurável). **Nutrição futura** exige o motivo e a data para retomar o contato, e cria a tarefa de retorno.
+- **Perdido** exige o motivo MP. **Nutrição futura** exige o motivo e a data para retomar o contato, e cria a tarefa de retorno.
 - A página do negócio mostra o cartão **"Para avançar para…"** com os critérios cumpridos e pendentes e o roteiro (playbook) da etapa.
 - Em Configurações › Etapas do funil, o administrador marca os critérios de cada etapa, liga ou desliga a passagem sequencial, e define o roteiro e os dias para considerar o negócio parado em cada etapa.
 - Cada movimentação grava a etapa anterior, a nova etapa, o usuário, a data, o tempo na etapa anterior e o motivo.
@@ -636,7 +640,7 @@ Lance informado = recurso próprio para lance, valor do lance, FGTS. A temperatu
 
 **Simulador.** Aberto pelo menu **Simulador**, entra no modo simulação: o botão "Gerar proposta (PDF)" fica inativo. Propostas só pela tela Propostas.
 
-**Painel inicial.** O funil de vendas aparece em forma de funil: uma faixa por etapa (Prospect → Follow-up e Venda no mês), com a quantidade de cards, o valor (proposta ativa ou crédito desejado), a participação no funil e a contagem quente/morno/frio; Nutrição e Perdidos ficam ao lado. O **ranking do mês** mostra a foto (ou as iniciais) do especialista, o cargo, o número de vendas e o valor vendido.
+**Painel inicial.** O funil de vendas aparece em forma de funil: uma faixa por etapa (Prospect → Negociação e Venda no mês), com a quantidade de cards, o valor (proposta ativa ou crédito desejado), a participação no funil e a contagem quente/morno/frio; Nutrição e Perdidos ficam ao lado. O **ranking do mês** mostra a foto (ou as iniciais) do especialista, o cargo, o número de vendas e o valor vendido.
 
 **Produto contratado.** Campos: **contrato da cota** (nº na administradora), **crédito contratado** e **crédito disponível** (separados), **parcela inicial** (da contratação) e **parcela atual** (ajustada pelo pós-venda nos reajustes), **data da contratação** (a venda), **data da adesão** (alocação na administradora) e **próximo reajuste** (padrão: 12 meses após a adesão). Contemplação: data, tipo (sorteio, lance livre, fixo, **fidelidade**, **retido**, combinação), valor do lance, **crédito disponível na contemplação**, **líquido a pagar** e **escolha do cliente** (faturamento ou venda da carta).
 

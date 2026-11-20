@@ -626,7 +626,7 @@ test('funil: passagem sequencial com critérios de entrada; voltar exige motivo;
   const q = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('qualificado').id });
   assert.equal(q.status, 400);
   assert.deepEqual(q.data.details.missing.map((m) => m.key), ['qualificacao']);
-  assert.match(q.data.details.missing[0].label, /objetivo, categoria de interesse, crédito desejado e prioridade/);
+  assert.match(q.data.details.missing[0].label, /objetivo, valor estimado e prioridade/);
   // Voltar exige motivo
   assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('lead').id })).status, 400);
   assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('lead').id, reason: 'Registrado por engano' })).status, 200);
@@ -639,49 +639,66 @@ test('funil: passagem sequencial com critérios de entrada; voltar exige motivo;
   assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('nutricao').id })).status, 400);
 });
 
-test('funil: Prospect vai direto para Tentativa; R1 bolo só a partir da R1; R1 agendada pelo pop-up move o negócio', async () => {
+test('pipeline 0–7: Prospect vai direto para Tentativa; Ganho agenda a R1 e leva o lead para a coluna R1', async () => {
   const stages = (await call('c1', 'GET', '/api/meta')).data.stages;
   const st = (k) => stages.find((s) => s.key === k);
-  assert.ok(st('r1_bolo'), 'coluna R1 bolo existe');
-  assert.ok(st('r1_bolo').position > st('r1').position && st('r1_bolo').position < st('negociacao').position, 'R1 bolo fica entre R1 e Negociação');
+  assert.deepEqual(stages.filter((s) => ['aberta', 'ganho'].includes(s.kind)).map((s) => s.key), ['prospect', 'lead', 'tentativa', 'qualificado', 'r1', 'r2', 'negociacao', 'venda']);
+  assert.equal(st('qualificado').name, 'Qualificação');
+  assert.ok(st('nutricao') && st('perdido'), 'Nutrição futura e Perdido (arquivados)');
+  assert.ok(!st('r1_bolo') && !st('follow_up'), 'R1 bolo e Follow-up saíram do pipeline');
   const c = await call('c1', 'POST', '/api/cadastros', { name: 'Prospect Direto', phone1: '11 94444-1010', origin: 'indicacao', relationship: 'prospect' });
   const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
   assert.equal(opp.stage_id, st('prospect').id);
   assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('tentativa').id })).status, 200, 'Prospect → Tentativa sem restrição');
-  // R1 bolo só a partir da R1
-  const bolo1 = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('r1_bolo').id });
-  assert.equal(bolo1.status, 400);
-  assert.match(bolo1.data.error, /Só negócios em "R1"/);
-  await call('c1', 'PATCH', `/api/oportunidades/${opp.id}`, { objective_type: 'aquisicao', credit_category: 'imovel', credit_value: 300000, urgency: 'curto' });
-  assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('qualificado').id })).status, 200);
-  // Sem R1 agendada não entra em R1
-  assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('r1').id })).status, 400);
-  // Pop-up "Agendar R1": cliente, e-mail, horário (30 min) e move para R1
+  // Sem R1 agendada não entra em R1; pular etapas sem o "Ganho" não é permitido
+  const noR1 = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('r1').id });
+  assert.equal(noR1.status, 400);
+  assert.match(noR1.data.error, /pular etapas/);
+  // Contexto do pop-up: R1 com 30 minutos, R2 com 60
   const ctx = await call('c1', 'GET', `/api/r1/contexto?contact_id=${c.data.id}`);
   assert.equal(ctx.status, 200, JSON.stringify(ctx.data));
   assert.equal(ctx.data.title, '[R1] Prospect Direto | Vero Consórcios');
   assert.equal(ctx.data.duration_min, 30);
   assert.equal(ctx.data.google.configured, false);
+  const ctx2 = await call('c1', 'GET', `/api/r1/contexto?contact_id=${c.data.id}&kind=r2`);
+  assert.equal(ctx2.data.title, '[R2] Prospect Direto | Vero Consórcios');
+  assert.equal(ctx2.data.duration_min, 60);
   const start = new Date(Date.now() + 2 * 86400000);
   start.setUTCHours(17, 0, 0, 0);
   const bad = await call('c1', 'POST', '/api/r1/agendar', { contact_id: c.data.id, start_at: start.toISOString(), end_at: start.toISOString() });
   assert.equal(bad.status, 400, 'término depois do início');
-  const r = await call('c1', 'POST', '/api/r1/agendar', { contact_id: c.data.id, opportunity_id: opp.id, start_at: start.toISOString(), end_at: new Date(start.getTime() + 30 * 60000).toISOString(), email: 'prospect.direto@exemplo.com', video: true, move_to_r1: true });
-  assert.equal(r.status, 200, JSON.stringify(r.data));
-  assert.equal(r.data.moved, true);
-  assert.equal(r.data.google.synced, false);
-  assert.equal(r.data.google.reason, 'nao_configurado');
-  assert.match(r.data.calendar_link, /^https:\/\/calendar\.google\.com\/calendar\/render\?action=TEMPLATE/);
-  assert.match(r.data.calendar_link, /add=prospect.direto%40exemplo.com/);
+  // Ganho sem qualificação: a R1 fica agendada, mas o lead não pula a Qualificação
+  const g1 = await call('c1', 'POST', '/api/reunioes/agendar', { kind: 'r1', contact_id: c.data.id, opportunity_id: opp.id, start_at: start.toISOString(), end_at: new Date(start.getTime() + 30 * 60000).toISOString(), email: 'prospect.direto@exemplo.com', video: true, move_to_stage: true });
+  assert.equal(g1.status, 200, JSON.stringify(g1.data));
+  assert.equal(g1.data.kind, 'r1');
+  assert.equal(g1.data.moved, false);
+  assert.match(g1.data.move_error, /objetivo, valor estimado e prioridade/);
+  assert.equal(g1.data.google.reason, 'nao_configurado');
+  assert.match(g1.data.calendar_link, /^https:\/\/calendar\.google\.com\/calendar\/render\?action=TEMPLATE/);
+  assert.match(g1.data.calendar_link, /add=prospect.direto%40exemplo.com/);
+  // Com a qualificação preenchida (no próprio pop-up do Ganho), o "ganho" leva o lead direto para a R1
+  await call('c1', 'PATCH', `/api/oportunidades/${opp.id}`, { objective_type: 'aquisicao', credit_category: 'imovel', credit_value: 300000, urgency: 'curto' });
+  const won = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('r1').id, ganho: true });
+  assert.equal(won.status, 200, JSON.stringify(won.data));
   const after = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data;
   assert.equal(after.email, 'prospect.direto@exemplo.com', 'e-mail informado no agendamento completa o cadastro');
   assert.equal(after.opportunities[0].stage_id, st('r1').id);
-  const task = after.tasks.find((t) => t.id === r.data.task_id);
+  const full = (await call('c1', 'GET', `/api/oportunidades/${opp.id}`)).data;
+  assert.ok(full.r1_won_at, 'data do ganho (R1) registrada');
+  assert.equal(full.meetings.r1.state, 'agendada');
+  const task = after.tasks.find((t) => t.id === g1.data.task_id);
   assert.equal(task.type, 'reuniao');
+  assert.equal(task.meeting_kind, 'r1');
   assert.equal(Date.parse(task.ends_at) - Date.parse(task.due_at), 30 * 60000);
+  // Pop-up direto na Qualificação → R1 (outro lead): agendar move junto
+  const c2 = await call('c1', 'POST', '/api/cadastros', { name: 'Ganho Direto', phone1: '11 94445-2011', origin: 'site', relationship: 'lead' });
+  const o2 = (await call('c1', 'GET', `/api/cadastros/${c2.data.id}`)).data.opportunities[0];
+  await call('c1', 'PATCH', `/api/oportunidades/${o2.id}`, { objective_type: 'aquisicao', credit_value: 90000, urgency: 'medio', business_area: 'planejamento' });
+  const g2 = await call('c1', 'POST', '/api/r1/agendar', { contact_id: c2.data.id, opportunity_id: o2.id, start_at: start.toISOString(), end_at: new Date(start.getTime() + 30 * 60000).toISOString(), email: 'ganho.direto@exemplo.com', move_to_r1: true });
+  assert.equal(g2.data.moved, true, 'planejamento não exige categoria de consórcio');
   // Modelo da R1 em HTML: nome, foto e contato do especialista + nome do cliente
   await call('c1', 'PATCH', '/api/perfil', { whatsapp: '51 98912-1113', job_title: 'Especialista em consórcios' });
-  const page = await fetch(`${base}/api/r1/modelo?task_id=${r.data.task_id}`, { headers: { Cookie: sessions.c1 } });
+  const page = await fetch(`${base}/api/r1/modelo?task_id=${g1.data.task_id}`, { headers: { Cookie: sessions.c1 } });
   assert.equal(page.status, 200);
   assert.match(page.headers.get('content-type'), /text\/html/);
   const htmlText = await page.text();
@@ -691,22 +708,132 @@ test('funil: Prospect vai direto para Tentativa; R1 bolo só a partir da R1; R1 
   assert.match(htmlText, /https:\/\/wa\.me\/5551989121113/);
   assert.match(htmlText, /data:image\/svg\+xml;base64/, 'sem foto: iniciais');
   assert.doesNotMatch(htmlText, /\{\{especialista_/);
-  const js = await call('c1', 'GET', `/api/r1/modelo?task_id=${r.data.task_id}&formato=json`);
+  const js = await call('c1', 'GET', `/api/r1/modelo?task_id=${g1.data.task_id}&formato=json`);
   assert.equal(js.data.specialist, 'Cons 1');
   // Modelo personalizado pelo administrador
   assert.equal((await call('c1', 'PUT', '/api/r1/modelo-config', { html: '<html>x</html>' })).status, 403);
   assert.equal((await call('admin', 'PUT', '/api/r1/modelo-config', { html: 'sem tag' })).status, 400);
   assert.equal((await call('admin', 'PUT', '/api/r1/modelo-config', { html: '<html><body>{{especialista_nome}} · {{cliente_nome}} <script>alert(1)</script></body></html>' })).status, 200);
-  const custom = await call('c1', 'GET', `/api/r1/modelo?task_id=${r.data.task_id}&formato=json`);
+  const custom = await call('c1', 'GET', `/api/r1/modelo?task_id=${g1.data.task_id}&formato=json`);
   assert.match(custom.data.html, /Cons 1 · Prospect Direto/);
   assert.equal((await call('admin', 'PUT', '/api/r1/modelo-config', { html: '' })).data.custom, false);
   // Link da reunião informado à mão
   assert.equal((await call('c1', 'PATCH', `/api/tarefas/${task.id}/link`, { meeting_url: 'http://x' })).status, 400);
   assert.equal((await call('c1', 'PATCH', `/api/tarefas/${task.id}/link`, { meeting_url: 'https://meet.google.com/abc-defg-hij' })).status, 200);
-  // Cliente não compareceu: R1 → R1 bolo (justificativa opcional); de R1 bolo volta para R1 com nova reunião
-  assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('r1_bolo').id, reason: 'Não entrou na chamada' })).status, 200);
-  const back = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('r1').id });
-  assert.equal(back.status, 200, 'a R1 pendente (futura) continua valendo');
+});
+
+test('R1 e R2: Não compareceu (NS), Remarcar (R), confirmar presença, Concluir e R2 realizada leva para Negociação', async () => {
+  const stages = (await call('c1', 'GET', '/api/meta')).data.stages;
+  const st = (k) => stages.find((s) => s.key === k).id;
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Reuniões', phone1: '11 94445-2020', email: 'reunioes@exemplo.com', origin: 'indicacao', relationship: 'lead' });
+  const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
+  await call('c1', 'PATCH', `/api/oportunidades/${opp.id}`, { objective_type: 'aquisicao', credit_category: 'imovel', credit_value: 250000, urgency: 'curto' });
+  const at = (days, h = 15) => {
+    const d = new Date(Date.now() + days * 86400000);
+    d.setUTCHours(h, 0, 0, 0);
+    return { start_at: d.toISOString(), end_at: new Date(d.getTime() + 30 * 60000).toISOString() };
+  };
+  const r1 = await call('c1', 'POST', '/api/reunioes/agendar', { kind: 'r1', contact_id: c.data.id, opportunity_id: opp.id, ...at(1), move_to_stage: true });
+  assert.equal(r1.data.moved, true);
+  const card = async () => (await call('c1', 'GET', `/api/funil?q=${encodeURIComponent('Cliente Reuniões')}`)).data.stages.flatMap((s) => s.cards).find((x) => x.id === opp.id);
+  let k = await card();
+  assert.equal(k.stage_key, 'r1');
+  assert.equal(k.meetings.r1.state, 'agendada');
+  assert.equal(k.meetings.r2, null, 'R2 ainda não agendada');
+  assert.equal(typeof k.score, 'number');
+  assert.ok(k.score >= 50 && k.score <= 100, `score ${k.score}`);
+  assert.ok(['ok', 'atencao', 'estourado'].includes(k.sla.level));
+  assert.equal(k.business_area, 'consorcio');
+  // Cliente faltou: NS no cartão, que continua na coluna R1
+  assert.equal((await call('c1', 'POST', `/api/reunioes/${r1.data.task_id}/resultado`, { result: 'xyz' })).status, 400);
+  const ns = await call('c1', 'POST', `/api/reunioes/${r1.data.task_id}/resultado`, { result: 'nao_compareceu', notes: 'Não entrou na chamada' });
+  assert.equal(ns.status, 200, JSON.stringify(ns.data));
+  k = await card();
+  assert.equal(k.stage_key, 'r1');
+  assert.equal(k.meetings.r1.state, 'no_show');
+  assert.equal(k.meetings.r1.no_shows, 1);
+  assert.equal((await call('c1', 'POST', `/api/reunioes/${r1.data.task_id}/resultado`, { result: 'realizada' })).status, 400, 'reunião já encerrada');
+  // Remarcar depois do no-show: nova reunião ligada à anterior (marca R)
+  assert.equal((await call('c1', 'POST', `/api/reunioes/${r1.data.task_id}/remarcar`, at(-3))).status, 400, 'nova data no futuro');
+  const re1 = await call('c1', 'POST', `/api/reunioes/${r1.data.task_id}/remarcar`, at(2));
+  assert.equal(re1.status, 200, JSON.stringify(re1.data));
+  k = await card();
+  assert.equal(k.meetings.r1.state, 'remarcada');
+  assert.equal(k.meetings.r1.task_id, re1.data.task_id);
+  // Remarcar de novo, com motivo (a anterior fica como "remarcada")
+  const re2 = await call('c1', 'POST', `/api/reunioes/${re1.data.task_id}/remarcar`, { ...at(3), reason: 'Cliente pediu outro horário' });
+  assert.equal(re2.status, 200);
+  const old = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.tasks.find((t) => t.id === re1.data.task_id);
+  assert.equal(old.outcome, 'remarcada');
+  k = await card();
+  assert.equal(k.meetings.r1.reschedules, 2);
+  // Presença confirmada pelo cliente
+  assert.equal((await call('c1', 'POST', `/api/reunioes/${re2.data.task_id}/confirmar`, {})).status, 200);
+  assert.equal((await card()).meetings.r1.confirmed, true);
+  // R2 só depois da R1 realizada
+  const r2early = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('r2') });
+  assert.equal(r2early.status, 400);
+  assert.deepEqual(r2early.data.details.missing.map((m) => m.key), ['r1_realizada', 'r2_agendada']);
+  assert.equal((await call('c1', 'POST', `/api/reunioes/${re2.data.task_id}/resultado`, { result: 'realizada' })).status, 200);
+  assert.equal((await card()).meetings.r1.state, 'realizada');
+  const r2 = await call('c1', 'POST', '/api/reunioes/agendar', { kind: 'r2', contact_id: c.data.id, opportunity_id: opp.id, start_at: at(4).start_at, end_at: new Date(Date.parse(at(4).start_at) + 60 * 60000).toISOString(), move_to_stage: true });
+  assert.equal(r2.status, 200, JSON.stringify(r2.data));
+  assert.equal(r2.data.kind, 'r2');
+  assert.equal(r2.data.moved, true);
+  assert.match(r2.data.title, /^\[R2\] Cliente Reuniões/);
+  k = await card();
+  assert.equal(k.stage_key, 'r2');
+  assert.equal(k.meetings.r2.state, 'agendada');
+  // Negociação só com a R2 realizada; Concluir a R2 leva o negócio para Negociação
+  assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('negociacao') })).status, 400);
+  const done = await call('c1', 'POST', `/api/reunioes/${r2.data.task_id}/resultado`, { result: 'realizada', notes: 'Proposta apresentada' });
+  assert.equal(done.data.moved, 'negociacao');
+  assert.equal((await card()).stage_key, 'negociacao');
+  // Outro usuário (leitura) não registra resultado
+  assert.equal((await call('leitor', 'POST', `/api/reunioes/${r2.data.task_id}/confirmar`, {})).status, 403);
+});
+
+test('Perdido: só com ao menos uma atividade registrada e motivo MP (9 categorias); Direct conta como atividade', async () => {
+  const stages = (await call('c1', 'GET', '/api/meta')).data.stages;
+  const lostId = stages.find((s) => s.kind === 'perdido').id;
+  const mp = (await call('c1', 'GET', '/api/meta')).data.options.motivo_perda.filter((o) => o.active !== 0).map((o) => o.value);
+  assert.deepEqual(mp, ['preco', 'momento', 'empresa', 'perfil', 'tempo', 'processo', 'cadastro', 'decisor', 'sem_contato']);
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Lead Perdido', phone1: '11 94445-2030', origin: 'instagram', relationship: 'lead' });
+  const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
+  const r = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: lostId, lost_reason: 'preco' });
+  assert.equal(r.status, 400);
+  assert.equal(r.data.details.needs_activity, true);
+  assert.equal((await call('c1', 'POST', '/api/atividades', { contact_id: c.data.id, type: 'direct_enviado', notes: 'Direct pelo Instagram' })).status, 200);
+  const ok = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: lostId, lost_reason: 'sem_contato', lost_notes: 'Não respondeu em 7 dias' });
+  assert.equal(ok.status, 200, JSON.stringify(ok.data));
+  const o = (await call('c1', 'GET', `/api/oportunidades/${opp.id}`)).data;
+  assert.equal(o.status, 'perdida');
+  assert.equal(o.lost_reason, 'sem_contato');
+  // Administrador pode forçar (com justificativa) mesmo sem atividade
+  const c2 = await call('c1', 'POST', '/api/cadastros', { name: 'Lead Duplicado', phone1: '11 94445-2031', origin: 'site', relationship: 'lead' });
+  const o2 = (await call('c1', 'GET', `/api/cadastros/${c2.data.id}`)).data.opportunities[0];
+  assert.equal((await call('admin', 'POST', `/api/oportunidades/${o2.id}/etapa`, { stage_id: lostId, lost_reason: 'cadastro', force: true, reason: 'Cadastro duplicado' })).status, 200);
+});
+
+test('gestão do time: organograma e dashboard da squad para líder e administrador; especialista sem acesso', async () => {
+  assert.equal((await call('c1', 'GET', '/api/time/organograma')).status, 403);
+  assert.equal((await call('c1', 'GET', '/api/time/squad')).status, 403);
+  const org = await call('gestor', 'GET', '/api/time/organograma');
+  assert.equal(org.status, 200, JSON.stringify(org.data));
+  const team = org.data.teams.find((t) => t.name === 'Equipe A');
+  assert.ok(team, 'time do líder');
+  assert.ok(team.members.some((m) => m.email === 'c1@t.com' || m.name === 'Cons 1'));
+  assert.ok(['abertos', 'r1_mes', 'vendas_mes'].every((k) => k in team.totals));
+  const sq = await call('admin', 'GET', '/api/time/squad');
+  assert.equal(sq.status, 200, JSON.stringify(sq.data));
+  const c1row = sq.data.rows.find((r) => r.nome === 'Cons 1');
+  assert.ok(c1row, 'especialista na tabela');
+  assert.ok(c1row.r1_agendadas >= 1);
+  assert.ok(c1row.r1_no_show >= 1, 'no-show contado');
+  assert.ok(c1row.r1_remarcadas >= 2, 'remarcações contadas');
+  assert.ok(c1row.r2_realizadas >= 1);
+  assert.ok(sq.data.funnel.some((f) => f.key === 'r2'), 'pipeline da squad com a coluna R2');
+  assert.ok(sq.data.lost.some((l) => l.motivo === 'sem_contato'), 'motivos de perda (MP)');
 });
 
 test('Google Agenda: configuração pelo administrador, conexão do especialista e R1 com Google Meet e convite ao cliente', async () => {
@@ -1210,7 +1337,10 @@ test('funil: valor pela proposta, busca por telefone/e-mail, categoria e ações
   assert.ok((await call('c1', 'GET', '/api/funil?q=massa.um@x')).data.stages.some((s) => s.cards.some((x) => x.id === oa.id)), 'busca por e-mail');
   const stages = (await call('c1', 'GET', '/api/meta')).data.stages;
   const st = (k) => stages.find((s) => s.key === k).id;
-  const lost = await call('c1', 'POST', '/api/oportunidades/lote', { ids: [oa.id, ob.id], action: 'etapa', stage_id: st('perdido'), lost_reason: 'sem_interesse' });
+  const noWork = await call('c1', 'POST', '/api/oportunidades/lote', { ids: [oa.id, ob.id], action: 'etapa', stage_id: st('perdido'), lost_reason: 'momento' });
+  assert.equal(noWork.data.failed, 2, 'perdido exige ao menos uma atividade');
+  for (const x of [a, b]) await call('c1', 'POST', '/api/atividades', { contact_id: x.data.id, type: 'tentativa_sem_atendimento' });
+  const lost = await call('c1', 'POST', '/api/oportunidades/lote', { ids: [oa.id, ob.id], action: 'etapa', stage_id: st('perdido'), lost_reason: 'momento' });
   assert.equal(lost.status, 200, JSON.stringify(lost.data));
   assert.equal(lost.data.done, 2);
   const skip = await call('c1', 'POST', '/api/oportunidades/lote', { ids: [oa.id], action: 'etapa', stage_id: st('negociacao'), reason: 'teste' });

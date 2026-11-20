@@ -12,6 +12,8 @@ const ACTIVITY_TYPES = {
   mensagem_recebida: { label: 'Mensagem recebida', channel: 'whatsapp' },
   email_enviado: { label: 'E-mail enviado', channel: 'email', outbound: true, attempt: true },
   email_recebido: { label: 'E-mail recebido', channel: 'email' },
+  direct_enviado: { label: 'Direct enviado (Instagram)', channel: 'direct', outbound: true, attempt: true },
+  direct_recebido: { label: 'Direct recebido (Instagram)', channel: 'direct' },
   conversa_presencial: { label: 'Conversa presencial', channel: 'presencial' },
   conversa_video: { label: 'Conversa por vídeo', channel: 'video' },
   reuniao_agendada: { label: 'Reunião agendada', system: true },
@@ -98,7 +100,7 @@ const PROPOSAL_CADENCE = [
   { step: 'D5', days: 5, title: 'D+5 · Reforço de valor', script: 'Compare com a alternativa dele (financiamento, aluguel, aplicação). Use um caso real ou depoimento. Ajuste a proposta se necessário.' },
   { step: 'D10', days: 10, title: 'D+10 · Última tentativa e decisão', script: 'Mensagem de encerramento cordial: pergunte se o projeto continua de pé. Defina: fechar, nova proposta, nutrição futura ou perdido.' },
 ];
-const MEETING_OUTCOMES = { realizada: 'Realizada', nao_compareceu: 'Cliente não compareceu', remarcada: 'Remarcada', cancelada: 'Cancelada' };
+const MEETING_OUTCOMES = { realizada: 'Realizada', nao_compareceu: 'Não compareceu (no-show)', remarcada: 'Remarcada', cancelada: 'Cancelada' };
 const CONTACT_CHANNELS = { todos: 'Todos os canais', ligacao: 'Ligação', whatsapp: 'WhatsApp', email: 'E-mail', sms: 'SMS' };
 const DATA_REQUEST_TYPES = {
   acesso: 'Acesso aos dados',

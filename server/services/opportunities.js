@@ -24,6 +24,7 @@ const OPP_FIELDS = [
   'existing_products', 'existing_consortium_value', 'existing_consortium_admin', 'existing_financing_balance', 'existing_financing_cet',
   'existing_financing_bank', 'credit_purpose_type', 'has_bid_resources', 'had_consortium', 'has_financing', 'decision_notes',
   'housing_purpose', 'bid_source', 'has_property', 'property_type', 'property_value', 'property_free_liens', 'pays_rent', 'rent_value',
+  'business_area', 'co_owner_id',
 ];
 const YES_NO = ['sim', 'nao', 'nao_sabe'];
 /**
@@ -102,6 +103,7 @@ function qualificationStatus(o, kind = 'PF') {
   return { total: fields.length, filled: fields.length - missing.length, missing };
 }
 const OPTION_FIELDS = {
+  business_area: 'area_negocio',
   credit_category: 'categoria_credito',
   payment_modality: 'modalidade_pagamento',
   strategy: 'estrategia',
@@ -189,6 +191,11 @@ function normalizeOpp(db, data, contactId) {
     }
   }
   if (data.owner_id !== undefined) o.owner_id = data.owner_id ? Number(data.owner_id) : null;
+  if (data.co_owner_id !== undefined) {
+    o.co_owner_id = data.co_owner_id ? Number(data.co_owner_id) : null;
+    if (o.co_owner_id && !db.prepare('SELECT 1 FROM users WHERE id = ? AND active = 1').get(o.co_owner_id)) throw badRequest('Co-responsável inválido.');
+  }
+  if (o.business_area === null) delete o.business_area;
   if (data.custom !== undefined) {
     const { validateCustom } = require('./contacts');
     const defs = validateCustom(db, 'opportunity', data.custom);
@@ -398,14 +405,8 @@ function moveStage(db, user, id, data, opts = {}) {
       db.prepare("INSERT INTO tasks (contact_id, opportunity_id, type, title, notes, due_at, assigned_to, created_by, created_at, updated_at) VALUES (?, ?, 'follow_up', ?, ?, ?, ?, ?, ?, ?)")
         .run(o.contact_id, o.id, 'Retomar contato (nutrição futura)', upd.pause_reason, toIso(data.return_at), o.owner_id ?? user.id, user.id, now, now);
     }
-    // R1 bolo: a R1 que já passou do horário é encerrada como "cliente não compareceu"
-    if (to.key === 'r1_bolo') {
-      const missed = db.prepare("SELECT id, title FROM tasks WHERE contact_id = ? AND type = 'reuniao' AND status = 'pendente' AND due_at <= ?").all(o.contact_id, now);
-      for (const t of missed) {
-        db.prepare("UPDATE tasks SET status = 'concluida', outcome = 'nao_compareceu', completed_at = ?, completed_by = ?, updated_at = ? WHERE id = ?").run(now, user.id, now, t.id);
-        insertActivity(db, { contact_id: o.contact_id, opportunity_id: o.id, type: 'reuniao_nao_realizada', notes: `Reunião cliente não compareceu: ${t.title}${reason ? ` — ${reason}` : ''}`, user_id: user.id, ref_type: 'task', ref_id: t.id });
-      }
-    }
+    // "Ganho" do pré-vendas: a primeira vez que o negócio chega à R1 (R1 agendada)
+    if (to.key === 'r1' && !o.r1_won_at) db.prepare('UPDATE opportunities SET r1_won_at = ? WHERE id = ?').run(now, o.id);
     // Prospect que avança no funil passa a ser lead
     if (to.key && to.key !== 'prospect' && to.kind === 'aberta') {
       db.prepare("UPDATE contacts SET relationship = 'lead', updated_at = ? WHERE id = ? AND relationship = 'prospect'").run(now, o.contact_id);
@@ -453,6 +454,11 @@ function oppFilters(db, user, q) {
     where.push('o.owner_id = ?');
     params.push(Number(q.owner_id));
   }
+  if (Array.isArray(q.owner_ids)) {
+    const ids = q.owner_ids.map(Number).filter(Boolean);
+    where.push(ids.length ? `o.owner_id IN (${ids.map(() => '?').join(',')})` : '0');
+    params.push(...ids);
+  }
   if (q.product_id) {
     where.push('o.product_id = ?');
     params.push(Number(q.product_id));
@@ -468,6 +474,10 @@ function oppFilters(db, user, q) {
   if (q.priority) {
     where.push('o.priority = ?');
     params.push(q.priority);
+  }
+  if (q.area) {
+    where.push('o.business_area = ?');
+    params.push(q.area);
   }
   if (q.status) {
     const vals = String(q.status).split(',');
@@ -509,14 +519,17 @@ function oppFilters(db, user, q) {
 }
 
 // deal_value: valor de referência do negócio = maior proposta ativa (gerada, enviada, em análise ou aceita); sem proposta, o crédito desejado
-const OPP_SELECT = `SELECT o.*, c.name AS contact_name, c.code AS contact_code, c.kind AS contact_kind, c.origin AS contact_origin,
+const OPP_SELECT = `SELECT o.*, c.name AS contact_name, c.code AS contact_code, c.kind AS contact_kind, c.origin AS contact_origin, c.campaign AS contact_campaign,
+  (SELECT COALESCE(co.campaign_name, co.utm_campaign) FROM contact_origins co WHERE co.contact_id = c.id AND COALESCE(co.campaign_name, co.utm_campaign) IS NOT NULL ORDER BY co.id DESC LIMIT 1) AS origin_campaign,
+  c.trade_name AS contact_company, c.phone1 AS contact_phone, c.whatsapp AS contact_whatsapp, c.email AS contact_email, s.rot_days AS stage_rot_days, s.position AS stage_position,
+  cu.name AS co_owner_name, (SELECT COUNT(*) FROM activities a WHERE a.contact_id = c.id AND a.type IN ('ligacao_realizada','tentativa_sem_atendimento','mensagem_enviada','email_enviado','direct_enviado')) AS attempts,
   c.created_at AS contact_created_at, c.temperature AS contact_temperature, c.relationship AS contact_relationship,
   (SELECT MAX(pr.credit_value) FROM proposals pr WHERE pr.opportunity_id = o.id AND pr.status IN ('rascunho','apresentada','em_analise','aprovada')) AS proposal_value,
   (SELECT COUNT(*) FROM proposals pr WHERE pr.opportunity_id = o.id AND pr.status <> 'substituida') AS proposal_count,
   c.optouts AS contact_optouts, s.name AS stage_name, s.kind AS stage_kind, s.key AS stage_key, p.name AS product_name, u.name AS owner_name,
   (SELECT t.title || '|' || t.due_at FROM tasks t WHERE t.opportunity_id = o.id AND t.status = 'pendente' ORDER BY t.due_at LIMIT 1) AS next_task
   FROM opportunities o JOIN contacts c ON c.id = o.contact_id JOIN pipeline_stages s ON s.id = o.stage_id
-  LEFT JOIN products p ON p.id = o.product_id LEFT JOIN users u ON u.id = o.owner_id`;
+  LEFT JOIN products p ON p.id = o.product_id LEFT JOIN users u ON u.id = o.owner_id LEFT JOIN users cu ON cu.id = o.co_owner_id`;
 
 function decorate(db, rows) {
   const stalledDays = Number(getSetting(db, 'stalled_days')) || 7;
@@ -542,8 +555,94 @@ function decorate(db, rows) {
     r.temperature_info = temp;
     r.deal_value = r.proposal_value ?? r.credit_value ?? null;
     r.deal_value_source = r.proposal_value != null ? 'proposta' : r.credit_value != null ? 'desejado' : null;
+    r.campaign = r.origin_campaign || r.contact_campaign || null;
+    delete r.origin_campaign;
+    r.sla = slaOf(r, now);
   }
+  attachMeetings(db, rows);
+  for (const r of rows) r.score = scoreOf(r);
   return rows;
+}
+
+/**
+ * SLA da atividade: a próxima atividade em atraso estoura o SLA; sem atraso, compara os dias sem atividade com o
+ * prazo da etapa (dias até ficar "parado"): ok até 70%, atenção até 100%, estourado acima.
+ */
+function slaOf(r, now = Date.now()) {
+  if (r.status !== 'aberta') return null;
+  if (r.next_action_at && Date.parse(r.next_action_at) < now) {
+    const d = Math.max(1, Math.ceil((now - Date.parse(r.next_action_at)) / 86400000));
+    return { level: 'estourado', text: `Atividade atrasada há ${d}d`, days: r.days_without_activity, limit: r.stage_rot_days || null };
+  }
+  const limit = Number(r.stage_rot_days) || null;
+  const d = r.days_without_activity;
+  if (!limit) return { level: 'ok', text: `${d}d sem atividade`, days: d, limit: null };
+  const level = d > limit ? 'estourado' : d >= limit * 0.7 ? 'atencao' : 'ok';
+  return { level, text: `SLA ${d}/${limit}d`, days: d, limit };
+}
+
+/**
+ * Score do lead (0 a 100): dados de contato (10), qualificação (objetivo, valor, prioridade e categoria: 40),
+ * engajamento (tentativas 10, conversa recente 10) e reuniões (R1 agendada 10, R1 feita 10, R2 10). Transparente
+ * para o especialista: quanto mais completo e engajado, maior.
+ */
+function scoreOf(r) {
+  let s = 0;
+  if (r.contact_phone || r.contact_whatsapp || r.contact_email) s += 10;
+  if (r.objective_type) s += 10;
+  if (r.credit_value) s += 10;
+  if (r.urgency) s += 10;
+  if (r.credit_category || r.business_area !== 'consorcio') s += 10;
+  if (r.attempts > 0) s += 10;
+  if (r.days_without_activity <= 7 && r.last_activity_at) s += 10;
+  const m = r.meetings || {};
+  if (m.r1 && ['agendada', 'remarcada', 'realizada'].includes(m.r1.state)) s += 10;
+  if (m.r1?.state === 'realizada') s += 10;
+  if (m.r2 && ['agendada', 'remarcada', 'realizada'].includes(m.r2.state)) s += 10;
+  if (r.temperature === 'quente') s = Math.min(100, s + 5);
+  return Math.min(100, s);
+}
+
+/**
+ * Situação das reuniões (R1 e R2) de cada negócio, para o cartão e o painel: agendada (com data), remarcada (R),
+ * no-show (NS, o cliente faltou e não há outra marcada) ou realizada; contagens de no-show e remarcações.
+ */
+function attachMeetings(db, rows) {
+  if (!rows.length) return;
+  const ids = [...new Set(rows.map((r) => r.contact_id))];
+  const all = [];
+  for (let i = 0; i < ids.length; i += 400) {
+    const part = ids.slice(i, i + 400);
+    all.push(...db.prepare(`SELECT id, contact_id, opportunity_id, COALESCE(meeting_kind, 'r1') AS kind, status, outcome, due_at, ends_at, meeting_url, rescheduled_from, confirmed_at, attended_at, attendance_status, completed_at
+      FROM tasks WHERE type = 'reuniao' AND contact_id IN (${part.map(() => '?').join(',')}) ORDER BY due_at`).all(...part));
+  }
+  const byContact = {};
+  for (const t of all) (byContact[t.contact_id] ||= []).push(t);
+  for (const r of rows) {
+    const list = (byContact[r.contact_id] || []).filter((t) => !t.opportunity_id || t.opportunity_id === r.id);
+    r.meetings = { r1: meetingState(list.filter((t) => t.kind === 'r1')), r2: meetingState(list.filter((t) => t.kind === 'r2')) };
+  }
+}
+
+function meetingState(list) {
+  if (!list.length) return null;
+  const pending = list.filter((t) => t.status === 'pendente');
+  const done = list.filter((t) => t.status === 'concluida' && t.outcome === 'realizada');
+  const noShows = list.filter((t) => t.outcome === 'nao_compareceu').length;
+  // Remarcações: reuniões criadas a partir de outra (depois de um pedido de troca ou de um no-show)
+  const reschedules = list.filter((t) => t.rescheduled_from).length;
+  const base = { no_shows: noShows, reschedules, total: list.length };
+  if (pending.length) {
+    const t = pending[pending.length - 1];
+    return { ...base, state: t.rescheduled_from || reschedules ? 'remarcada' : 'agendada', task_id: t.id, at: t.due_at, ends_at: t.ends_at, meeting_url: t.meeting_url, confirmed: !!t.confirmed_at };
+  }
+  if (done.length) {
+    const t = done[done.length - 1];
+    return { ...base, state: 'realizada', task_id: t.id, at: t.attended_at || t.due_at, auto: t.attendance_status === 'r1_feita' };
+  }
+  const last = list[list.length - 1];
+  if (last.outcome === 'nao_compareceu') return { ...base, state: 'no_show', task_id: last.id, at: last.due_at };
+  return { ...base, state: last.outcome === 'cancelada' || last.status === 'cancelada' ? 'cancelada' : 'remarcada', task_id: last.id, at: last.due_at };
 }
 
 function board(db, user, q) {

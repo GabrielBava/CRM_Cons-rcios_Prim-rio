@@ -279,14 +279,14 @@ function fichaWhatsapp(db, { name, url, consultant }) {
  * Confirmação da R1 para o cliente (remetente noreply@): data, horário, botão "Entrar na reunião" (Google Meet)
  * e o especialista. Quando o Google não enviou o convite, vai junto o arquivo .ics para adicionar à agenda.
  */
-function r1Email(db, { name, title, start, end, meetUrl, consultant, consultantPhone, consultantEmail, logoUrl, calendarLink }) {
+function r1Email(db, { name, title, start, end, meetUrl, consultant, consultantPhone, consultantEmail, logoUrl, calendarLink, rescheduled = false }) {
   const company = getSetting(db, 'company_name') || 'Vero Consórcios';
   const first = String(name || '').trim().split(/\s+/)[0] || 'cliente';
   const tz = { timeZone: 'America/Sao_Paulo' };
   const s0 = new Date(start);
   const day = s0.toLocaleDateString('pt-BR', { ...tz, weekday: 'long', day: '2-digit', month: 'long' });
   const hours = `${s0.toLocaleTimeString('pt-BR', { ...tz, hour: '2-digit', minute: '2-digit' })} às ${new Date(end).toLocaleTimeString('pt-BR', { ...tz, hour: '2-digit', minute: '2-digit' })}`;
-  const subject = `${company} · Reunião confirmada: ${day}, ${hours}`;
+  const subject = `${company} · ${rescheduled ? 'Reunião remarcada' : 'Reunião confirmada'}: ${day}, ${hours}`;
   const row = (label, value) => `<tr><td style="padding:6px 0;color:#778DA9;font-size:13px;width:120px">${esc(label)}</td><td style="padding:6px 0;font-size:15px;color:#0D1B2A"><strong>${value}</strong></td></tr>`;
   const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(subject)}</title></head>
 <body style="margin:0;padding:0;background:#E0E1DD;font-family:Poppins,'Segoe UI',Arial,sans-serif;color:#0D1B2A">
@@ -295,7 +295,7 @@ function r1Email(db, { name, title, start, end, meetUrl, consultant, consultantP
   <tr><td style="background:#0D1B2A;background-image:linear-gradient(135deg,#0D1B2A,#1B263B);padding:32px 36px">
     ${logoUrl ? `<img src="${esc(logoUrl)}" alt="${esc(company)}" height="44" style="display:block;height:44px;margin-bottom:22px">` : `<div style="font-size:24px;letter-spacing:4px;color:#E0E1DD;margin-bottom:22px">VERO <span style="font-size:12px;letter-spacing:6px;color:#A9B8CB">CONSÓRCIOS</span></div>`}
     <div style="font-size:12px;letter-spacing:3px;text-transform:uppercase;color:#778DA9">Reunião de apresentação</div>
-    <h1 style="margin:8px 0 6px;font-size:26px;line-height:1.25;color:#ffffff;font-weight:600">Olá, ${esc(first)}! Sua reunião está confirmada.</h1>
+    <h1 style="margin:8px 0 6px;font-size:26px;line-height:1.25;color:#ffffff;font-weight:600">Olá, ${esc(first)}! ${rescheduled ? 'Sua reunião foi remarcada.' : 'Sua reunião está confirmada.'}</h1>
     <p style="margin:0;color:#A9B8CB;font-size:15px;line-height:1.6">Vamos entender o seu objetivo e mostrar como o consórcio pode transformá-lo em patrimônio, com estratégia.</p>
   </td></tr>
   <tr><td style="padding:28px 36px 6px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0">
@@ -317,7 +317,7 @@ function r1Email(db, { name, title, start, end, meetUrl, consultant, consultantP
   </td></tr>
   <tr><td style="background:#0D1B2A;padding:16px 36px;font-size:11px;color:#778DA9;text-align:center">${esc(company)} · E-mail automático, não responda. Para falar com a gente, use o contato do especialista.</td></tr>
 </table></td></tr></table></body></html>`;
-  const text = `Olá, ${first}!\n\nSua reunião com a ${company} está confirmada.\n\n${title}\nData: ${day}\nHorário: ${hours} (horário de Brasília)\n` +
+  const text = `Olá, ${first}!\n\nSua reunião com a ${company} ${rescheduled ? 'foi remarcada' : 'está confirmada'}.\n\n${title}\nData: ${day}\nHorário: ${hours} (horário de Brasília)\n` +
     (meetUrl ? `Entrar na reunião (Google Meet): ${meetUrl}\n` : '') +
     (consultant ? `\nEspecialista: ${consultant}${consultantPhone ? ` · WhatsApp ${consultantPhone}` : ''}\n` : '') +
     `\nE-mail automático, não responda. Para remarcar, fale com o especialista.`;

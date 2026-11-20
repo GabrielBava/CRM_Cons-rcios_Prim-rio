@@ -32,30 +32,47 @@ import * as treasuryView from './views/treasury.js';
 import * as onboardingView from './views/onboarding.js';
 import * as peopleView from './views/people.js';
 import * as documentsView from './views/documents.js';
+import * as toolsView from './views/tools.js';
+import * as teamView from './views/team.js';
 import { icon } from './icons.js';
 
-// Menu lateral: [rota, rótulo, tela, módulo de permissão, grupo]
+// Rotas do menu lateral: [rota, rótulo, tela, módulo de permissão]
 const NAV = [
   ['painel', 'Painel inicial', dashboard, 'painel'],
-  ['entrada', 'Prospects e leads', distribution, 'distribuicao'],
-  ['funil', 'CRM', pipeline, 'crm'],
-  ['agenda', 'Agenda e tarefas', agenda, 'agenda'],
-  ['simulador', 'Simulador', simulator, 'simulador'],
+  ['funil', 'Pipeline', pipeline, 'crm'],
+  ['agenda', 'Agendas e tarefas', agenda, 'agenda'],
   ['propostas', 'Propostas', proposalsView, 'propostas'],
-  ['clientes', 'Clientes', clients, 'clientes'],
-  ['metas', 'Metas', goals, 'metas'],
   ['prevenda', 'Pré-venda', presales, 'prevenda'],
+  ['ferramentas', 'Ferramentas', toolsView, null],
+  ['clientes', 'Clientes', clients, 'clientes'],
   ['vendas', 'Vendas', salesView, 'vendas'],
   ['posvenda', 'Pós-venda', postsaleView, 'posvenda'],
+  ['metas', 'Metas', goals, 'metas'],
   ['comissoes', 'Comissões e cancelamentos', commissions, 'comissoes'],
-  ['treinamentos', 'Treinamentos', trainings, 'treinamentos'],
-  ['administradoras', 'Administradoras', administrators, 'administradoras', 'admin'],
-  ['planos', 'Planos', plans, 'planos', 'admin'],
   ['relatorios', 'Relatórios', reports, 'relatorios'],
-  ['colaboradores', 'Colaboradores', peopleView, 'colaboradores', 'admin'],
-  ['documentos', 'Central de documentos', documentsView, 'documentos', 'admin'],
-  ['usuarios', 'Usuários', users, 'usuarios', 'admin'],
-  ['configuracoes', 'Configurações', settings, 'configuracoes', 'admin'],
+  ['time', 'Gestão do time', teamView, 'time'],
+  ['entrada', 'Distribuição de leads', distribution, 'distribuicao'],
+  ['treinamentos', 'Treinamentos', trainings, 'treinamentos'],
+  ['administradoras', 'Administradoras', administrators, 'administradoras'],
+  ['planos', 'Planos', plans, 'planos'],
+  ['colaboradores', 'Colaboradores', peopleView, 'colaboradores'],
+  ['documentos', 'Central de documentos', documentsView, 'documentos'],
+  ['usuarios', 'Usuários', users, 'usuarios'],
+  ['configuracoes', 'Configurações', settings, 'configuracoes'],
+];
+/**
+ * Menu lateral por classificação: [título do grupo (vazio = sem título), visível?, itens [rota, rótulo, ícone, módulo]].
+ * Gestão do time: do líder para cima. Financeiro e Administração: só o administrador (ou quem ele liberar).
+ */
+const NAV_GROUPS = () => [
+  ['', true, [['painel', 'Painel inicial', 'painel', 'painel']]],
+  ['Operacional', true, [['funil', 'Pipeline', 'crm', 'crm'], ['agenda', 'Agendas e tarefas', 'agenda', 'agenda'], ['propostas', 'Propostas', 'propostas', 'propostas'], ['prevenda', 'Pré-venda', 'prevenda', 'prevenda']]],
+  ['', true, [['ferramentas', 'Ferramentas', 'ferramentas', null]]],
+  ['Gestão de vendas', true, [['clientes', 'Clientes', 'clientes', 'clientes'], ['vendas', 'Vendas', 'vendas', 'vendas'], ['posvenda', 'Pós-venda', 'posvenda', 'posvenda'], ['metas', 'Metas', 'metas', 'metas'], ['comissoes', 'Comissões e cancelamentos', 'comissoes', 'comissoes'], ['relatorios', 'Relatórios', 'relatorios', 'relatorios']]],
+  ['Gestão do time', ['admin', 'gestor'].includes(state.user?.role), [['time/organograma', 'Organograma do time', 'organograma', 'time'], ['time/squad', 'Dashboard squad', 'painel', 'time'], ['entrada', 'Distribuição de leads', 'leads', 'distribuicao']]],
+  ['', true, [['treinamentos', 'Treinamentos', 'treinamentos', 'treinamentos']]],
+  ['Financeiro', allowed('financeiro'), finLinks()],
+  ['Administração', true, [['administradoras', 'Administradoras', 'administradoras', 'administradoras'], ['planos', 'Planos', 'planos', 'planos'], ['colaboradores', 'Colaboradores', 'colaboradores', 'colaboradores'], ['documentos', 'Central de documentos', 'documentos', 'documentos'], ['usuarios', 'Usuários', 'usuarios', 'usuarios'], ['configuracoes', 'Configurações', 'configuracoes', 'configuracoes']]],
 ];
 // Rotas secundárias: [tela, módulo, item do menu destacado]
 const EXTRA = {
@@ -63,29 +80,33 @@ const EXTRA = {
   leads: [leads, 'crm', 'funil'],
   atividades: [activities, 'crm', 'funil'],
   importar: [importer, 'crm', 'funil'],
+  simulador: [simulator, 'simulador', 'ferramentas'],
   simulacoes: [sales, 'propostas', 'propostas'],
   'parcelas-clientes': [financeView, 'clientes', 'clientes'],
   financeiro: [treasuryView, 'financeiro', 'financeiro'],
   produtos: [plans, 'planos', 'planos'],
   'meu-cadastro': [profileView, null, null],
-  integracao: [onboardingView, null, 'painel'],
+  integracao: [onboardingView, null, 'ferramentas'],
 };
-// Ícone de cada item do menu (manual de identidade, Iconografia)
-const NAV_ICON = { painel: 'painel', entrada: 'leads', funil: 'crm', agenda: 'agenda', simulador: 'simulador', propostas: 'propostas', clientes: 'clientes', metas: 'metas', prevenda: 'prevenda', vendas: 'vendas', posvenda: 'posvenda', comissoes: 'comissoes', treinamentos: 'treinamentos', administradoras: 'administradoras', planos: 'planos', relatorios: 'relatorios', colaboradores: 'colaboradores', documentos: 'documentos', usuarios: 'usuarios', configuracoes: 'configuracoes' };
-const navLink = ([k, label]) => html`<a href="#/${k}" data-nav="${k}">${icon(NAV_ICON[k])}<span>${label}</span></a>`;
-const allowed = (mod) => (state.user?.modules || []).includes(mod);
-// Financeiro da empresa: grupo próprio no menu. Quem não tem o módulo, mas é responsável por lançamentos, vê só pagar/receber.
+const navLink = ([k, label, ic]) => html`<a href="#/${k}" data-nav="${k}" title="${label}">${icon(ic)}<span>${label}</span></a>`;
+const allowed = (mod) => !mod || (state.user?.modules || []).includes(mod);
+// Financeiro da empresa: quem não tem o módulo, mas é responsável por lançamentos, abre pagar/receber pelos avisos.
 const finAccess = () => allowed('financeiro') || !!state.user?.fin_responsible;
-function finNav() {
-  if (!finAccess()) return '';
+function finLinks() {
   const full = allowed('financeiro');
-  const links = [
-    ...(full && state.user.role === 'admin' ? [['financeiro', 'Visão geral', 'financeiro']] : []),
-    ['financeiro/pagar', 'Contas a pagar', 'saida'],
-    ['financeiro/receber', 'Contas a receber', 'entrada'],
-    ...(full ? [['financeiro/cadastros', 'Cadastros', 'cadastros']] : []),
+  return [
+    ...(full && state.user?.role === 'admin' ? [['financeiro', 'Visão geral', 'financeiro', 'financeiro']] : []),
+    ['financeiro/pagar', 'Contas a pagar', 'saida', 'financeiro'],
+    ['financeiro/receber', 'Contas a receber', 'entrada', 'financeiro'],
+    ...(full ? [['financeiro/cadastros', 'Cadastros', 'cadastros', 'financeiro']] : []),
   ];
-  return html`<div class="nav-group">Financeiro</div>${links.map(([k, label, ic]) => html`<a href="#/${k}" data-nav="${k}">${icon(ic)}<span>${label}</span></a>`)}`;
+}
+function navMenu() {
+  return NAV_GROUPS().map(([title, visible, items]) => {
+    const list = visible ? items.filter(([, , , mod]) => allowed(mod)) : [];
+    if (!list.length) return '';
+    return html`${title ? html`<div class="nav-group"><span>${title}</span></div>` : html`<div class="nav-sep" aria-hidden="true"></div>`}${list.map(navLink)}`;
+  });
 }
 
 const app = document.getElementById('app');
@@ -210,10 +231,11 @@ function themeToggle() {
 function shell() {
   render(app, html`
     <aside class="sidebar" id="sidebar">
-      <a class="brand" href="#/painel" aria-label="Vero Consórcios — painel inicial"><span class="brand-logo" role="img" aria-label="Vero Consórcios"></span></a>
-      <nav>${NAV.filter(([, , , m, g]) => allowed(m) && g !== 'admin').map(navLink)}
-        ${finNav()}
-        ${NAV.some(([, , , m, g]) => g === 'admin' && allowed(m)) ? html`<div class="nav-group">Administração</div>${NAV.filter(([, , , m, g]) => g === 'admin' && allowed(m)).map(navLink)}` : ''}</nav>
+      <div class="side-top">
+        <button type="button" class="collapse-btn" data-act="collapse" aria-label="Recolher o menu" title="Recolher ou expandir o menu">${icon('recolher', 18)}</button>
+        <a class="brand" href="#/painel" aria-label="Vero Consórcios — painel inicial"><span class="brand-logo" role="img" aria-label="Vero Consórcios"></span><span class="brand-mark" role="img" aria-label="Vero"></span></a>
+      </div>
+      <nav>${navMenu()}</nav>
     </aside>
     <div class="main">
       <header class="topbar">
@@ -295,6 +317,21 @@ function shell() {
     $$('[data-theme-set]', app).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
   });
   on(app, 'click', '[data-act=menu]', () => $('#sidebar').classList.toggle('open'));
+  // Recolher/expandir o menu lateral (fica uma faixa com o símbolo da Vero e os ícones); a escolha fica salva
+  const setCollapsed = (v) => {
+    document.documentElement.classList.toggle('nav-collapsed', v);
+    const b = $('[data-act=collapse]', app);
+    if (b) b.setAttribute('aria-label', v ? 'Expandir o menu' : 'Recolher o menu');
+    try {
+      localStorage.setItem('crm-nav-collapsed', v ? '1' : '0');
+    } catch {}
+  };
+  let collapsedPref = false;
+  try {
+    collapsedPref = localStorage.getItem('crm-nav-collapsed') === '1';
+  } catch {}
+  setCollapsed(collapsedPref);
+  on(app, 'click', '[data-act=collapse]', () => setCollapsed(!document.documentElement.classList.contains('nav-collapsed')));
   on(app, 'click', '[data-nav], .brand', () => $('#sidebar').classList.remove('open'));
   on(app, 'click', '[data-act=new-lead]', () => quickCreateContact());
   on(app, 'click', '[data-act=notif-all]', async () => {
@@ -408,6 +445,7 @@ async function route() {
   const isRecord = (key === 'leads' || key === 'clientes') && /^\d+$/.test(parts[1] || '');
   let navKey = navItem ? key : extra?.[2];
   if (key === 'financeiro') navKey = parts[1] ? `financeiro/${parts[1]}` : state.user.role === 'admin' && allowed('financeiro') ? 'financeiro' : 'financeiro/pagar';
+  if (key === 'time') navKey = `time/${parts[1] || 'organograma'}`;
   document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === navKey));
   let view = $('#view');
   if (!view) return;

@@ -2,7 +2,7 @@
 
 Gerado por `scripts/ddl.js` (rode `node scripts/ddl.js` depois de mudar o esquema). O DDL completo está em [`DDL.sql`](DDL.sql).
 
-**69 tabelas**, **194 chaves estrangeiras** declaradas e **17 relacionamentos lógicos** (sem FOREIGN KEY no banco, garantidos pela aplicação).
+**69 tabelas**, **196 chaves estrangeiras** declaradas e **17 relacionamentos lógicos** (sem FOREIGN KEY no banco, garantidos pela aplicação).
 
 ## Visão geral do fluxo comercial
 
@@ -115,6 +115,7 @@ erDiagram
 | `opportunities` | `owner_id` | `users(id)` | — |
 | `opportunities` | `created_by` | `users(id)` | — |
 | `opportunities` | `updated_by` | `users(id)` | — |
+| `opportunities` | `co_owner_id` | `users(id)` | — |
 | `stage_history` | `opportunity_id` | `opportunities(id)` | — |
 | `stage_history` | `from_stage_id` | `pipeline_stages(id)` | — |
 | `stage_history` | `to_stage_id` | `pipeline_stages(id)` | — |
@@ -133,6 +134,7 @@ erDiagram
 | `tasks` | `completed_by` | `users(id)` | — |
 | `tasks` | `proposal_id` | `proposals(id)` | — |
 | `tasks` | `calendar_owner_id` | `users(id)` | — |
+| `tasks` | `rescheduled_from` | `tasks(id)` | — |
 | `distribution_log` | `contact_id` | `contacts(id)` | — |
 | `distribution_log` | `from_user` | `users(id)` | — |
 | `distribution_log` | `to_user` | `users(id)` | — |
@@ -391,7 +393,7 @@ Colunas acrescentadas por migração (o SQLite não permite incluir chave estran
 
 **`pipeline_stages`** — `id` (PK), `name`, `position`, `kind`, `active`, `created_at`, `key`, `playbook`, `rot_days`, `training_id`
 
-**`opportunities`** — `id` (PK), `code`, `uid`, `contact_id` (FK), `company_contact_id` (FK), `title`, `product_id` (FK), `stage_id` (FK), `status`, `priority`, `credit_category`, `credit_value`, `term_months`, `installment_min`, `installment_max`, `quotas`, `payment_modality`, `strategy`, `strategy_validated_by` (FK), `strategy_validated_at`, `contemplation_type`, `bid_own_resources`, `fgts_available`, `embedded_bid_interest`, `urgency`, `objective`, `qualification_criteria`, `next_action`, `next_action_at`, `lost_reason`, `lost_notes`, `pause_reason`, `custom`, `stage_entered_at`, `last_activity_at`, `closed_at`, `owner_id` (FK), `created_by` (FK), `updated_by` (FK), `created_at`, `updated_at`, `objective_type`, `product_type`, `credit_purpose`, `financial_moment`, `employment_type`, `has_fgts`, `decision_maker`, `existing_products`, `existing_consortium_value`, `existing_consortium_admin`, `existing_financing_balance`, `existing_financing_cet`, `existing_financing_bank`, `credit_purpose_type`, `has_bid_resources`, `had_consortium`, `has_financing`, `decision_notes`, `housing_purpose`, `bid_source`, `has_property`, `property_type`, `property_value`, `property_free_liens`, `pays_rent`, `rent_value`, `temperature`, `temperature_reason`
+**`opportunities`** — `id` (PK), `code`, `uid`, `contact_id` (FK), `company_contact_id` (FK), `title`, `product_id` (FK), `stage_id` (FK), `status`, `priority`, `credit_category`, `credit_value`, `term_months`, `installment_min`, `installment_max`, `quotas`, `payment_modality`, `strategy`, `strategy_validated_by` (FK), `strategy_validated_at`, `contemplation_type`, `bid_own_resources`, `fgts_available`, `embedded_bid_interest`, `urgency`, `objective`, `qualification_criteria`, `next_action`, `next_action_at`, `lost_reason`, `lost_notes`, `pause_reason`, `custom`, `stage_entered_at`, `last_activity_at`, `closed_at`, `owner_id` (FK), `created_by` (FK), `updated_by` (FK), `created_at`, `updated_at`, `objective_type`, `product_type`, `credit_purpose`, `financial_moment`, `employment_type`, `has_fgts`, `decision_maker`, `existing_products`, `existing_consortium_value`, `existing_consortium_admin`, `existing_financing_balance`, `existing_financing_cet`, `existing_financing_bank`, `credit_purpose_type`, `has_bid_resources`, `had_consortium`, `has_financing`, `decision_notes`, `housing_purpose`, `bid_source`, `has_property`, `property_type`, `property_value`, `property_free_liens`, `pays_rent`, `rent_value`, `temperature`, `temperature_reason`, `business_area`, `r1_won_at`, `co_owner_id` (FK)
 
 **`stage_history`** — `id` (PK), `opportunity_id` (FK), `from_stage_id` (FK), `to_stage_id` (FK), `from_stage_name`, `to_stage_name`, `seconds_in_previous`, `reason`, `user_id` (FK), `moved_at`
 
@@ -399,7 +401,7 @@ Colunas acrescentadas por migração (o SQLite não permite incluir chave estran
 
 **`activities`** — `id` (PK), `contact_id` (FK), `company_contact_id` (FK), `opportunity_id` (FK), `type`, `channel`, `direction`, `result`, `duration_seconds`, `notes`, `next_action`, `return_at`, `occurred_at`, `source`, `external_id`, `call_event_id`, `ref_type`, `ref_id`, `user_id` (FK), `created_by` (FK), `created_at`
 
-**`tasks`** — `id` (PK), `contact_id` (FK), `opportunity_id` (FK), `type`, `title`, `notes`, `due_at`, `status`, `outcome`, `assigned_to` (FK), `created_by` (FK), `created_at`, `updated_at`, `completed_at`, `completed_by` (FK), `priority`, `proposal_id` (FK), `cadence_step`, `pre_sale_id`, `sale_id`, `ends_at`, `attendee_email`, `meeting_url`, `google_event_id`, `calendar_status`, `attendance_status`, `attendance_checked_at`, `attendance_detail`, `attended_at`, `calendar_owner_id` (FK), `confirmation_sent_at`
+**`tasks`** — `id` (PK), `contact_id` (FK), `opportunity_id` (FK), `type`, `title`, `notes`, `due_at`, `status`, `outcome`, `assigned_to` (FK), `created_by` (FK), `created_at`, `updated_at`, `completed_at`, `completed_by` (FK), `priority`, `proposal_id` (FK), `cadence_step`, `pre_sale_id`, `sale_id`, `ends_at`, `attendee_email`, `meeting_url`, `google_event_id`, `calendar_status`, `attendance_status`, `attendance_checked_at`, `attendance_detail`, `attended_at`, `calendar_owner_id` (FK), `confirmation_sent_at`, `meeting_kind`, `rescheduled_from` (FK), `confirmed_at`
 
 **`distribution_log`** — `id` (PK), `contact_id` (FK), `from_user` (FK), `to_user` (FK), `method`, `by_user` (FK), `created_at`
 

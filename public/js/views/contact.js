@@ -115,7 +115,7 @@ export async function show(view, { id, sub }) {
   });
   on(view, 'click', '[data-act=r1-schedule]', async () => {
     const o = c.opportunities.find((x) => x.status === 'aberta' && R1_STAGES.includes(x.stage_key));
-    if (await scheduleR1Dialog({ contactId: c.id, oppId: o?.id, moveToR1: ['qualificado', 'r1_bolo'].includes(o?.stage_key) })) reload();
+    if (await scheduleR1Dialog({ contactId: c.id, oppId: o?.id, moveToR1: R1_STAGES.includes(o?.stage_key) })) reload();
   });
   on(view, 'click', '[data-act=opp]', async () => {
     const r = await opportunityForm(c);

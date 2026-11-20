@@ -6,8 +6,10 @@
  * - Voltar etapas é permitido com justificativa. Nutrição e Perdido podem ser usados a qualquer momento, com motivo.
  * - "Venda" só é alcançada pela confirmação do pagamento na tela de Vendas.
  * - Prospect e Lead vão direto para "Tentativa de contato", sem restrição (a etapa Lead pode ser pulada).
- * - "R1 bolo" (cliente agendou a R1 e não compareceu) recebe só negócios que estão em R1; dali o negócio volta
- *   para R1 (nova reunião agendada) ou segue para Negociação. Para o resto do funil, R1 bolo ocupa o lugar da R1.
+ * - Pipeline geral para todas as áreas (consórcio, planejamento, seguros, investimentos):
+ *   0 Prospect · 1 Lead · 2 Tentativa de contato · 3 Qualificação · 4 R1 · 5 R2 · 6 Negociação · 7 Venda;
+ *   Nutrição futura e Perdido são arquivados. O cliente que faltou à R1 fica na coluna R1 marcado como NS (no-show).
+ * - Perdido exige ao menos uma atividade registrada (ligação, WhatsApp, e-mail, direct…) e o motivo (MP).
  */
 const { ATTEMPT_TYPES } = require('../constants');
 const { getSetting } = require('../db');
@@ -40,22 +42,30 @@ const RULES = {
     },
   },
   qualificacao: {
-    label: 'Qualificação: objetivo, categoria de interesse, crédito desejado e prioridade (curto, médio ou longo prazo)',
-    hint: 'Preencha em "Informações de negócio" (painel lateral) ou em "4. Negócio".',
-    check: (db, o) => !!(o.objective_type && o.credit_category && o.credit_value && o.urgency),
+    label: 'Qualificação: objetivo, valor estimado e prioridade (curto, médio ou longo prazo); no consórcio, também a categoria',
+    hint: 'Preencha em "Detalhes" ou "Qualificação" no painel do lead.',
+    check: (db, o) => !!(o.objective_type && o.credit_value && o.urgency && (o.business_area !== 'consorcio' || o.credit_category)),
   },
   r1_agendada: {
     label: 'R1 agendada',
     hint: 'Clique em "Agendar R1" e escolha data e horário da reunião.',
-    // Reunião pendente ou já realizada (uma R1 em que o cliente faltou não conta: agende outra)
-    check: (db, o, c) => !!db.prepare("SELECT 1 FROM tasks WHERE contact_id = ? AND type = 'reuniao' AND (status = 'pendente' OR (status = 'concluida' AND outcome = 'realizada')) LIMIT 1").get(c.id),
+    // Reunião pendente ou já realizada (uma R1 em que o cliente faltou não conta: remarque)
+    check: (db, o, c) => !!meeting(db, c.id, 'r1', "(status = 'pendente' OR (status = 'concluida' AND outcome = 'realizada'))"),
   },
   r1_realizada: {
     label: 'R1 realizada',
-    hint: 'Conclua a tarefa da R1 com o resultado "Realizada".',
-    check: (db, o, c) =>
-      !!(db.prepare("SELECT 1 FROM tasks WHERE contact_id = ? AND type = 'reuniao' AND status = 'concluida' AND outcome = 'realizada' LIMIT 1").get(c.id) ||
-        db.prepare("SELECT 1 FROM activities WHERE contact_id = ? AND type = 'reuniao_realizada' LIMIT 1").get(c.id)),
+    hint: 'No bloco da R1, clique em "Concluir" (ou conclua a tarefa com o resultado "Realizada").',
+    check: (db, o, c) => !!(meeting(db, c.id, 'r1', "status = 'concluida' AND outcome = 'realizada'") || db.prepare("SELECT 1 FROM activities WHERE contact_id = ? AND type = 'reuniao_realizada' LIMIT 1").get(c.id)),
+  },
+  r2_agendada: {
+    label: 'R2 agendada',
+    hint: 'Clique em "Agendar R2" e escolha data e horário da reunião.',
+    check: (db, o, c) => !!meeting(db, c.id, 'r2', "(status = 'pendente' OR (status = 'concluida' AND outcome = 'realizada'))"),
+  },
+  r2_realizada: {
+    label: 'R2 realizada',
+    hint: 'No bloco da R2, clique em "Concluir".',
+    check: (db, o, c) => !!meeting(db, c.id, 'r2', "status = 'concluida' AND outcome = 'realizada'"),
   },
   dados_r1: {
     label: 'Dados da R1: fator decisor, momento financeiro e experiência com consórcio',
@@ -74,6 +84,11 @@ const RULES = {
   },
 };
 
+/** Reunião R1/R2 do cadastro (tarefas antigas sem tipo contam como R1). */
+function meeting(db, contactId, kind, cond) {
+  return db.prepare(`SELECT 1 FROM tasks WHERE contact_id = ? AND type = 'reuniao' AND COALESCE(meeting_kind, 'r1') = ? AND ${cond} LIMIT 1`).get(contactId, kind);
+}
+
 /** Critérios de entrada padrão de cada etapa. */
 const DEFAULT_STAGE_RULES = {
   prospect: [],
@@ -81,13 +96,17 @@ const DEFAULT_STAGE_RULES = {
   tentativa: [],
   qualificado: ['qualificacao'],
   r1: ['r1_agendada'],
-  r1_bolo: [],
-  negociacao: ['r1_realizada', 'dados_r1'],
-  follow_up: ['proposta_apresentada'],
+  r2: ['r1_realizada', 'r2_agendada'],
+  negociacao: ['r2_realizada'],
   venda: ['venda_confirmada'],
   nutricao: [],
   perdido: [],
 };
+
+/** Atividades que contam para poder dar o lead como perdido (o que o especialista fez de fato). */
+const WORK_TYPES = ['ligacao_realizada', 'tentativa_sem_atendimento', 'ligacao_recebida', 'mensagem_enviada', 'mensagem_recebida', 'email_enviado', 'email_recebido',
+  'direct_enviado', 'direct_recebido', 'conversa_presencial', 'conversa_video', 'reuniao_realizada', 'reuniao_nao_realizada', 'observacao'];
+const hasWork = (db, contactId) => !!db.prepare(`SELECT 1 FROM activities WHERE contact_id = ? AND type IN (${WORK_TYPES.map(() => '?').join(',')}) LIMIT 1`).get(contactId, ...WORK_TYPES);
 
 function stageRules(db) {
   const custom = getSetting(db, 'stage_rules');
@@ -108,12 +127,11 @@ function evaluate(db, opp, contact, stage) {
 const openStages = (db) => db.prepare("SELECT * FROM pipeline_stages WHERE active = 1 AND kind = 'aberta' ORDER BY position").all();
 /** Etapas que podem ser puladas sem critérios (Prospect → Tentativa de contato direto). */
 const SKIPPABLE = new Set(['lead']);
-/** Sequência do funil sem a etapa lateral "R1 bolo" (que ocupa o lugar da R1). */
-const mainStages = (db) => openStages(db).filter((s) => s.key !== 'r1_bolo');
-/** Posição do negócio na sequência principal (R1 bolo conta como R1). */
+/** Sequência do funil (etapas abertas, na ordem). */
+const mainStages = (db) => openStages(db);
+/** Posição do negócio na sequência principal. */
 function seqIndex(db, seq, stage) {
   if (!stage) return -1;
-  if (stage.key === 'r1_bolo') return seq.findIndex((s) => s.key === 'r1');
   return seq.findIndex((s) => s.id === stage.id);
 }
 
@@ -138,14 +156,14 @@ function validateMove(db, user, opp, from, to, data = {}, opts = {}) {
   if (to.kind === 'ganho') {
     throw badRequest('A etapa "Venda" é preenchida automaticamente quando o pagamento da venda é confirmado na tela de Vendas.');
   }
-  if (to.kind === 'perdido' || to.kind === 'nutricao') return {};
   const force = !!data.force && user.role === 'admin';
   if (force && !String(data.reason || '').trim()) throw badRequest('Para forçar a passagem, informe a justificativa.');
-  // R1 bolo: só a partir da R1 (o cliente agendou e não compareceu); a justificativa é opcional
-  if (to.key === 'r1_bolo') {
-    if (from?.key !== 'r1') throw badRequest(`Só negócios em "R1" podem ir para "${to.name}" (cliente que agendou a R1 e não compareceu).`);
+  // Perdido: só depois de trabalhar o lead (ao menos uma atividade registrada)
+  if (to.kind === 'perdido') {
+    if (!force && !hasWork(db, contact.id)) throw badRequest('Para dar o lead como perdido, registre antes ao menos uma atividade (ligação, WhatsApp, e-mail ou direct).', { needs_activity: true });
     return {};
   }
+  if (to.kind === 'nutricao') return {};
   const seq = mainStages(db);
   const iTo = seq.findIndex((s) => s.id === to.id);
   const iFrom = seqIndex(db, seq, from);
@@ -160,10 +178,10 @@ function validateMove(db, user, opp, from, to, data = {}, opts = {}) {
   if (iFrom >= 0 && iTo > iFrom + 1) {
     const skipped = seq.slice(iFrom + 1, iTo);
     const free = skipped.every((s) => SKIPPABLE.has(s.key));
-    if (sequential && !force && !free) {
+    if (sequential && !force && !free && !opts.allowSkip) {
       throw badRequest(`Não é possível pular etapas. A próxima etapa deste negócio é "${seq[iFrom + 1].name}".`, { next_stage_id: seq[iFrom + 1].id });
     }
-    toCheck = seq.slice(iFrom + 1, iTo + 1).filter((s) => !(free && SKIPPABLE.has(s.key)));
+    toCheck = seq.slice(iFrom + 1, iTo + 1).filter((s) => !SKIPPABLE.has(s.key) || !(free || opts.allowSkip));
   } else if (iFrom < 0) {
     toCheck = seq.slice(0, iTo + 1);
   }
@@ -175,4 +193,4 @@ function validateMove(db, user, opp, from, to, data = {}, opts = {}) {
   return { forced: force && missing.length > 0 };
 }
 
-module.exports = { RULES, DEFAULT_STAGE_RULES, stageRules, evaluate, nextStage, validateMove, openStages, mainStages };
+module.exports = { RULES, DEFAULT_STAGE_RULES, stageRules, evaluate, nextStage, validateMove, openStages, mainStages, hasWork, WORK_TYPES };

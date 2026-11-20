@@ -26,6 +26,8 @@
 .preview-bar button.armed { background: color-mix(in srgb, var(--danger) 20%, transparent); border-color: var(--danger); color: var(--danger); }
 .preview-bar + #app .sidebar { top: calc(var(--pv-h, 0px) + 28px); height: calc(100vh - var(--pv-h, 0px) - 56px); }
 .preview-bar + #app .topbar { top: var(--pv-h, 0px); }
+/* Painel do lead abaixo da barra da versão de teste */
+.drawer-wrap .drawer { top: var(--pv-h, 0px); }
 @media (max-width: 900px) {
   .preview-bar { position: static; }
   :root { --pv-h: 0px !important; }

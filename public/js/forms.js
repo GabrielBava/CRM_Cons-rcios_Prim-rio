@@ -7,7 +7,7 @@ import { qualFormFields, bindQualForm } from './qualification.js';
 import { transcriptFlow } from './r1.js';
 import { downloadLeadTemplate } from './lead-import.js';
 import { icon } from './icons.js';
-import { scheduleR1Dialog } from './meeting.js';
+import { scheduleMeetingDialog } from './meeting.js';
 
 const nav = (hash) => (location.hash = hash);
 
@@ -264,8 +264,10 @@ export function opportunityFields(o = {}, companyContacts = [], kind = 'PF') {
     <p class="hint full">Em Lead e Tentativa de contato, busque o máximo destas respostas. O que ficar em branco pode ser completado depois da R1.</p>
     ${qualFormFields(o, kind)}
     <h4 class="full qual-form-title">Gestão do negócio<small>Responsável, prioridade interna e próxima ação.</small></h4>
+    ${field({ name: 'business_area', label: 'Área responsável', type: 'select', options: opts('area_negocio'), value: o.business_area || 'consorcio', allowEmpty: false })}
     ${field({ name: 'priority', label: 'Prioridade no funil', type: 'select', options: toItems(state.meta.constants.priorities), value: o.priority || 'media', allowEmpty: false })}
     ${field({ name: 'owner_id', label: 'Responsável', type: 'select', options: userItems(), value: o.owner_id || state.user.id, allowEmpty: false, disabled: !can.manage() })}
+    ${field({ name: 'co_owner_id', label: 'Co-responsável (ex.: especialista de outra área)', type: 'select', options: userItems(), value: o.co_owner_id, placeholder: 'Nenhum' })}
     ${ccItems.length ? field({ name: 'company_contact_id', label: 'Contato da empresa', type: 'select', options: ccItems, value: o.company_contact_id }) : ''}
     ${field({ name: 'objective', label: 'Objetivo nas palavras do cliente', type: 'textarea', value: o.objective, full: true })}
     ${field({ name: 'qualification_criteria', label: 'Critério de qualificação', type: 'textarea', value: o.qualification_criteria, full: true })}
@@ -317,48 +319,79 @@ export function moveStage(opp, stageId) {
     }).then(() => null);
   }
   const from = stageById(opp.stage_id);
-  if (to.key === 'r1_bolo' && from?.key !== 'r1') {
-    return modal({ title: `Etapa "${to.name}"`, body: html`<p>Só negócios em <strong>R1</strong> vão para <strong>${to.name}</strong>: é a coluna do cliente que agendou a R1 e não compareceu.</p>` }).then(() => null);
-  }
-  // Lead qualificado (ou R1 bolo) → R1: o pop-up de agendamento da R1 abre e move o negócio junto
-  if (to.key === 'r1' && ['qualificado', 'r1_bolo'].includes(from?.key)) {
-    return get('/api/r1/contexto', { contact_id: opp.contact_id })
+  // Até a R1 (Prospect, Lead, Tentativa ou Qualificação) → R1: abre o agendamento da R1 ("Ganho") e move junto.
+  // R1 → R2: abre o agendamento da R2. Já existe reunião futura marcada: só move.
+  const meetingKind = (to.key === 'r1' && from?.kind === 'aberta' && from.position < to.position) ? 'r1' : (to.key === 'r2' && from?.kind === 'aberta' && from.position < to.position) ? 'r2' : null;
+  if (meetingKind) {
+    return get('/api/r1/contexto', { contact_id: opp.contact_id, kind: meetingKind })
       .then((ctx) => {
         if (ctx.pending.some((t) => new Date(t.due_at) > new Date())) return moveStageDialog(opp, to, from);
-        return scheduleR1Dialog({ contactId: opp.contact_id, oppId: opp.id, moveToR1: true });
+        return scheduleMeetingDialog({ contactId: opp.contact_id, oppId: opp.id, kind: meetingKind, moveTo: true, won: meetingKind === 'r1' });
+      })
+      .catch((e) => (toastError(e), null));
+  }
+  if (to.kind === 'perdido') {
+    // Sem atividade registrada: o especialista é avisado; o administrador pode forçar com justificativa
+    return get('/api/cadastros/' + opp.contact_id + '/historico', { limit: 300 })
+      .then((r) => {
+        const worked = r.rows.some((a) => WORK_TYPES.includes(a.type));
+        if (!worked && !can.admin()) {
+          toast('Para dar o lead como perdido, registre antes ao menos uma atividade (ligação, WhatsApp, e-mail ou direct).', 'error');
+          return null;
+        }
+        return lostDialog(opp, to, { force: !worked });
       })
       .catch((e) => (toastError(e), null));
   }
   return moveStageDialog(opp, to, from);
 }
 
+/** Atividades que liberam o "Perdido" (mesma lista do servidor). */
+const WORK_TYPES = ['ligacao_realizada', 'tentativa_sem_atendimento', 'ligacao_recebida', 'mensagem_enviada', 'mensagem_recebida', 'email_enviado', 'email_recebido',
+  'direct_enviado', 'direct_recebido', 'conversa_presencial', 'conversa_video', 'reuniao_realizada', 'reuniao_nao_realizada', 'observacao'];
+
+/** Motivos de perda (MP): as 9 categorias, cada uma com a explicação, e o detalhe do que aconteceu. */
+export function lostDialog(opp, to = state.meta.stages.find((s) => s.kind === 'perdido'), { force = false } = {}) {
+  const list = opts('motivo_perda');
+  return modal({
+    title: `Perdido — ${opp.contact_name || opp.code}`,
+    wide: true,
+    submitLabel: 'Marcar como perdido',
+    danger: true,
+    body: html`<p class="small muted">Escolha o motivo da perda (MP). Ele alimenta os relatórios e o dashboard da squad. Só é possível dar como perdido depois de registrar ao menos uma atividade com o lead.</p>
+      <div class="mp-grid" role="radiogroup" aria-label="Motivo da perda">${list.map((o, i) => html`<label class="mp-opt"><input type="radio" name="lost_reason" value="${o.value}" ${i === -1 ? raw('checked') : ''}><span><strong>${o.label}</strong>${o.flags?.hint ? html`<small>${o.flags.hint}</small>` : ''}</span></label>`)}</div>
+      ${field({ name: 'lost_notes', label: 'O que aconteceu (detalhe)', type: 'textarea', rows: 2, full: true, placeholder: 'Ex.: achou a parcela alta; vai retomar quando vender o carro.' })}
+      ${force ? html`<div class="alert warn small">Este lead ainda não tem nenhuma atividade registrada. Como administrador, você pode dar como perdido mesmo assim, com a justificativa (fica na auditoria).</div>${field({ name: 'reason', label: 'Justificativa', type: 'textarea', rows: 2, full: true, required: true, placeholder: 'Ex.: cadastro duplicado; lead de teste' })}` : ''}`,
+    async onSubmit(d) {
+      if (!d.lost_reason) throw new Error('Escolha o motivo da perda (MP).');
+      const r = await post(`/api/oportunidades/${opp.id}/etapa`, { stage_id: to.id, lost_reason: d.lost_reason, lost_notes: d.lost_notes, ...(force ? { force: true, reason: d.reason } : {}) });
+      toast('Lead marcado como perdido.');
+      return r;
+    },
+  });
+}
+
 function moveStageDialog(opp, to, from) {
   let body;
-  const backward = !!from && from.kind === 'aberta' && to.kind === 'aberta' && to.position < from.position && !(from.key === 'r1_bolo' && to.key === 'r1');
-  const bolo = to.key === 'r1_bolo';
-  if (to.kind === 'perdido') {
-    body = html`<p>Mover <strong>${opp.code}</strong> para <strong>${to.name}</strong>.</p><div class="grid">
-      ${field({ name: 'lost_reason', label: 'Motivo da perda', type: 'select', options: opts('motivo_perda'), required: true, full: true })}
-      ${field({ name: 'lost_notes', label: 'Detalhes', type: 'textarea', full: true })}</div>`;
-  } else if (to.kind === 'nutricao') {
+  const backward = !!from && from.kind === 'aberta' && to.kind === 'aberta' && to.position < from.position;
+  if (to.kind === 'nutricao') {
     const d = new Date(Date.now() + 30 * 86400000);
     d.setHours(10, 0, 0, 0);
-    body = html`<p>Mover <strong>${opp.code}</strong> para <strong>${to.name}</strong>. Será criada uma tarefa para retomar o contato na data escolhida.</p><div class="grid">
+    body = html`<p>Mover <strong>${opp.code}</strong> para <strong>${to.name}</strong> (arquivado). Será criada uma tarefa para retomar o contato na data escolhida.</p><div class="grid">
       ${field({ name: 'pause_reason', label: 'Motivo', type: 'textarea', required: true, full: true })}
       ${field({ name: 'return_at', label: 'Retomar o contato em', type: 'datetime', value: d.toISOString(), required: true })}</div>`;
   } else {
     body = html`<p>Mover <strong>${opp.code}</strong>${opp.stage_name ? html` de <strong>${opp.stage_name}</strong>` : ''} para <strong>${to.name}</strong>.</p>
-      ${to.playbook && !bolo ? html`<p class="hint">${to.playbook}</p>` : ''}
-      ${bolo ? html`<p class="hint">O cliente agendou a R1 e não compareceu. A reunião que já passou do horário é encerrada como "cliente não compareceu". Depois, use "Agendar R1" para remarcar.</p>` : ''}
-      ${field({ name: 'reason', label: backward ? 'Motivo para voltar a etapa' : bolo ? 'Justificativa (opcional)' : 'Observação (opcional)', type: 'textarea', full: true, required: backward })}
-      ${can.admin() && !bolo ? field({ name: 'force', label: 'Forçar a passagem mesmo sem os critérios (administrador, exige justificativa na observação)', type: 'checkbox', full: true }) : ''}`;
+      ${to.playbook ? html`<p class="hint">${to.playbook}</p>` : ''}
+      ${field({ name: 'reason', label: backward ? 'Motivo para voltar a etapa' : 'Observação (opcional)', type: 'textarea', full: true, required: backward })}
+      ${can.admin() ? field({ name: 'force', label: 'Forçar a passagem mesmo sem os critérios (administrador, exige justificativa na observação)', type: 'checkbox', full: true }) : ''}`;
   }
   return modal({
     title: 'Mover negócio',
     body,
     submitLabel: 'Mover',
     async onSubmit(d, form, errBox) {
-      const payload = { stage_id: to.id, reason: d.reason, lost_reason: d.lost_reason, lost_notes: d.lost_notes, pause_reason: d.pause_reason, return_at: d.return_at, force: d.force };
+      const payload = { stage_id: to.id, reason: d.reason, pause_reason: d.pause_reason, return_at: d.return_at, force: d.force, ganho: to.key === 'r1' && !backward };
       try {
         const r = await post(`/api/oportunidades/${opp.id}/etapa`, payload);
         toast(`Movido para "${to.name}".`);

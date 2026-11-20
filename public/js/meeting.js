@@ -1,11 +1,13 @@
-// "Agendar R1": o mesmo pop-up no funil (Lead qualificado → R1), no painel lateral, na ficha do cliente e na Agenda.
-// Cliente obrigatório (o e-mail dele recebe o convite), horário em passos de 15 minutos, 30 minutos por padrão,
+// "Agendar R1" e "Agendar R2": o mesmo pop-up no pipeline (arrastar para R1/R2), no "Ganho" do painel lateral, na ficha
+// do cliente e na Agenda. Cliente obrigatório (o e-mail dele recebe o convite), horário em passos de 15 minutos,
 // título "[R1] Nome do cliente | Vero Consórcios"; com o Google Agenda conectado, o evento sai com Google Meet.
+// Bloco de reuniões do painel: Concluir, Remarcar e Não compareceu (no-show → NS no cartão; remarcação → R).
 import { get, post, patch, download } from './api.js';
-import { html, raw, $, on, modal, field, state, toast, toastError, fmtDateTime, badge } from './ui.js';
+import { html, raw, $, on, modal, field, opts, state, toast, toastError, fmtDateTime, badge } from './ui.js';
 
-/** Etapas em que o botão "Agendar R1" aparece em destaque (da prospecção até R1 bolo). */
-export const R1_STAGES = ['prospect', 'lead', 'tentativa', 'qualificado', 'r1', 'r1_bolo'];
+/** Etapas até a R1: o "Ganho" (agendar a R1 e levar o lead para a coluna R1) aparece nelas. */
+export const R1_STAGES = ['prospect', 'lead', 'tentativa', 'qualificado'];
+export const MEETING_LABEL = { r1: 'R1', r2: 'R2' };
 
 const pad = (n) => String(n).padStart(2, '0');
 const toHM = (min) => `${pad(Math.floor(min / 60))}:${pad(min % 60)}`;
@@ -33,9 +35,9 @@ const waLink = (n, text) => {
 };
 
 /** Situação do Google no pop-up: com a agenda conectada, o Meet e o convite saem sozinhos no clique de "Agendar R1". */
-const googleBanner = (g) => html`<div class="r1-google ${g.connected ? 'ok' : ''}" data-google-banner>
+const googleBanner = (g, K = 'R1') => html`<div class="r1-google ${g.connected ? 'ok' : ''}" data-google-banner>
   ${g.connected
-    ? html`<strong>Google Agenda conectado${g.email ? html` · ${g.email}` : ''}</strong><small>Ao clicar em "Agendar R1", o evento entra na agenda do especialista com o link do Google Meet, o cliente recebe o convite por e-mail e o link fica salvo na R1.${g.needs_reconnect ? ' Reconecte em Meu cadastro para o CRM marcar "R1 feita" sozinho quando o cliente entrar no Meet.' : ''}</small>`
+    ? html`<strong>Google Agenda conectado${g.email ? html` · ${g.email}` : ''}</strong><small>Ao clicar em "Agendar ${K}", o evento entra na agenda do especialista com o link do Google Meet, o cliente recebe o convite por e-mail e o link fica salvo na ${K}.${g.needs_reconnect ? ' Reconecte em Meu cadastro para o CRM marcar "R1 feita" sozinho quando o cliente entrar no Meet.' : ''}</small>`
     : g.configured
       ? html`<strong>Conecte o seu Google Agenda para agendar com Meet automático</strong><small>Uma única vez: autorize o CRM a criar as reuniões na sua agenda. Depois disso, o link do Meet e o convite ao cliente saem sozinhos.</small>
         <span><button type="button" class="btn small primary" data-google-connect>Conectar Google Agenda</button></span>`
@@ -43,7 +45,7 @@ const googleBanner = (g) => html`<div class="r1-google ${g.connected ? 'ok' : ''
 </div>`;
 
 /** Abre a autorização do Google numa nova guia e acompanha até a conta ficar conectada. */
-async function connectFromDialog(form) {
+async function connectFromDialog(form, K = 'R1') {
   if (window.CRM_PREVIEW) return toastError(new Error('Na versão de teste no navegador a conexão com o Google fica desativada. No CRM instalado ela funciona normalmente.'));
   const w = window.open('about:blank', '_blank');
   try {
@@ -61,17 +63,17 @@ async function connectFromDialog(form) {
     const st = await get('/api/google/status').catch(() => null);
     if (st?.connected) {
       banner.outerHTML = String(googleBanner({ configured: true, connected: true, email: st.google_email, needs_reconnect: st.needs_reconnect }));
-      toast('Google Agenda conectado. Agora é só clicar em "Agendar R1".');
+      toast(`Google Agenda conectado. Agora é só clicar em "Agendar ${K}".`);
       return;
     }
   }
 }
 
 /** Escolha do cliente (quando o agendamento começa pela Agenda): busca por nome, código, telefone ou e-mail. */
-function pickContact() {
+function pickContact(K = 'R1') {
   return modal({
-    title: 'Agendar R1 — para qual cliente?',
-    body: html`<p class="hint">A R1 é sempre vinculada ao cadastro: o e-mail do cliente recebe o convite da reunião.</p>
+    title: `Agendar ${K} — para qual cliente?`,
+    body: html`<p class="hint">A reunião é sempre vinculada ao cadastro: o e-mail do cliente recebe o convite da reunião.</p>
       <div class="field full"><label>Buscar cadastro</label><input type="search" name="q" placeholder="Nome, código (C-…), telefone ou e-mail" autocomplete="off"></div>
       <div class="pick-list" role="listbox"></div>`,
     onMount(form, close) {
@@ -97,33 +99,47 @@ function pickContact() {
   });
 }
 
+/** Campos de qualificação exigidos para o lead chegar à R1 (o "Ganho" pula as etapas, mas não os critérios). */
+const QUAL_FIELDS = [
+  { name: 'objective_type', label: 'Objetivo', list: 'objetivo' },
+  { name: 'credit_value', label: 'Valor estimado', type: 'money' },
+  { name: 'urgency', label: 'Prioridade (quando quer)', list: 'urgencia' },
+  { name: 'credit_category', label: 'Categoria (consórcio)', list: 'categoria_credito', consorcio: true },
+];
+const missingQual = (o) => (o ? QUAL_FIELDS.filter((f) => !o[f.name] && (!f.consorcio || (o.business_area || 'consorcio') === 'consorcio')) : []);
+
 /**
- * Abre o pop-up de agendamento. opts: contactId (opcional: sem ele, pergunta o cliente), oppId, moveToR1 (move o negócio
- * para "R1" ao salvar). Retorna o resultado do agendamento ou null.
+ * Abre o pop-up de agendamento da R1 ou da R2. opts: contactId (opcional: sem ele, pergunta o cliente), oppId, kind
+ * ('r1' | 'r2'), moveTo (leva o negócio para a coluna da reunião), won (botão "Ganho": agendar a R1 é o ganho do
+ * pré-vendas; os campos de qualificação que faltarem aparecem no próprio pop-up). Retorna o resultado ou null.
  */
-export async function scheduleR1Dialog({ contactId = null, oppId = null, moveToR1 = false } = {}) {
-  if (!contactId) contactId = await pickContact();
+export async function scheduleMeetingDialog({ contactId = null, oppId = null, kind = 'r1', moveTo = false, won = false } = {}) {
+  const K = MEETING_LABEL[kind] || 'R1';
+  if (!contactId) contactId = await pickContact(K);
   if (!contactId) return null;
   let ctx;
   try {
-    ctx = await get('/api/r1/contexto', { contact_id: contactId });
+    ctx = await get('/api/r1/contexto', { contact_id: contactId, kind });
   } catch (e) {
     toastError(e);
     return null;
   }
   const c = ctx.contact;
-  const dur = ctx.duration_min || 30;
+  const dur = ctx.duration_min || (kind === 'r2' ? 60 : 30);
   const day = nextBusinessDay();
   const start = 14 * 60;
   const g = ctx.google;
   const opp = ctx.opportunities.find((o) => o.id === Number(oppId)) || ctx.opportunities[0];
-  const canMove = opp && ['prospect', 'lead', 'tentativa', 'qualificado', 'r1_bolo'].includes(opp.stage_key);
+  const target = state.meta.stages.find((st) => st.key === kind);
+  const canMove = opp && opp.status === 'aberta' && target && opp.stage_key !== kind && (opp.stage_position ?? 0) < target.position;
+  const qual = won || (moveTo && kind === 'r1') ? missingQual(opp) : [];
   const result = await modal({
-    title: `Agendar R1 — ${c.name}`,
+    title: won ? `Ganho — agendar a R1 de ${c.name}` : `Agendar ${K} — ${c.name}`,
     wide: true,
     body: html`
-      ${googleBanner(g)}
-      ${ctx.pending.length ? html`<div class="alert warn small">Já existe R1 pendente: ${ctx.pending.map((t) => html`${t.title} em ${fmtDateTime(t.due_at)}`)}. Reagende pela tarefa se for a mesma reunião.</div>` : ''}
+      ${won ? html`<div class="alert ok-alert small"><strong>Ganho do pré-vendas:</strong> com a R1 agendada, o lead vai para a coluna R1 do pipeline.</div>` : ''}
+      ${googleBanner(g, K)}
+      ${ctx.pending.length ? html`<div class="alert warn small">Já existe ${K} pendente: ${ctx.pending.map((t) => html`${t.title} em ${fmtDateTime(t.due_at)}`)}. Para mudar o horário use "Remarcar" no bloco da reunião.</div>` : ''}
       <div class="grid">
         <div class="field full"><label>Cliente</label><div class="r1-client"><strong>${c.name}</strong> <small class="muted">${c.code}${c.phone ? ` · ${c.phone}` : ''}</small></div></div>
         ${ctx.opportunities.length > 1 ? field({ name: 'opportunity_id', label: 'Negócio', type: 'select', options: ctx.opportunities.map((o) => ({ value: o.id, label: `${o.code} — ${o.stage_name}` })), value: opp?.id, allowEmpty: false, full: true }) : ''}
@@ -132,30 +148,29 @@ export async function scheduleR1Dialog({ contactId = null, oppId = null, moveToR
         <div class="r1-times">${timeSelect('start', toHM(start), 'Início')}${timeSelect('end', toHM(start + dur), 'Término', { min: start })}</div>
         ${field({ name: 'title', label: 'Título da reunião', value: ctx.title, required: true, full: true })}
         ${field({ name: 'video', label: 'Videoconferência (Google Meet) e convite por e-mail para o cliente', type: 'checkbox', value: true, full: true })}
-        ${canMove ? field({ name: 'move_to_r1', label: `Mover o negócio ${opp.code} de "${opp.stage_name}" para "R1"`, type: 'checkbox', value: moveToR1 || ['qualificado', 'r1_bolo'].includes(opp.stage_key), full: true }) : ''}
+        ${canMove && !won ? field({ name: 'move_to_stage', label: `Mover o negócio ${opp.code} de "${opp.stage_name}" para "${target.name}"`, type: 'checkbox', value: moveTo, full: true }) : ''}
+        ${qual.length ? html`<fieldset class="full qual-inline"><legend>Qualificação para entrar na R1</legend><p class="hint">Faltam estes dados do lead (critério da etapa Qualificação):</p><div class="grid">
+          ${qual.map((f) => (f.list ? field({ name: f.name, label: f.label, type: 'select', options: opts(f.list), required: true }) : field({ name: f.name, label: f.label, type: f.type, required: true })))}</div></fieldset>` : ''}
         ${field({ name: 'notes', label: 'Observações (vão na descrição do evento)', type: 'textarea', rows: 2, full: true })}
       </div>`,
-    submitLabel: 'Agendar R1',
+    submitLabel: won ? 'Agendar R1 (ganho)' : `Agendar ${K}`,
     onMount(form) {
-      on(form, 'click', '[data-google-connect]', () => connectFromDialog(form));
-      // Ao mudar o início, o término acompanha mantendo a duração escolhida
-      const box = $('.r1-times', form);
-      form.start.addEventListener('change', () => {
-        const oldStart = fromHM(form.dataset.start || toHM(start));
-        const keep = Math.max(15, fromHM(form.end.value) - oldStart);
-        const s = fromHM(form.start.value);
-        form.dataset.start = form.start.value;
-        const endWrap = box.children[1];
-        endWrap.outerHTML = String(timeSelect('end', toHM(Math.min(s + keep, SLOTS[SLOTS.length - 1])), 'Término', { min: s }));
-      });
+      on(form, 'click', '[data-google-connect]', () => connectFromDialog(form, K));
+      bindTimes(form, start);
     },
     async onSubmit(d) {
       const startAt = new Date(`${d.date}T${d.start}:00`);
       const endAt = new Date(`${d.date}T${d.end}:00`);
       if (endAt <= startAt) throw new Error('O término precisa ser depois do início.');
-      return post('/api/r1/agendar', {
-        contact_id: c.id, opportunity_id: d.opportunity_id || opp?.id, email: d.email, title: d.title, notes: d.notes,
-        start_at: startAt.toISOString(), end_at: endAt.toISOString(), video: d.video, move_to_r1: !!d.move_to_r1,
+      const oppIdSel = Number(d.opportunity_id) || opp?.id;
+      if (qual.length && oppIdSel) {
+        const q = Object.fromEntries(qual.map((f) => [f.name, d[f.name]]));
+        await patch(`/api/oportunidades/${oppIdSel}`, q);
+      }
+      return post('/api/reunioes/agendar', {
+        kind, contact_id: c.id, opportunity_id: oppIdSel, email: d.email, title: d.title, notes: d.notes,
+        start_at: startAt.toISOString(), end_at: endAt.toISOString(), video: d.video,
+        move_to_stage: canMove && (won || !!d.move_to_stage),
         logo_url: new URL('img/vero-logo-dark.png', document.baseURI).href,
       });
     },
@@ -165,20 +180,143 @@ export async function scheduleR1Dialog({ contactId = null, oppId = null, moveToR
   return result;
 }
 
+/** Compatibilidade: telas antigas chamam o agendamento da R1 por este nome. */
+export const scheduleR1Dialog = ({ moveToR1, ...o } = {}) => scheduleMeetingDialog({ ...o, kind: 'r1', moveTo: !!moveToR1 });
+
+/** Ao mudar o início, o término acompanha mantendo a duração escolhida. */
+function bindTimes(form, start) {
+  const box = $('.r1-times', form);
+  form.start.addEventListener('change', () => {
+    const oldStart = fromHM(form.dataset.start || toHM(start));
+    const keep = Math.max(15, fromHM(form.end.value) - oldStart);
+    const s = fromHM(form.start.value);
+    form.dataset.start = form.start.value;
+    box.children[1].outerHTML = String(timeSelect('end', toHM(Math.min(s + keep, SLOTS[SLOTS.length - 1])), 'Término', { min: s }));
+  });
+}
+
+/* ------------------------- Bloco R1 / R2 (painel do lead) ------------------------- */
+
+const hm = (iso) => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+const dayLabel = (iso) => new Date(iso).toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' });
+const STATE_LABEL = { agendada: 'Agendada', remarcada: 'Remarcada', realizada: 'Realizada', no_show: 'Não compareceu (NS)', cancelada: 'Cancelada' };
+const STATE_TONE = { agendada: 'info', remarcada: 'rm', realizada: 'ok', no_show: 'ns', cancelada: 'muted' };
+
+/**
+ * Bloco de uma reunião no painel do lead. m = opp.meetings.r1 | r2. Sem reunião: botão "Agendar". Agendada: data,
+ * horário, como (Meet) e os botões Concluir (destaque), Remarcar e Não compareceu. Indicadores de remarcações e NS.
+ */
+export function meetingCard(kind, m, { canSchedule = true, write = true } = {}) {
+  const K = MEETING_LABEL[kind];
+  const pending = m && ['agendada', 'remarcada'].includes(m.state);
+  return html`<section class="mt-card ${m ? `st-${m.state}` : 'st-none'}" data-meeting="${kind}">
+    <header><strong>${K}</strong>${m ? html`<span class="badge ${STATE_TONE[m.state] || ''}">${STATE_LABEL[m.state] || m.state}</span>` : html`<span class="muted small">${kind === 'r2' ? 'R2 não agendada' : 'Não agendada'}</span>`}</header>
+    ${m && m.at ? html`<div class="mt-when">${icon_cal()}<span><strong>${dayLabel(m.at)}</strong> · ${hm(m.at)}${m.ends_at ? ` às ${hm(m.ends_at)}` : ''}</span></div>` : ''}
+    ${pending ? html`<div class="mt-how">${m.meeting_url ? html`<a href="${m.meeting_url}" target="_blank" rel="noopener">Google Meet</a>` : html`<span class="muted">Sem link de vídeo</span>`}${m.confirmed ? html` · <span class="ok-text">presença confirmada</span>` : ''}</div>` : ''}
+    ${m && (m.no_shows || m.reschedules) ? html`<div class="mt-stats">${m.no_shows ? html`<span class="badge ns" title="Não compareceu">NS ${m.no_shows}</span>` : ''}${m.reschedules ? html`<span class="badge rm" title="Remarcações">R ${m.reschedules}</span>` : ''}</div>` : ''}
+    ${write ? html`<div class="mt-actions">
+      ${pending ? html`<button type="button" class="btn small primary" data-mt="done" data-task="${m.task_id}">Concluir</button>
+        <button type="button" class="btn small" data-mt="resched" data-task="${m.task_id}">Remarcar</button>
+        <button type="button" class="btn small warn" data-mt="noshow" data-task="${m.task_id}">Não compareceu</button>
+        ${m.confirmed ? '' : html`<button type="button" class="btn small ghost" data-mt="confirm" data-task="${m.task_id}" title="O cliente confirmou que vai participar">Confirmar presença</button>`}`
+        : m?.state === 'no_show' ? html`<button type="button" class="btn small primary" data-mt="resched" data-task="${m.task_id}">Remarcar ${K}</button>`
+          : canSchedule && (!m || m.state === 'cancelada') ? html`<button type="button" class="btn small ${kind === 'r1' ? 'primary' : ''}" data-mt="new" data-kind="${kind}">Agendar ${K}</button>` : ''}
+      ${m?.task_id ? html`<button type="button" class="btn small ghost" data-r1-model="task_id=${m.task_id}">Modelo da R1</button>` : ''}
+    </div>` : ''}
+  </section>`;
+}
+const icon_cal = () => raw('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>');
+
+/** Novo horário para a reunião (remarcação ou depois de um no-show). */
+export async function rescheduleDialog(taskId, kind = 'r1') {
+  const K = MEETING_LABEL[kind] || 'R1';
+  const day = nextBusinessDay();
+  const start = 14 * 60;
+  const dur = kind === 'r2' ? 60 : 30;
+  const r = await modal({
+    title: `Remarcar ${K}`,
+    body: html`<p class="hint">A reunião atual fica registrada como remarcada (marca R no pipeline). O mesmo link do Meet e o mesmo evento do Google Agenda passam para o novo horário, e o cliente recebe o aviso.</p>
+      <div class="grid">${field({ name: 'date', label: 'Nova data', type: 'date', value: dateLocal(day), required: true })}
+      <div class="r1-times">${timeSelect('start', toHM(start), 'Início')}${timeSelect('end', toHM(start + dur), 'Término', { min: start })}</div>
+      ${field({ name: 'reason', label: 'Motivo (opcional)', type: 'textarea', rows: 2, full: true })}</div>`,
+    submitLabel: 'Remarcar',
+    onMount(form) {
+      bindTimes(form, start);
+    },
+    async onSubmit(d) {
+      const startAt = new Date(`${d.date}T${d.start}:00`);
+      const endAt = new Date(`${d.date}T${d.end}:00`);
+      if (endAt <= startAt) throw new Error('O término precisa ser depois do início.');
+      return post(`/api/reunioes/${taskId}/remarcar`, { start_at: startAt.toISOString(), end_at: endAt.toISOString(), reason: d.reason, logo_url: new URL('img/vero-logo-dark.png', document.baseURI).href });
+    },
+  });
+  if (r) toast(`${K} remarcada para ${dayLabel(r.start_at)} às ${hm(r.start_at)}.${r.confirmation?.sent ? ' O cliente recebeu o novo horário por e-mail.' : ''}`);
+  return r;
+}
+
+/** Concluir (reunião realizada) ou Não compareceu (no-show), com observação opcional. */
+async function meetingResultDialog(taskId, kind, result) {
+  const K = MEETING_LABEL[kind] || 'R1';
+  const done = result === 'realizada';
+  const r = await modal({
+    title: done ? `Concluir ${K}` : `${K}: cliente não compareceu`,
+    body: html`<p>${done ? html`Registrar a ${K} como <strong>realizada</strong>.${kind === 'r2' ? ' O negócio segue para Negociação.' : ' O próximo passo é agendar a R2.'}` : html`O cartão fica com a marca <span class="badge ns">NS</span> na coluna ${K} até a reunião ser remarcada.`}</p>
+      ${field({ name: 'notes', label: done ? 'Resumo da reunião (opcional)' : 'Observação (opcional)', type: 'textarea', rows: 3, full: true })}`,
+    submitLabel: done ? 'Concluir' : 'Registrar no-show',
+    danger: !done,
+    onSubmit: (d) => post(`/api/reunioes/${taskId}/resultado`, { result, notes: d.notes }),
+  });
+  if (r) {
+    toast(done ? `${K} concluída.${r.moved === 'negociacao' ? ' Negócio movido para Negociação.' : ''}` : `No-show registrado na ${K}.`);
+    if (r.move_error) toast(r.move_error, 'error');
+  }
+  return r;
+}
+
+/**
+ * Liga os botões dos blocos de reunião dentro de root. ctx: contactId, oppId, onChange (recarregar a tela),
+ * oppStage (chave da etapa atual, para mover junto ao agendar).
+ */
+export function bindMeetingCards(root, getCtx) {
+  on(root, 'click', '[data-mt]', async (e, b) => {
+    const ctx = getCtx();
+    const kind = b.closest('[data-meeting]')?.dataset.meeting || b.dataset.kind || 'r1';
+    let ok = null;
+    b.disabled = true;
+    try {
+      const act = b.dataset.mt;
+      if (act === 'new') ok = await scheduleMeetingDialog({ contactId: ctx.contactId, oppId: ctx.oppId, kind, moveTo: true });
+      else if (act === 'done') ok = await meetingResultDialog(b.dataset.task, kind, 'realizada');
+      else if (act === 'noshow') ok = await meetingResultDialog(b.dataset.task, kind, 'nao_compareceu');
+      else if (act === 'resched') ok = await rescheduleDialog(b.dataset.task, kind);
+      else if (act === 'confirm') {
+        ok = await post(`/api/reunioes/${b.dataset.task}/confirmar`, {});
+        toast('Presença confirmada pelo cliente.');
+      }
+    } catch (err) {
+      toastError(err);
+    } finally {
+      b.disabled = false;
+    }
+    if (ok) ctx.onChange?.();
+  });
+}
+
 /** Depois de agendar: link do Meet já salvo na R1, modelo da R1 liberado para baixar e confirmação pelo WhatsApp. */
 async function r1Done(r, c) {
   const when = `${new Date(r.start_at).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit' })}, das ${new Date(r.start_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} às ${new Date(r.end_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
   const first = String(c.name).split(' ')[0];
-  const msg = `Olá, ${first}! Aqui é ${state.user.name}, da ${state.meta.settings.company_name || 'Vero Consórcios'}. Nossa reunião de apresentação está confirmada para ${when}.${r.meeting_url ? ` Link da videochamada (Google Meet): ${r.meeting_url}` : ''}${r.email ? ` O convite também foi enviado para ${r.email}.` : ''} Até lá!`;
+  const msg = `Olá, ${first}! Aqui é ${state.user.name}, da ${state.meta.settings.company_name || 'Vero Consórcios'}. ${r.kind === 'r2' ? 'Nossa segunda reunião (apresentação da proposta)' : 'Nossa reunião de apresentação'} está confirmada para ${when}.${r.meeting_url ? ` Link da videochamada (Google Meet): ${r.meeting_url}` : ''}${r.email ? ` O convite também foi enviado para ${r.email}.` : ''} Até lá!`;
   const wa = waLink(c.phone, msg);
   const conf = r.confirmation || {};
-  toast(r.google.synced ? 'R1 agendada: evento com Google Meet criado e link salvo na R1.' : 'R1 agendada no CRM.');
-  if (r.moved === false && r.move_error) toast(`O negócio não foi movido para R1: ${r.move_error}`, 'error');
+  const K = MEETING_LABEL[r.kind] || 'R1';
+  toast(r.google.synced ? `${K} agendada: evento com Google Meet criado e link salvo na ${K}.` : `${K} agendada no CRM.`);
+  if (r.moved === false && r.move_error) toast(`O negócio não foi movido para ${K}: ${r.move_error}`, 'error');
   await modal({
-    title: 'R1 agendada',
+    title: `${K} agendada`,
     body: html`<p><strong>${r.title}</strong><br>${when}</p>
       ${r.google.synced
-        ? html`<div class="alert ok-alert small">Evento criado na ${r.google.calendar === 'agendador' ? 'sua agenda Google (o especialista foi convidado)' : 'agenda Google do especialista'}${r.google.invited ? html` e convite do Google enviado para <strong>${r.email}</strong>` : ''}. O link da reunião já está salvo na R1.</div>
+        ? html`<div class="alert ok-alert small">Evento criado na ${r.google.calendar === 'agendador' ? 'sua agenda Google (o especialista foi convidado)' : 'agenda Google do especialista'}${r.google.invited ? html` e convite do Google enviado para <strong>${r.email}</strong>` : ''}. O link da reunião já está salvo na ${K}.</div>
           ${r.meeting_url ? html`<p class="r1-link"><span>Link da reunião (Google Meet)</span><a href="${r.meeting_url}" target="_blank" rel="noopener">${r.meeting_url}</a></p>` : ''}`
         : html`<div class="alert warn small">${r.google.reason === 'erro' ? html`O Google Agenda não aceitou o evento (${r.google.error}). ` : r.google.reason === 'nao_conectado' ? 'O Google Agenda do especialista não está conectado (Meu cadastro). ' : ''}Abra o evento já preenchido no Google Agenda, adicione o Google Meet e salve; depois cole aqui o link da reunião.</div>
           <p><a class="btn primary" href="${r.calendar_link}" target="_blank" rel="noopener">Abrir no Google Agenda</a></p>

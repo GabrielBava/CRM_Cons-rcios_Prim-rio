@@ -95,13 +95,15 @@ O crédito e as parcelas são corrigidos anualmente por um índice (ex.: **INCC*
     category: 'processo_comercial',
     duration_min: 20,
     description: 'Do primeiro contato à proposta: etapas do funil, objetivo de cada reunião e critérios para avançar.',
-    content: `## O funil Vero
-- **Prospect / Lead → Tentativa de contato:** cadência de ligações e WhatsApp até falar com o lead.
-- **Lead qualificado:** conversa feita, com **objetivo, categoria, crédito desejado e prazo** (curto, médio ou longo).
-- **R1 (reunião de diagnóstico):** 30 minutos por videochamada, sempre agendada pelo CRM.
-- **R1 bolo:** o cliente agendou e não compareceu. Entenda o motivo e reagende.
-- **Negociação:** proposta montada no simulador com base na R1.
-- **Follow-up:** proposta enviada; esteira D0 a D10 até a decisão.
+    content: `## O pipeline Vero (todas as áreas: consórcio, planejamento, seguros e investimentos)
+- **0 Prospect · 1 Lead · 2 Tentativa de contato:** cadência de ligações, WhatsApp, e-mail e direct até falar com o lead.
+- **3 Qualificação:** conversa feita, com **objetivo, valor estimado e prioridade** (curto, médio ou longo prazo); no consórcio, também a categoria.
+- **4 R1 (reunião de diagnóstico):** 30 minutos por videochamada, sempre agendada pelo CRM. Agendar a R1 é o **Ganho** do pré-vendas.
+- **5 R2:** apresentação da proposta e da estratégia (a R1 precisa estar concluída).
+- **6 Negociação:** R2 realizada; proposta em análise até a decisão.
+- **7 Venda:** preenchida sozinha quando o pagamento é confirmado.
+- **Arquivados:** Nutrição futura (retomar depois) e Perdido (com o motivo MP1 a MP9).
+- **Não compareceu (NS):** o cliente faltou à R1. O cartão fica na coluna R1 com a marca **NS** até você remarcar (marca **R**).
 
 ## A R1 em 4 blocos (30 minutos)
 - **Conexão (5 min):** apresente-se e a Vero; combine a agenda da conversa.
@@ -114,8 +116,8 @@ O crédito e as parcelas são corrigidos anualmente por um índice (ex.: **INCC*
 - Ao terminar: conclua a tarefa da R1 com o resultado e preencha a qualificação (ou anexe a transcrição).
 - Proposta apresentada em até 48 horas depois da R1.`,
     quiz: [
-      { question: 'O que é exigido para mover o lead para "Lead qualificado"?', options: ['Só o telefone', 'Objetivo, categoria, crédito desejado e prazo'], correct: 1 },
-      { question: 'O cliente não compareceu à R1. Para onde vai o negócio?', options: ['Perdido', 'R1 bolo'], correct: 1 },
+      { question: 'O que é exigido para mover o lead para "Qualificação"?', options: ['Só o telefone', 'Objetivo, valor estimado e prioridade (e a categoria no consórcio)'], correct: 1 },
+      { question: 'O cliente não compareceu à R1. O que acontece com o cartão?', options: ['Vai para Perdido', 'Fica na R1 com a marca NS até ser remarcado'], correct: 1 },
     ],
   },
   {
@@ -151,7 +153,7 @@ Em **Meu cadastro › Google Agenda**, conecte a sua agenda (uma única vez). As
 - Escolha a data e o horário de início. O término já vem 30 minutos depois; ajuste de 15 em 15 minutos se precisar.
 - O título segue o padrão **[R1] Nome do cliente | Vero Consórcios**.
 - Deixe marcada a videoconferência: o CRM gera o Meet, salva o link e envia o convite.
-- Ao arrastar o card de **Lead qualificado** para **R1**, o mesmo pop-up abre e o negócio muda de etapa ao salvar.
+- Ao arrastar o card para **R1** (ou clicar em **Ganho** no painel do lead), o mesmo pop-up abre e o negócio muda de etapa ao salvar. Para a **R2**, arraste o card da R1 para a coluna R2.
 
 ## Depois de agendar
 - Confirme com o cliente pelo botão **Confirmar pelo WhatsApp** (mensagem pronta com data, horário e link).

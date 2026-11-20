@@ -2,7 +2,7 @@
 /**
  * Agendamento da R1 (reunião de diagnóstico) e integração com o Google Agenda do especialista.
  *
- * O mesmo agendamento é usado no funil (Lead qualificado → R1), no painel lateral, na ficha do cliente e na Agenda:
+ * O mesmo agendamento é usado no pipeline (arrastar para R1 ou R2, "Ganho"), no painel lateral, na ficha do cliente e na Agenda:
  *  - o cliente é obrigatório (o e-mail dele recebe o convite);
  *  - horário em passos de 15 minutos, 30 minutos de duração por padrão;
  *  - título "[R1] Nome do cliente | Vero Consórcios";
@@ -199,23 +199,29 @@ function calendarTemplateLink(ev) {
   return `https://calendar.google.com/calendar/render?${q}`;
 }
 
-function r1Title(db, contactName) {
-  const tpl = getSetting(db, 'r1_title_template') || '[R1] {cliente} | {empresa}';
+const KINDS = { r1: 'R1', r2: 'R2' };
+const kindOf = (k) => (k === 'r2' ? 'r2' : 'r1');
+
+function r1Title(db, contactName, kind = 'r1') {
+  const k = kindOf(kind);
+  const tpl = getSetting(db, `${k}_title_template`) || `[${KINDS[k]}] {cliente} | {empresa}`;
   return tpl.replace('{cliente}', contactName).replace('{empresa}', getSetting(db, 'company_name') || 'Vero Consórcios');
 }
 
 /** Dados para o pop-up: cliente, e-mail, negócio aberto, título sugerido e situação do Google. */
-function r1Context(db, user, contactId, req) {
+function r1Context(db, user, contactId, req, kind = 'r1') {
+  kind = kindOf(kind);
   const c = loadContact(db, user, contactId);
-  const opps = db.prepare("SELECT o.id, o.code, s.name AS stage_name, s.key AS stage_key FROM opportunities o JOIN pipeline_stages s ON s.id = o.stage_id WHERE o.contact_id = ? AND o.status IN ('aberta','pausada') ORDER BY o.id DESC").all(c.id);
-  const pending = db.prepare("SELECT id, title, due_at, ends_at, meeting_url FROM tasks WHERE contact_id = ? AND type = 'reuniao' AND status = 'pendente' ORDER BY due_at").all(c.id);
+  const opps = db.prepare("SELECT o.id, o.code, o.status, s.name AS stage_name, s.key AS stage_key, s.position AS stage_position, o.business_area, o.objective_type, o.credit_value, o.urgency, o.credit_category FROM opportunities o JOIN pipeline_stages s ON s.id = o.stage_id WHERE o.contact_id = ? AND o.status IN ('aberta','pausada') ORDER BY o.id DESC").all(c.id);
+  const pending = db.prepare("SELECT id, title, due_at, ends_at, meeting_url FROM tasks WHERE contact_id = ? AND type = 'reuniao' AND status = 'pendente' AND COALESCE(meeting_kind, 'r1') = ? ORDER BY due_at").all(c.id, kind);
   const g = googleStatus(db, user, req);
   return {
     contact: { id: c.id, code: c.code, name: c.name, email: c.email || null, phone: c.whatsapp || c.phone1 || null },
     opportunities: opps,
     pending,
-    title: r1Title(db, c.name),
-    duration_min: Number(getSetting(db, 'r1_duration_min')) || 30,
+    kind,
+    title: r1Title(db, c.name, kind),
+    duration_min: Number(getSetting(db, `${kind}_duration_min`)) || (kind === 'r2' ? 60 : 30),
     google: { configured: g.configured, connected: g.connected, email: g.google_email, meet_access: g.meet_access, needs_reconnect: g.needs_reconnect },
   };
 }
@@ -225,27 +231,29 @@ function r1Context(db, user, contactId, req) {
  * data: contact_id, opportunity_id?, start_at, end_at (ISO), email?, title?, notes?, video (bool), move_to_r1 (bool)
  */
 async function scheduleR1(db, user, data, req) {
+  const kind = kindOf(data.kind);
+  const K = KINDS[kind];
   const c = loadContact(db, user, data.contact_id, { write: true });
   const start = new Date(data.start_at);
   const end = new Date(data.end_at);
-  if (Number.isNaN(start.getTime())) throw badRequest('Informe a data e o horário de início da R1.');
+  if (Number.isNaN(start.getTime())) throw badRequest(`Informe a data e o horário de início da ${K}.`);
   if (Number.isNaN(end.getTime()) || end <= start) throw badRequest('O horário de término precisa ser depois do início.');
   if (end - start > 4 * 3600 * 1000) throw badRequest('A reunião pode ter no máximo 4 horas.');
-  if (start.getTime() < Date.now() - 5 * 60 * 1000) throw badRequest('Escolha um horário futuro para a R1.');
+  if (start.getTime() < Date.now() - 5 * 60 * 1000) throw badRequest(`Escolha um horário futuro para a ${K}.`);
   let email = null;
   if (data.email) {
     email = normalizeEmail(data.email);
     if (!email) throw badRequest('E-mail do cliente inválido.');
   } else email = c.email ? normalizeEmail(c.email) : null;
   const video = data.video !== false && data.video !== 'false';
-  const title = clean(data.title) || r1Title(db, c.name);
+  const title = clean(data.title) || r1Title(db, c.name, kind);
   let oppId = data.opportunity_id ? Number(data.opportunity_id) : null;
   if (oppId && !db.prepare('SELECT 1 FROM opportunities WHERE id = ? AND contact_id = ?').get(oppId, c.id)) throw badRequest('Negócio inválido para este cliente.');
   if (!oppId) oppId = db.prepare("SELECT id FROM opportunities WHERE contact_id = ? AND status = 'aberta' ORDER BY id DESC LIMIT 1").get(c.id)?.id ?? null;
   const tasks = require('./tasks');
   const company = getSetting(db, 'company_name') || 'Vero Consórcios';
   const description = [
-    `Reunião de diagnóstico (R1) com ${company}.`,
+    kind === 'r2' ? `Segunda reunião (R2) com ${company}: apresentação da proposta e da estratégia.` : `Reunião de apresentação e diagnóstico (R1) com ${company}.`,
     `Especialista: ${db.prepare('SELECT name FROM users WHERE id = ?').get(c.owner_id || user.id)?.name || user.name}.`,
     clean(data.notes) || null,
   ].filter(Boolean).join('\n');
@@ -258,12 +266,12 @@ async function scheduleR1(db, user, data, req) {
     // A R1 é do responsável pelo cliente (o líder pode agendar em nome do especialista)
     const assignedTo = data.assigned_to || c.owner_id || user.id;
     const id = tasks.createTask(db, user, { contact_id: c.id, opportunity_id: oppId, type: 'reuniao', title, due_at: start.toISOString(), notes: clean(data.notes), priority: 'alta', assigned_to: assignedTo });
-    db.prepare('UPDATE tasks SET ends_at = ?, attendee_email = ? WHERE id = ?').run(end.toISOString(), email, id);
+    db.prepare('UPDATE tasks SET ends_at = ?, attendee_email = ?, meeting_kind = ?, rescheduled_from = ? WHERE id = ?').run(end.toISOString(), email, kind, data.rescheduled_from || null, id);
     return id;
   });
   const ev = { title, description, start: start.toISOString(), end: end.toISOString(), email, name: c.name, video };
   const assignee = db.prepare('SELECT assigned_to FROM tasks WHERE id = ?').get(taskId).assigned_to || user.id;
-  const result = { task_id: taskId, title, start_at: ev.start, end_at: ev.end, email, google: { synced: false }, calendar_link: calendarTemplateLink(ev) };
+  const result = { task_id: taskId, kind, title, start_at: ev.start, end_at: ev.end, email, google: { synced: false }, calendar_link: calendarTemplateLink(ev) };
   try {
     // Agenda do especialista responsável; se ele ainda não conectou o Google, vale a agenda de quem agenda (com o especialista convidado)
     let owner = assignee;
@@ -287,13 +295,15 @@ async function scheduleR1(db, user, data, req) {
   }
   // Confirmação por e-mail para o cliente (remetente noreply@), com o link do Meet
   result.confirmation = email ? await sendR1Confirmation(db, taskId, { logoUrl: data.logo_url }) : { sent: false, reason: 'sem_email' };
-  // Lead qualificado (ou R1 bolo) → R1: move o negócio junto com o agendamento
-  if (oppId && data.move_to_r1) {
+  // Agendou a R1 (ou a R2): o negócio vai junto para a coluna da reunião. O "Ganho" do pré-vendas leva o lead de
+  // Prospect, Lead, Tentativa ou Qualificação direto para a R1 (as regras das etapas puladas continuam valendo).
+  if (oppId && (data.move_to_r1 || data.move_to_stage)) {
     const o = db.prepare('SELECT o.*, s.key AS stage_key FROM opportunities o JOIN pipeline_stages s ON s.id = o.stage_id WHERE o.id = ?').get(oppId);
-    const r1 = db.prepare("SELECT id FROM pipeline_stages WHERE key = 'r1' AND active = 1").get();
-    if (r1 && o.status === 'aberta' && o.stage_key !== 'r1') {
+    const target = db.prepare('SELECT id, position FROM pipeline_stages WHERE key = ? AND active = 1').get(kind);
+    const cur = db.prepare('SELECT position FROM pipeline_stages WHERE id = ?').get(o.stage_id);
+    if (target && o.status === 'aberta' && o.stage_key !== kind && (cur?.position ?? 0) < target.position) {
       try {
-        require('./opportunities').moveStage(db, user, oppId, { stage_id: r1.id, reason: `R1 agendada para ${start.toLocaleString('pt-BR', { timeZone: TZ, dateStyle: 'short', timeStyle: 'short' })}` });
+        require('./opportunities').moveStage(db, user, oppId, { stage_id: target.id, reason: `${K} agendada para ${start.toLocaleString('pt-BR', { timeZone: TZ, dateStyle: 'short', timeStyle: 'short' })}` }, { allowSkip: true });
         result.moved = true;
       } catch (e) {
         result.moved = false;
@@ -308,7 +318,7 @@ async function scheduleR1(db, user, data, req) {
 const publicLogo = (u) => (/^https?:\/\/[^\s"']+$/.test(String(u || '')) && !/^https?:\/\/(localhost|127\.|0\.0\.0\.0|\[::1\])/i.test(u) ? u : null);
 
 /** E-mail "Reunião confirmada" para o cliente. Sem o convite do Google, vai junto o arquivo .ics. */
-async function sendR1Confirmation(db, taskId, { logoUrl } = {}) {
+async function sendR1Confirmation(db, taskId, { logoUrl, rescheduled = false } = {}) {
   if (getSetting(db, 'r1_confirmation_email') === false) return { sent: false, reason: 'desativado' };
   const t = db.prepare('SELECT t.*, c.name AS contact_name FROM tasks t LEFT JOIN contacts c ON c.id = t.contact_id WHERE t.id = ?').get(Number(taskId));
   if (!t?.attendee_email) return { sent: false, reason: 'sem_email' };
@@ -316,7 +326,7 @@ async function sendR1Confirmation(db, taskId, { logoUrl } = {}) {
   const sp = db.prepare('SELECT name, email, phone, whatsapp FROM users WHERE id = ?').get(t.assigned_to || t.created_by) || {};
   const end = t.ends_at || new Date(Date.parse(t.due_at) + 30 * 60000).toISOString();
   const msg = mailer.r1Email(db, {
-    name: t.contact_name, title: t.title, start: t.due_at, end, meetUrl: t.meeting_url, consultant: sp.name,
+    name: t.contact_name, title: t.title, start: t.due_at, end, meetUrl: t.meeting_url, consultant: sp.name, rescheduled,
     consultantPhone: fmtPhone(sp.whatsapp || sp.phone), consultantEmail: sp.email, logoUrl: publicLogo(logoUrl),
     calendarLink: t.calendar_status === 'google' ? null : calendarTemplateLink({ title: t.title, start: t.due_at, end, description: t.meeting_url ? `Google Meet: ${t.meeting_url}` : '', video: false }),
   });
@@ -472,6 +482,102 @@ async function attendanceSweep(db) {
   return done;
 }
 
+/* ------------------------- Resultado da R1/R2: concluir, não compareceu, remarcar, confirmar ------------------------- */
+
+function loadMeeting(db, user, taskId) {
+  const t = db.prepare('SELECT * FROM tasks WHERE id = ?').get(Number(taskId));
+  if (!t || t.type !== 'reuniao') throw badRequest('Reunião não encontrada.');
+  if (t.contact_id) loadContact(db, user, t.contact_id, { write: true });
+  return t;
+}
+
+/**
+ * Registra o resultado da reunião (botões do bloco R1/R2): "realizada" (Concluir) ou "nao_compareceu" (no-show: o
+ * cartão da R1 ganha a marca NS até a remarcação). A R2 realizada leva o negócio da coluna R2 para Negociação.
+ */
+async function meetingResult(db, user, taskId, data = {}) {
+  const t = loadMeeting(db, user, taskId);
+  const result = data.result === 'nao_compareceu' ? 'nao_compareceu' : data.result === 'realizada' ? 'realizada' : null;
+  if (!result) throw badRequest('Resultado inválido: use realizada (Concluir) ou nao_compareceu (Não compareceu).');
+  if (t.status !== 'pendente') throw badRequest('Esta reunião já foi encerrada.');
+  require('./tasks').updateTask(db, user, t.id, { action: 'concluir', outcome: result, notes: data.notes });
+  const kind = t.meeting_kind || 'r1';
+  if (result === 'realizada') db.prepare('UPDATE tasks SET attended_at = COALESCE(attended_at, ?) WHERE id = ?').run(nowIso(), t.id);
+  const out = { ok: true, result, kind };
+  if (result === 'realizada' && kind === 'r2' && t.opportunity_id) {
+    const o = db.prepare('SELECT o.status, s.key AS stage_key FROM opportunities o JOIN pipeline_stages s ON s.id = o.stage_id WHERE o.id = ?').get(t.opportunity_id);
+    const neg = db.prepare("SELECT id FROM pipeline_stages WHERE key = 'negociacao' AND active = 1").get();
+    if (o?.status === 'aberta' && o.stage_key === 'r2' && neg) {
+      try {
+        require('./opportunities').moveStage(db, user, t.opportunity_id, { stage_id: neg.id, reason: 'R2 realizada' });
+        out.moved = 'negociacao';
+      } catch (e) {
+        out.move_error = e.message;
+      }
+    }
+  }
+  if (result === 'nao_compareceu' && t.google_event_id) out.hint = 'Remarque a reunião: o mesmo evento do Google Agenda é atualizado e o cliente recebe o novo horário.';
+  return out;
+}
+
+/**
+ * Remarca a reunião: a atual fica como "remarcada" (histórico e indicador) e nasce a nova, com o mesmo link do Meet e
+ * o mesmo evento do Google Agenda (atualizado para o novo horário; o Google avisa o cliente). O cartão ganha a marca R.
+ * Também serve para remarcar uma reunião em que o cliente não compareceu (NS).
+ */
+async function rescheduleMeeting(db, user, taskId, data = {}, req = null) {
+  const t = loadMeeting(db, user, taskId);
+  const start = new Date(data.start_at);
+  const end = new Date(data.end_at);
+  if (Number.isNaN(start.getTime())) throw badRequest('Informe a nova data e o horário de início.');
+  if (Number.isNaN(end.getTime()) || end <= start) throw badRequest('O horário de término precisa ser depois do início.');
+  if (end - start > 4 * 3600 * 1000) throw badRequest('A reunião pode ter no máximo 4 horas.');
+  if (start.getTime() < Date.now() - 5 * 60 * 1000) throw badRequest('Escolha um horário futuro para a nova data.');
+  if (t.status !== 'pendente' && t.outcome !== 'nao_compareceu') throw badRequest('Só é possível remarcar uma reunião pendente ou em que o cliente não compareceu.');
+  if (t.status === 'pendente') {
+    const reason = clean(data.reason);
+    require('./tasks').updateTask(db, user, t.id, { action: 'concluir', outcome: 'remarcada', notes: reason ? `Remarcada: ${reason}` : undefined });
+  }
+  const kind = t.meeting_kind || 'r1';
+  const tasks = require('./tasks');
+  const now = nowIso();
+  const newId = tx(db, () => {
+    const id = tasks.createTask(db, user, { contact_id: t.contact_id, opportunity_id: t.opportunity_id, type: 'reuniao', title: t.title, due_at: start.toISOString(), notes: t.notes, priority: 'alta', assigned_to: t.assigned_to || user.id });
+    db.prepare('UPDATE tasks SET ends_at = ?, attendee_email = ?, meeting_kind = ?, rescheduled_from = ?, meeting_url = ?, google_event_id = ?, calendar_status = ?, calendar_owner_id = ?, attendance_status = ? WHERE id = ?')
+      .run(end.toISOString(), t.attendee_email, kind, t.id, t.meeting_url, t.google_event_id, t.calendar_status, t.calendar_owner_id, t.meeting_url ? 'aguardando' : null, id);
+    // O evento passa para a nova reunião (a anterior deixa de ser sincronizada)
+    db.prepare('UPDATE tasks SET google_event_id = NULL WHERE id = ?').run(t.id);
+    if (t.contact_id) {
+      const when = start.toLocaleString('pt-BR', { timeZone: TZ, dateStyle: 'short', timeStyle: 'short' });
+      require('./activities').insertActivity(db, { contact_id: t.contact_id, opportunity_id: t.opportunity_id, type: 'reuniao_agendada', notes: `${KINDS[kind]} remarcada para ${when}${clean(data.reason) ? ` — ${clean(data.reason)}` : ''}.`, user_id: user.id, ref_type: 'task', ref_id: id, occurred_at: now });
+    }
+    audit(db, user, 'task', id, 'reuniao_remarcada', { anterior: t.id, inicio: start.toISOString() }, t.contact_id);
+    return id;
+  });
+  const result = { task_id: newId, kind, start_at: start.toISOString(), end_at: end.toISOString(), meeting_url: t.meeting_url, google: { synced: false } };
+  if (t.google_event_id) {
+    try {
+      const contact = t.contact_id ? db.prepare('SELECT name FROM contacts WHERE id = ?').get(t.contact_id) : null;
+      const g = await upsertGoogleEvent(db, t.calendar_owner_id || t.assigned_to || user.id, { title: t.title, description: t.notes || '', start: start.toISOString(), end: end.toISOString(), email: t.attendee_email, name: contact?.name }, t.google_event_id);
+      result.google = { synced: !!g };
+    } catch (e) {
+      result.google = { synced: false, error: e.message };
+    }
+  }
+  result.confirmation = t.attendee_email ? await sendR1Confirmation(db, newId, { logoUrl: data.logo_url, rescheduled: true }) : { sent: false, reason: 'sem_email' };
+  return result;
+}
+
+/** O cliente confirmou presença (WhatsApp, ligação ou resposta ao convite). */
+function confirmMeeting(db, user, taskId, data = {}) {
+  const t = loadMeeting(db, user, taskId);
+  if (t.status !== 'pendente') throw badRequest('Só reuniões pendentes podem ser confirmadas.');
+  const at = data.undo ? null : nowIso();
+  db.prepare('UPDATE tasks SET confirmed_at = ?, updated_at = ? WHERE id = ?').run(at, nowIso(), t.id);
+  audit(db, user, 'task', t.id, at ? 'reuniao_confirmada' : 'confirmacao_desfeita', null, t.contact_id);
+  return { ok: true, confirmed_at: at };
+}
+
 /** Link da reunião informado manualmente (ex.: Meet criado pelo próprio Google Agenda). */
 function setMeetingUrl(db, user, taskId, data) {
   const t = db.prepare('SELECT * FROM tasks WHERE id = ?').get(Number(taskId));
@@ -615,4 +721,5 @@ module.exports = {
   googleConfig, googleStatus, saveGoogleConfig, connectUrl, oauthCallback, disconnect, r1Context, scheduleR1, setMeetingUrl,
   calendarTemplateLink, r1Title, upsertGoogleEvent, publicUrl,
   sendR1Confirmation, checkAttendance, attendanceSweep, classifyParticipants, decideAttendance, meetCode, MEET_SCOPE,
+  meetingResult, rescheduleMeeting, confirmMeeting,
 };

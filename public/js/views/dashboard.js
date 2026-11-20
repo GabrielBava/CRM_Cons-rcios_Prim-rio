@@ -72,7 +72,7 @@ export async function show(view) {
         </section>
       </div>
 
-      <section class="card funnel-card"><div class="section-head"><h3>Funil de vendas</h3><a href="#/funil" class="small">abrir o CRM</a></div>
+      <section class="card funnel-card"><div class="section-head"><h3>Pipeline</h3><a href="#/funil" class="small">abrir o pipeline</a></div>
         <div class="funnel-summary">
           <span><strong>${funnelTotal.n}</strong> negócio(s) em aberto · <strong>${fmtMoneyShort(funnelTotal.v)}</strong></span>
           <span class="temp-legend">${tempBadge('quente')} ${funnelTotal.q} ${tempBadge('morno')} ${funnelTotal.m} ${tempBadge('frio')} ${funnelTotal.fr}</span>

@@ -9,7 +9,7 @@ import { qualBlocks, qualProgress, tempBadge, tempPanel } from '../qualification
 import { transcriptFlow, downloadR1Template } from '../r1.js';
 import { moveStage, opportunityForm, activityForm, taskForm, simulationForm, proposalForm, proposalDetail, quickSimulation, openProposalSimulator } from '../forms.js';
 import { timeline, tasksTable, bindTasks } from './contact.js';
-import { scheduleR1Dialog, R1_STAGES } from '../meeting.js';
+import { scheduleMeetingDialog, R1_STAGES } from '../meeting.js';
 
 let saved = {};
 let sortBy = 'next_action';
@@ -45,7 +45,7 @@ export async function show(view, { key, id, params }) {
   const manager = can.manage();
   render(view, html`<div class="page wide">
     ${crmTabs('funil')}
-    <div class="page-head"><h1>Funil de vendas</h1>
+    <div class="page-head"><div><h1>Pipeline</h1><p class="muted small">0 Prospect · 1 Lead · 2 Tentativa · 3 Qualificação · 4 R1 · 5 R2 · 6 Negociação · 7 Venda — para todas as áreas (consórcio, planejamento, seguros e investimentos).</p></div>
       <div class="actions">
         <div class="seg small"><button class="btn small ${s.mode !== 'lista' ? 'active' : ''}" data-mode="kanban">Kanban</button><button class="btn small ${s.mode === 'lista' ? 'active' : ''}" data-mode="lista">Lista</button></div>
         ${can.admin() ? html`<button class="btn" data-act="export">Exportar CSV</button>` : ''}
@@ -53,6 +53,7 @@ export async function show(view, { key, id, params }) {
     <form class="filters" data-f>
       <label class="grow">Buscar<input type="search" name="q" value="${s.q || ''}" placeholder="Nome, código (C-…, OP-…), telefone ou e-mail"></label>
       ${manager ? html`<label>Funil de<select name="owner_id">${selectOptions(userItems(), s.owner_id, { placeholder: 'Todos os usuários' })}</select></label>` : ''}
+      <label>Área<select name="area">${selectOptions(opts('area_negocio'), s.area, { placeholder: 'Todas as áreas' })}</select></label>
       <label>Origem<select name="origin">${selectOptions(opts('origem'), s.origin, { placeholder: 'Todas' })}</select></label>
       <label>Categoria<select name="category">${selectOptions(opts('categoria_credito'), s.category, { placeholder: 'Todas' })}</select></label>
       <label>Etapa<select name="stage_id">${selectOptions(stageItems(), s.stage_id, { placeholder: 'Todas' })}</select></label>
@@ -63,9 +64,11 @@ export async function show(view, { key, id, params }) {
     <div class="board-tools">
       <div class="sort-box"><label>Ordenar por<select data-sort>${selectOptions(SORTS, sortBy, { allowEmpty: false })}</select></label>
         <button type="button" class="btn small sort-dir" data-sortdir aria-label="Inverter a ordem">${sortDir === 'asc' ? '↑ Crescente' : '↓ Decrescente'}</button></div>
+      <label class="check archived-toggle"><input type="checkbox" data-archived ${s.archived ? raw('checked') : ''}> Mostrar arquivados (Nutrição futura e Perdido)</label>
       ${can.write() ? html`<button type="button" class="btn" data-act="bulk" aria-pressed="false">${icon('selecionar', 16)}Mover em massa</button>` : ''}
     </div>
     <div id="board"></div>
+    <div class="drop-bar" hidden aria-hidden="true">${state.meta.stages.filter((x) => ['nutricao', 'perdido'].includes(x.kind)).map((x) => html`<div class="drop-zone kind-${x.kind}" data-stage="${x.id}"><strong>${x.name}</strong><small>Solte aqui para arquivar</small></div>`)}</div>
     <div class="bulk-bar" hidden><strong data-bulk-count>0 selecionado(s)</strong>
       <button type="button" class="btn small ghost" data-act="bulk-all">Selecionar todos visíveis</button>
       <span class="grow"></span>
@@ -75,6 +78,7 @@ export async function show(view, { key, id, params }) {
   </div>`);
   const form = $('[data-f]', view);
   let mode = s.mode || 'kanban';
+  let archived = !!s.archived;
   let data = null;
   let bulk = false;
   const selected = new Set();
@@ -90,11 +94,11 @@ export async function show(view, { key, id, params }) {
   };
   const draw = () => {
     const box = $('#board', view);
-    if (mode === 'kanban' && data) render(box, board(data, bulk, selected));
+    if (mode === 'kanban' && data) render(box, board(data, bulk, selected, archived));
     syncBulk();
   };
   const load = async () => {
-    saved = { ...query(), mode };
+    saved = { ...query(), mode, archived };
     const box = $('#board', view);
     box.classList.add('loading');
     try {
@@ -132,6 +136,11 @@ export async function show(view, { key, id, params }) {
     load();
   });
   on(view, 'change', '[data-sort]', (e, sel) => ((sortBy = sel.value), draw()));
+  on(view, 'change', '[data-archived]', (e, c) => {
+    archived = c.checked;
+    saved.archived = archived;
+    draw();
+  });
   on(view, 'click', '[data-sortdir]', (e, b) => {
     sortDir = sortDir === 'asc' ? 'desc' : 'asc';
     b.textContent = sortDir === 'asc' ? '↑ Crescente' : '↓ Decrescente';
@@ -231,17 +240,22 @@ export async function show(view, { key, id, params }) {
     e.dataTransfer.setData('text/plain', c.dataset.id);
     e.dataTransfer.effectAllowed = 'move';
     c.classList.add('dragging');
+    if (!archived) $('.drop-bar', view).hidden = false;
   });
-  on(view, 'dragend', '.opp-card', (e, c) => c.classList.remove('dragging'));
-  on(view, 'dragover', '.column', (e, col) => {
+  on(view, 'dragend', '.opp-card', (e, c) => {
+    c.classList.remove('dragging');
+    $('.drop-bar', view).hidden = true;
+  });
+  on(view, 'dragover', '.column, .drop-zone', (e, col) => {
     if (!can.write() || bulk) return;
     e.preventDefault();
     col.classList.add('over');
   });
-  on(view, 'dragleave', '.column', (e, col) => col.classList.remove('over'));
-  on(view, 'drop', '.column', (e, col) => {
+  on(view, 'dragleave', '.column, .drop-zone', (e, col) => col.classList.remove('over'));
+  on(view, 'drop', '.column, .drop-zone', (e, col) => {
     e.preventDefault();
     col.classList.remove('over');
+    $('.drop-bar', view).hidden = true;
     const oppId = e.dataTransfer.getData('text/plain');
     if (oppId) doMove(oppId, col.dataset.stage);
   });
@@ -249,25 +263,68 @@ export async function show(view, { key, id, params }) {
   await load();
 }
 
-function board(d, bulk, selected) {
-  return html`<div class="kanban ${bulk ? 'bulk' : ''}">${d.stages.map(
+/** Contadores das colunas R1 e R2: agendadas, realizadas, remarcadas (R) e no-show (NS). */
+function meetingCounters(s) {
+  const kind = s.key === 'r2' ? 'r2' : s.key === 'r1' ? 'r1' : null;
+  if (!kind) return '';
+  const ms = s.cards.map((c) => c.meetings?.[kind]).filter(Boolean);
+  const n = (f) => ms.filter(f).length;
+  const ag = n((m) => ['agendada', 'remarcada'].includes(m.state));
+  const ok = n((m) => m.state === 'realizada');
+  const rm = n((m) => m.state === 'remarcada');
+  const ns = n((m) => m.state === 'no_show');
+  return html`<div class="col-meet" title="Agendadas · realizadas · remarcadas · no-show"><span>${ag} agend.</span><span class="ok-text">${ok} feitas</span>${rm ? html`<span class="badge rm">R ${rm}</span>` : ''}${ns ? html`<span class="badge ns">NS ${ns}</span>` : ''}</div>`;
+}
+
+function board(d, bulk, selected, archived) {
+  const cols = d.stages.filter((s) => archived || !['nutricao', 'perdido'].includes(s.kind));
+  return html`<div class="kanban ${bulk ? 'bulk' : ''}">${cols.map(
     (s) => html`<section class="column kind-${s.kind}" data-stage="${s.id}" data-key="${s.key || ''}">
-      <header>${bulk && s.cards.length ? html`<input type="checkbox" data-sel-col="${s.id}" aria-label="Selecionar todos de ${s.name}" ${s.cards.every((c) => selected.has(c.id)) ? raw('checked') : ''}>` : ''}<strong>${s.name}</strong><span class="count">${s.count}</span>${s.total_credit ? html`<small>${fmtMoney(s.total_credit)}</small>` : ''}</header>
+      <header>${bulk && s.cards.length ? html`<input type="checkbox" data-sel-col="${s.id}" aria-label="Selecionar todos de ${s.name}" ${s.cards.every((c) => selected.has(c.id)) ? raw('checked') : ''}>` : ''}<strong>${s.name}</strong>${['nutricao', 'perdido'].includes(s.kind) ? html`<small class="archived-tag">arquivado</small>` : ''}<span class="count">${s.count}</span>${s.total_credit ? html`<small>${fmtMoney(s.total_credit)}</small>` : ''}${meetingCounters(s)}</header>
       <div class="cards">${s.cards.length ? sortCards(s.cards).map((c) => card(c, bulk, selected)) : html`<div class="empty small">—</div>`}</div>
     </section>`,
-  )}</div><p class="muted small">Clique no nome para ver o resumo sem sair do funil (botão do meio ou Ctrl+clique abre o cadastro em nova guia). Arraste os cartões entre as etapas. O valor é o da maior proposta ativa; sem proposta, o crédito desejado. Fechadas aparecem por ${d.closed_days} dias. Borda vermelha: sem atividade há ${state.meta.settings.stalled_days}+ dias.</p>`;
+  )}</div><p class="muted small">Clique no nome para abrir o painel do lead sem sair do pipeline. Arraste os cartões entre as etapas: para R1 ou R2 abre o agendamento da reunião; para Perdido, os motivos de perda (MP). Ao arrastar, aparecem as áreas de arquivamento (Nutrição futura e Perdido). NS = não compareceu à reunião; R = reunião remarcada. Fechadas aparecem por ${d.closed_days} dias.</p>`;
+}
+
+const SLA_TONE = { ok: 'ok', atencao: 'warn', estourado: 'danger' };
+const fmtShort = (iso) => `${new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} ${new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+const scoreTone = (n) => (n >= 70 ? 'hi' : n >= 40 ? 'mid' : 'lo');
+
+/** Marcas de reunião do cartão: NS (amarelo), R (azul), data da R1/R2 e se a R2 já foi marcada. */
+function meetingTags(o) {
+  const m = o.meetings || {};
+  const out = [];
+  const one = (k, x) => {
+    if (!x) return;
+    const K = k.toUpperCase();
+    if (x.state === 'no_show') out.push(html`<span class="badge ns" title="${K}: o cliente não compareceu">NS</span>`);
+    if (x.state === 'remarcada') out.push(html`<span class="badge rm" title="${K} remarcada${x.reschedules > 1 ? ` ${x.reschedules}x` : ''}">R</span>`);
+    if (['agendada', 'remarcada'].includes(x.state)) out.push(html`<span class="chip-sm meet ${x.confirmed ? 'confirmed' : ''}" title="${K} agendada${x.confirmed ? ' (presença confirmada)' : ''}">${K} ${fmtShort(x.at)}</span>`);
+    if (x.state === 'realizada') out.push(html`<span class="chip-sm ok-chip">${K} feita</span>`);
+  };
+  one('r1', m.r1);
+  one('r2', m.r2);
+  if (['r1', 'r2'].includes(o.stage_key) && !m.r2) out.push(html`<span class="chip-sm muted">R2 não agendada</span>`);
+  return out.length ? html`<div class="card-meet">${out}</div>` : '';
 }
 
 function card(o, bulk, selected) {
   const late = o.next_action_at && new Date(o.next_action_at) < new Date() && o.status === 'aberta';
   const sel = selected.has(o.id);
-  return html`<article class="opp-card prio-${o.priority} ${o.stalled ? 'stalled' : ''} ${sel ? 'selected' : ''}" draggable="${can.write() && !bulk ? 'true' : 'false'}" data-id="${o.id}">
+  const campaign = o.campaign || o.origin_campaign || o.contact_campaign;
+  return html`<article class="opp-card prio-${o.priority} ${o.stalled ? 'stalled' : ''} ${sel ? 'selected' : ''} ${o.sla ? `sla-${o.sla.level}` : ''}" draggable="${can.write() && !bulk ? 'true' : 'false'}" data-id="${o.id}">
     ${bulk ? html`<input type="checkbox" class="card-check" data-sel="${o.id}" aria-label="Selecionar ${o.contact_name}" ${sel ? raw('checked') : ''}>` : ''}
-    <div class="card-title-row"><a href="#/leads/${o.contact_id}" class="title" data-drawer="${o.contact_id}" data-opp="${o.id}">${o.contact_name}</a>${o.stage_kind === 'aberta' ? tempBadge(o.temperature, o.temperature_info) : ''}</div>
-    <div class="small muted">ID ${o.contact_code}</div>
-    <div class="card-tags"><span class="chip-sm">${optLabel('origem', o.contact_origin) || 'Sem origem'}</span>${o.credit_category ? html`<span class="chip-sm muted">${optLabel('categoria_credito', o.credit_category)}</span>` : ''}</div>
-    ${o.deal_value ? html`<div class="small deal-value"><strong>${fmtMoney(o.deal_value)}</strong> <small class="muted">${o.deal_value_source === 'proposta' ? `${o.proposal_count > 1 ? `${o.proposal_count} propostas` : 'proposta'}` : 'desejado'}</small></div>` : ''}
-    <div class="small ${late ? 'overdue' : ''}">${o.next_action ? html`▸ ${o.next_action} ${o.next_action_at ? html`<span>(${relTime(o.next_action_at)})</span>` : ''}` : html`<span class="warn-text">Sem próxima atividade</span>`}</div>
+    <div class="card-title-row"><a href="#/leads/${o.contact_id}" class="title" data-drawer="${o.contact_id}" data-opp="${o.id}">${o.contact_name}</a>
+      <span class="card-badges">${o.stage_kind === 'aberta' ? tempBadge(o.temperature, o.temperature_info) : ''}<span class="badge pfpj" title="${o.contact_kind === 'PJ' ? 'Pessoa jurídica' : 'Pessoa física'}">${o.contact_kind === 'PJ' ? 'PJ' : 'PF'}</span></span></div>
+    <div class="card-tags"><span class="chip-sm area area-${o.business_area || 'consorcio'}" title="Área responsável">${optLabel('area_negocio', o.business_area || 'consorcio')}</span>${o.credit_category ? html`<span class="chip-sm muted">${optLabel('categoria_credito', o.credit_category)}</span>` : ''}</div>
+    <div class="small card-origin" title="Origem e campanha">${optLabel('origem', o.contact_origin) || 'Sem origem'}${campaign ? html` · <span class="muted">${campaign}</span>` : ''}</div>
+    <div class="card-metrics">
+      <span class="deal-value" title="Valor estimado${o.deal_value_source === 'proposta' ? ' (maior proposta ativa)' : ''}">${o.deal_value ? fmtMoney(o.deal_value) : html`<span class="muted">Sem valor</span>`}</span>
+      ${o.sla ? html`<span class="badge ${SLA_TONE[o.sla.level] || ''}" title="SLA da atividade">${o.sla.text}</span>` : ''}
+      ${o.score != null ? html`<span class="score s-${scoreTone(o.score)}" title="Score do lead (0 a 100)">${o.score}</span>` : ''}
+    </div>
+    ${meetingTags(o)}
+    <div class="small next ${late ? 'overdue' : ''}">${o.next_action ? html`▸ ${o.next_action} ${o.next_action_at ? html`<span>(${relTime(o.next_action_at)})</span>` : ''}` : html`<span class="warn-text">Sem próxima ação</span>`}</div>
     <div class="card-foot"><span class="small muted">${o.owner_name || '—'} · ${o.days_in_stage}d na etapa</span>${optoutBadge(o.contact_optouts)}${o.status === 'perdida' && o.lost_reason ? badge(optLabel('motivo_perda', o.lost_reason), 'muted') : ''}</div>
   </article>`;
 }
@@ -277,6 +334,8 @@ function oppTable(rows) {
     [
       { label: 'Cadastro', render: (o) => html`<a href="#/leads/${o.contact_id}" data-drawer="${o.contact_id}" data-opp="${o.id}">${o.contact_name}</a> ${o.status === 'aberta' ? tempBadge(o.temperature, o.temperature_info) : ''} ${optoutBadge(o.contact_optouts)}<br><small>${o.contact_code} · <a href="#/oportunidades/${o.id}">${o.code}</a></small>` },
       { label: 'Etapa', render: (o) => html`${o.stage_name}<br><small>${K('opp_status', o.status)}</small>` },
+      { label: 'Área', render: (o) => optLabel('area_negocio', o.business_area || 'consorcio') },
+      { label: 'Score', cls: 'num', render: (o) => (o.score != null ? o.score : '—') },
       { label: 'Origem', render: (o) => optLabel('origem', o.contact_origin) },
       { label: 'Categoria', render: (o) => optLabel('categoria_credito', o.credit_category) || '—' },
       { label: 'Valor', render: (o) => html`${fmtMoney(o.deal_value)}${o.deal_value ? html`<br><small>${o.deal_value_source === 'proposta' ? 'proposta' : 'desejado'}</small>` : ''}`, cls: 'num' },
@@ -323,14 +382,15 @@ async function showOpp(view, id) {
     const kv = (label, v) => html`<div><span>${label}</span>${v ?? '—'}</div>`;
     render(view, html`<div class="page">
       <div class="page-head"><div>
-        <div class="crumbs"><a href="#/funil">Funil</a> / <a href="#/leads/${o.contact_id}">${o.contact_name}</a> / ${o.code}</div>
+        <div class="crumbs"><a href="#/funil">Pipeline</a> / <a href="#/leads/${o.contact_id}">${o.contact_name}</a> / ${o.code}</div>
         <h1>${o.code} ${o.title ? html`— ${o.title}` : ''} ${o.status === 'aberta' ? tempBadge(o.temperature, o.temperature_info) : ''}</h1>
         <div class="badges">${badge(o.stage_name, `kind-${o.stage_kind}`)} ${badge(K('opp_status', o.status), o.status === 'ganha' ? 'ok' : o.status === 'perdida' ? 'danger' : '')} ${badge(`Prioridade ${K('priorities', o.priority)}`)} ${optoutBadge(o.contact_optouts)} ${o.stalled ? badge(`Sem atividade há ${o.days_without_activity} dias`, 'danger') : ''}</div>
         <div class="muted small">Cadastro: <a href="#/leads/${o.contact_id}">${o.contact_code} — ${o.contact_name}</a> · Responsável: ${o.owner_name || '—'} · ${o.days_in_stage} dia(s) na etapa atual</div>
       </div>
       ${can.write() ? html`<div class="actions">
         <label class="inline">Mover para <select data-move-detail>${html`<option value="">—</option>`}${state.meta.stages.filter((s) => s.id !== o.stage_id).map((s) => html`<option value="${s.id}">${s.name}</option>`)}</select></label>
-        ${o.status === 'aberta' && R1_STAGES.includes(o.stage_key) ? html`<button class="btn r1" data-act="r1-schedule">Agendar R1</button>` : ''}
+        ${o.status === 'aberta' && R1_STAGES.includes(o.stage_key) && !o.meetings?.r1 ? html`<button class="btn r1" data-act="r1-schedule">Agendar R1</button>` : ''}
+        ${o.status === 'aberta' && o.stage_key === 'r1' && !o.meetings?.r2 ? html`<button class="btn r1" data-act="r2-schedule">Agendar R2</button>` : ''}
         <button class="btn" data-act="edit">Editar</button>
         <button class="btn primary" data-act="activity">Registrar atividade</button>
         <button class="btn" data-act="task">Nova tarefa</button>
@@ -399,7 +459,8 @@ async function showOpp(view, id) {
   });
   on(view, 'click', '[data-act=edit]', async () => (await opportunityForm(contact, o)) && reload());
   on(view, 'click', '[data-act=r1]', async () => (await transcriptFlow(o)) && reload());
-  on(view, 'click', '[data-act=r1-schedule]', async () => (await scheduleR1Dialog({ contactId: o.contact_id, oppId: o.id, moveToR1: ['qualificado', 'r1_bolo'].includes(o.stage_key) })) && reload());
+  on(view, 'click', '[data-act=r1-schedule]', async () => (await scheduleMeetingDialog({ contactId: o.contact_id, oppId: o.id, kind: 'r1', moveTo: true })) && reload());
+  on(view, 'click', '[data-act=r2-schedule]', async () => (await scheduleMeetingDialog({ contactId: o.contact_id, oppId: o.id, kind: 'r2', moveTo: true })) && reload());
   on(view, 'click', '[data-act=r1-template]', (e) => (e.preventDefault(), downloadR1Template()));
   on(view, 'click', '[data-act=activity]', async () => (await activityForm(contact, { opportunity_id: o.id })) && reload());
   on(view, 'click', '[data-act=task]', async () => (await taskForm({ contact, opportunity_id: o.id })) && reload());

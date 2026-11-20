@@ -23,6 +23,7 @@ const MODULES = [
   { key: 'comissoes', label: 'Comissões e cancelamentos', group: 'Operação' },
   { key: 'treinamentos', label: 'Treinamentos', group: 'Operação' },
   { key: 'financeiro', label: 'Financeiro (contas a pagar, a receber e cadastros)', group: 'Financeiro' },
+  { key: 'time', label: 'Gestão do time (organograma e dashboard da squad)', group: 'Gestão' },
   { key: 'colaboradores', label: 'Colaboradores (RH: cadastro, contratos, remuneração e benefícios)', group: 'Pessoas' },
   { key: 'documentos', label: 'Central de documentos da empresa', group: 'Administração' },
   { key: 'administradoras', label: 'Administradoras', group: 'Administração' },
@@ -38,7 +39,7 @@ const COMMERCIAL = ['painel', 'crm', 'agenda', 'simulador', 'propostas', 'client
 /** Módulos padrão de cada perfil. */
 const ROLE_MODULES = {
   admin: MODULE_KEYS,
-  gestor: [...COMMERCIAL, 'distribuicao', 'relatorios'],
+  gestor: [...COMMERCIAL, 'distribuicao', 'relatorios', 'time'],
   // Especialista: em Relatórios vê só as próprias vendas e comissões, sem dados de leads e sem exportar
   consultor: [...COMMERCIAL, 'relatorios'],
   leitura: ['painel', 'crm', 'clientes', 'propostas', 'posvenda', 'treinamentos'],

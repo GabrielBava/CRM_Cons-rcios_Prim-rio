@@ -116,9 +116,16 @@ function seedDemo(db, password) {
   ];
   const origins = ['indicacao', 'meta_ads', 'instagram', 'whatsapp', 'ligacao_ativa', 'site', 'evento', 'parceiro'];
   const stageId = Object.fromEntries(db.prepare('SELECT key, id FROM pipeline_stages WHERE key IS NOT NULL').all().map((s) => [s.key, s.id]));
-  const ORDER = ['lead', 'tentativa', 'qualificado', 'r1', 'negociacao', 'follow_up'];
-  // Etapa alvo de cada cadastro (índice % 10): 0 prospect, 1 lead, 2 tentativa, 3 qualificado, 4 R1, 5 negociação, 6 follow-up, 7 aceite/pré-venda, 8 pré-venda com link, 9 venda
-  const TARGET = ['prospect', 'lead', 'tentativa', 'qualificado', 'r1', 'negociacao', 'follow_up', 'aceite', 'prevenda', 'venda'];
+  const ORDER = ['lead', 'tentativa', 'qualificado', 'r1', 'r2', 'negociacao'];
+  // Etapa alvo de cada cadastro (índice % 10): 0 prospect, 1 lead, 2 tentativa, 3 qualificação, 4 R1, 5 R2, 6 negociação (proposta), 7 aceite/pré-venda, 8 pré-venda com link, 9 venda
+  const TARGET = ['prospect', 'lead', 'tentativa', 'qualificado', 'r1', 'r2', 'negociacao', 'aceite', 'prevenda', 'venda'];
+  const AREAS = ['consorcio', 'consorcio', 'planejamento', 'consorcio', 'seguros', 'consorcio', 'investimentos', 'consorcio'];
+  const meet = (owner, contactId, opp, kind, dueAt, extra = {}) => {
+    const id = tasks.createTask(db, owner, { contact_id: contactId, opportunity_id: opp.id, type: 'reuniao', title: `[${kind.toUpperCase()}] ${db.prepare('SELECT name FROM contacts WHERE id = ?').get(contactId).name} | Vero Consórcios`, due_at: dueAt, priority: 'alta' });
+    db.prepare('UPDATE tasks SET meeting_kind = ?, ends_at = ?, meeting_url = ?, confirmed_at = ?, rescheduled_from = ? WHERE id = ?')
+      .run(kind, new Date(Date.parse(dueAt) + (kind === 'r2' ? 60 : 30) * 60000).toISOString(), extra.url ?? 'https://meet.google.com/abc-defg-hij', extra.confirmed ? dueAt : null, extra.from ?? null, id);
+    return id;
+  };
   const rnd = (arr, i) => arr[i % arr.length];
   const ids = [];
   // Imagem fictícia usada como documento enviado pelo cliente
@@ -129,10 +136,15 @@ function seedDemo(db, password) {
   function advance(owner, contactId, opp, key, i) {
     const upto = ORDER.indexOf(key);
     let r1Task = null;
+    let r2Task = null;
     for (let k = 1; k <= upto; k++) {
       const st = ORDER[k];
       const when = ago(12 - k * 2 + (i % 2), 9 + k);
-      if (st === 'tentativa') activities.createActivity(db, owner, { contact_id: contactId, opportunity_id: opp.id, type: 'tentativa_sem_atendimento', result: 'nao_atendida', occurred_at: when });
+      const future = new Date(Date.now() + ((i % 3) + 1) * DAY / 2).toISOString();
+      if (st === 'tentativa') {
+        activities.createActivity(db, owner, { contact_id: contactId, opportunity_id: opp.id, type: 'tentativa_sem_atendimento', result: 'nao_atendida', occurred_at: when });
+        if (i % 3 === 1) activities.createActivity(db, owner, { contact_id: contactId, opportunity_id: opp.id, type: 'direct_enviado', notes: 'Direct pelo Instagram depois do anúncio.', occurred_at: when });
+      }
       if (st === 'qualificado') {
         activities.createActivity(db, owner, { contact_id: contactId, opportunity_id: opp.id, type: 'ligacao_realizada', result: 'atendida', duration: 240 + i * 11, notes: 'Conversa sobre objetivo, prazo e parcela possível.', occurred_at: when });
         opps.updateOpportunity(db, owner, opp.id, {
@@ -146,15 +158,25 @@ function seedDemo(db, password) {
         });
       }
       if (st === 'r1') {
-        const future = upto === k;
-        r1Task = tasks.createTask(db, owner, { contact_id: contactId, opportunity_id: opp.id, type: 'reuniao', title: 'R1 — diagnóstico financeiro', due_at: future ? new Date(Date.now() + ((i % 3) + 1) * DAY / 2).toISOString() : when });
+        const last = upto === k;
+        if (last && i === 4) {
+          // R1 com no-show (NS no cartão): o cliente faltou e a reunião ainda não foi remarcada
+          r1Task = meet(owner, contactId, opp, 'r1', ago(1, 14));
+        } else if (last && i === 14) {
+          // R1 remarcada (R no cartão): a primeira ficou como remarcada e a nova está marcada, com presença confirmada
+          const first = meet(owner, contactId, opp, 'r1', ago(2, 15));
+          tasks.updateTask(db, owner, first, { action: 'concluir', outcome: 'remarcada', notes: 'Cliente pediu para mudar o horário.' });
+          r1Task = meet(owner, contactId, opp, 'r1', future, { from: first, confirmed: true });
+        } else r1Task = meet(owner, contactId, opp, 'r1', last ? future : when, { confirmed: last && i % 2 === 0 });
       }
-      if (st === 'negociacao') {
+      if (st === 'r2') {
         tasks.updateTask(db, owner, r1Task, { action: 'concluir', outcome: 'realizada', notes: 'Cliente quer imóvel para morar em até 3 anos; tem FGTS.' });
         opps.updateOpportunity(db, owner, opp.id, { decision_maker: rnd(['sozinho', 'conjuge'], i), financial_moment: rnd(['organizado_reserva', 'organizado_sem_reserva', 'apertado'], i), had_consortium: i % 4 === 0 ? 'sim' : 'nao', existing_consortium_admin: i % 4 === 0 ? 'Administradora anterior' : null, existing_consortium_value: i % 4 === 0 ? 120000 : null, has_financing: 'nao', decision_notes: i % 2 ? 'Decide com a esposa.' : null });
+        r2Task = meet(owner, contactId, opp, 'r2', upto === k ? future : when);
       }
       let proposal = null;
-      if (st === 'follow_up') {
+      if (st === 'negociacao') {
+        tasks.updateTask(db, owner, r2Task, { action: 'concluir', outcome: 'realizada', notes: 'Proposta apresentada na R2; cliente vai avaliar com a família.' });
         const s = sims.createManual(db, owner, { contact_id: contactId, opportunity_id: opp.id, credit_value: 200000 + (i % 3) * 50000, term_months: 200, installment: 1400 + i * 10, strategy: 'aquisicao', payment_modality: 'parcela_integral' });
         const credit = 200000 + (i % 3) * 50000;
         const split = i % 2 === 1 ? { quota_split_strategy: 'grupos_diferentes', quota_values: [credit / 2, credit / 2], quota_split_notes: 'Duas cotas em grupos diferentes para dobrar as chances de contemplação por lance.' } : { quota_split_strategy: 'unica', quota_values: [credit] };
@@ -163,8 +185,10 @@ function seedDemo(db, password) {
       opps.moveStage(db, owner, opp.id, { stage_id: stageId[st] });
       if (proposal) opp.proposal_id = proposal.id;
     }
+    // R1 com no-show: registrado depois de entrar na coluna R1 (o cartão mostra NS)
+    if (key === 'r1' && i === 4 && r1Task) tasks.updateTask(db, owner, r1Task, { action: 'concluir', outcome: 'nao_compareceu', notes: 'Cliente não entrou na reunião.' });
     // Próxima ação do negócio
-    if (upto < 5) opps.updateOpportunity(db, owner, opp.id, { next_action: upto < 2 ? 'Nova tentativa de contato' : upto < 3 ? 'Agendar R1' : 'Preparar a proposta', next_action_at: new Date(Date.now() + ((i % 4) - 1) * DAY).toISOString() });
+    if (upto < 5) opps.updateOpportunity(db, owner, opp.id, { next_action: upto < 2 ? 'Nova tentativa de contato' : upto < 3 ? 'Agendar R1' : upto < 4 ? 'Confirmar a R1 com o cliente' : 'Preparar a R2 (proposta)', next_action_at: new Date(Date.now() + ((i % 4) - 1) * DAY).toISOString() });
   }
 
   function completeRecord(contactId, i) {
@@ -221,7 +245,7 @@ function seedDemo(db, password) {
           city: rnd(['São Paulo', 'Campinas', 'Santos', 'Sorocaba'], i),
           state: 'SP',
           origin: rnd(origins, i),
-          campaign: i % 3 === 0 ? 'Campanha demonstração' : null,
+          campaign: i % 3 === 0 ? rnd(['Imóvel sem juros', 'Planejamento 2027', 'Seguro de vida familiar'], i) : null,
           owner_id: owner.id,
           product_id: plans[i % plans.length],
           credit_value: 100000 + (i % 5) * 50000,
@@ -232,13 +256,14 @@ function seedDemo(db, password) {
       );
       ids.push(id);
       const opp = db.prepare('SELECT * FROM opportunities WHERE contact_id = ?').get(id);
+      if (AREAS[i % AREAS.length] !== 'consorcio' && !['aceite', 'prevenda', 'venda'].includes(target)) opps.updateOpportunity(db, owner, opp.id, { business_area: AREAS[i % AREAS.length] });
       if (target === 'prospect') {
         if (i === 10) activities.createActivity(db, owner, { contact_id: id, type: 'tentativa_sem_atendimento', result: 'caixa_postal', occurred_at: ago(1) });
       } else {
-        advance(owner, id, opp, ORDER.includes(target) ? target : 'follow_up', i);
+        advance(owner, id, opp, ORDER.includes(target) ? target : 'negociacao', i);
       }
       // Respostas dos clientes às propostas (probabilidade de fechamento)
-      if (target === 'follow_up' && opp.proposal_id) proposals.registerResponse(db, owner, opp.proposal_id, { response: i === 6 ? 'duvidas' : 'sem_resposta' });
+      if (target === 'negociacao' && opp.proposal_id) proposals.registerResponse(db, owner, opp.proposal_id, { response: i === 6 ? 'duvidas' : 'sem_resposta' });
       if (target === 'aceite') {
         // Proposta aceita: pré-venda aberta e link enviado ao cliente; i=17 fica sem acesso há 2 dias (alerta de pré-venda parada)
         proposals.registerResponse(db, owner, opp.proposal_id, { response: 'positiva' });
@@ -293,7 +318,7 @@ function seedDemo(db, password) {
         }
       }
       if (i === 15) {
-        opps.moveStage(db, owner, opp.id, { stage_id: stageId.perdido, lost_reason: 'optou_financiamento' });
+        opps.moveStage(db, owner, opp.id, { stage_id: stageId.perdido, lost_reason: 'empresa', lost_notes: 'Optou por financiamento bancário.' });
         contacts.updateContact(db, admin, id, { active: false, inactive_reason: 'Optou por financiamento bancário.' });
       }
       if (i === 5 || i === 15) {
@@ -303,7 +328,7 @@ function seedDemo(db, password) {
           ? { status: 'recusada', refusal_reason: 'nao_e_momento', refusal_notes: 'Quer primeiro quitar o carro; pediu para falar em 2 meses.', retake_at: new Date(Date.now() + 60 * DAY).toISOString().slice(0, 10) }
           : { status: 'recusada', refusal_reason: 'financiamento', refusal_notes: 'Banco liberou financiamento com entrada menor.' });
       }
-      if (i === 14) opps.moveStage(db, owner, opp.id, { stage_id: stageId.nutricao, pause_reason: 'Vai decidir depois do bônus do fim do ano.', return_at: new Date(Date.now() + 60 * DAY).toISOString().slice(0, 10) });
+      if (i === 12) opps.moveStage(db, owner, opp.id, { stage_id: stageId.nutricao, pause_reason: 'Vai decidir depois do bônus do fim do ano.', return_at: new Date(Date.now() + 60 * DAY).toISOString().slice(0, 10) });
       if (i === 12) contacts.updateContact(db, admin, id, { referred_by_id: ids[9] });
     });
 

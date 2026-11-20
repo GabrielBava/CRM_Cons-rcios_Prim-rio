@@ -432,7 +432,7 @@ export function subnav(items, active) {
 export const crmTabs = (active) =>
   subnav(
     [
-      ['#/funil', 'Funil de vendas', 'funil'],
+      ['#/funil', 'Pipeline', 'funil'],
       ['#/leads', 'Leads e prospects', 'leads'],
       ['#/atividades', 'Ligações e atividades', 'atividades'],
     ],

@@ -575,6 +575,26 @@ const MOTIVOS_RECUSA = [
   ['outro', 'Outro motivo'],
 ];
 
+/** Motivos de perda (MP) em 9 categorias, com a descrição usada no pop-up "Perdido". */
+const MOTIVOS_PERDA = [
+  ['preco', 'MP1 · Preço', { hint: 'Parcela, taxa ou condição acima do que o cliente aceita' }],
+  ['momento', 'MP2 · Momento', { hint: 'Não é o momento: adiou a decisão, outras prioridades' }],
+  ['empresa', 'MP3 · Empresa', { hint: 'Escolheu outra empresa, banco ou administradora' }],
+  ['perfil', 'MP4 · Perfil/Qualificação', { hint: 'Sem perfil para o produto: renda, objetivo ou capacidade' }],
+  ['tempo', 'MP5 · Tempo', { hint: 'Prazo do produto não atende (precisa do bem/recurso agora)' }],
+  ['processo', 'MP6 · Processo', { hint: 'Desistiu no processo: documentação, burocracia, demora' }],
+  ['cadastro', 'MP7 · Cadastro', { hint: 'Dados inválidos, duplicado ou cadastro com problema' }],
+  ['decisor', 'MP8 · Decisor', { hint: 'O decisor (cônjuge, sócio, família) não aprovou' }],
+  ['sem_contato', 'MP9 · Sem contato', { hint: 'Não foi possível falar com o lead após as tentativas' }],
+];
+/** Áreas da empresa atendidas pela plataforma (o mesmo pipeline para todas). */
+const AREAS_NEGOCIO = [
+  ['consorcio', 'Consórcio'],
+  ['planejamento', 'Planejamento financeiro'],
+  ['seguros', 'Seguros'],
+  ['investimentos', 'Investimentos'],
+];
+
 const DEFAULT_OPTIONS = {
   origem: [
     ['indicacao', 'Indicação'],
@@ -826,17 +846,9 @@ const DEFAULT_OPTIONS = {
     ['sem_resposta', 'Sem resposta', { score: -5 }],
     ['negativa', 'Negativa: não vai seguir agora', { score: -25 }],
   ],
-  motivo_perda: [
-    ['sem_interesse', 'Sem interesse'],
-    ['sem_contato', 'Não foi possível contato'],
-    ['preco_parcela', 'Parcela acima do esperado'],
-    ['optou_financiamento', 'Optou por financiamento'],
-    ['optou_concorrente', 'Fechou com outra empresa'],
-    ['sem_perfil', 'Sem perfil / não qualificado'],
-    ['adiou_decisao', 'Adiou a decisão'],
-    ['dados_invalidos', 'Dados de contato inválidos'],
-    ['outro', 'Outro motivo'],
-  ],
+  // Motivos de perda (MP): 9 categorias
+  motivo_perda: MOTIVOS_PERDA,
+  area_negocio: AREAS_NEGOCIO,
   resultado_ligacao: [
     ['atendida', 'Atendida', { efetivo: true }],
     ['nao_atendida', 'Não atendida'],
@@ -853,6 +865,7 @@ const DEFAULT_OPTIONS = {
     ['ligacao', 'Ligação'],
     ['whatsapp', 'WhatsApp'],
     ['email', 'E-mail'],
+    ['direct', 'Direct (Instagram)'],
     ['presencial', 'Presencial'],
     ['video', 'Vídeo'],
     ['sms', 'SMS'],
@@ -901,21 +914,20 @@ const DEFAULT_OPTIONS = {
 const DEFAULT_STAGES = [
   ['Prospect', 'aberta', 'prospect', 3, 'Contato ainda não demonstrou interesse. Objetivo: validar os dados de contato e a origem.'],
   ['Lead', 'aberta', 'lead', 1, 'Demonstrou interesse. Objetivo: fazer o primeiro contato o quanto antes (idealmente em até 1 hora).'],
-  ['Tentativa de contato', 'aberta', 'tentativa', 3, 'Cadência de tentativas por ligação e WhatsApp até conseguir falar com o lead.'],
-  ['Lead qualificado', 'aberta', 'qualificado', 5, 'Conversa realizada. Objetivo: entender objetivo, crédito, parcela possível e prazo, e agendar a R1.'],
-  ['R1', 'aberta', 'r1', 7, 'Reunião de diagnóstico (R1). Objetivo: apresentar o consórcio, validar a estratégia e o decisor.'],
-  ['R1 bolo', 'aberta', 'r1_bolo', 3, 'O cliente agendou a R1 e não compareceu. Objetivo: entender o motivo e reagendar a reunião (Agendar R1).'],
-  ['Negociação', 'aberta', 'negociacao', 5, 'Montar e apresentar a proposta no simulador com base na R1.'],
-  ['Follow-up', 'aberta', 'follow_up', 10, 'Proposta enviada. Seguir a esteira de follow-up (D0 a D10) até o aceite ou a decisão.'],
+  ['Tentativa de contato', 'aberta', 'tentativa', 3, 'Cadência de tentativas por ligação, WhatsApp, e-mail e direct até conseguir falar com o lead.'],
+  ['Qualificação', 'aberta', 'qualificado', 5, 'Conversa realizada. Objetivo: entender objetivo, valor, capacidade e prazo, e agendar a R1.'],
+  ['R1', 'aberta', 'r1', 7, 'Primeira reunião (R1): diagnóstico, apresentação da Vero e da estratégia. Cliente que não compareceu fica marcado como NS (no-show) e é remarcado.'],
+  ['R2', 'aberta', 'r2', 7, 'Segunda reunião (R2): apresentação da proposta e da estratégia montada a partir da R1, com o decisor.'],
+  ['Negociação', 'aberta', 'negociacao', 10, 'Proposta apresentada. Seguir o follow-up (D0 a D10), ajustar a proposta e conduzir até o aceite.'],
   ['Venda', 'ganho', 'venda', null, 'Venda confirmada com o pagamento da primeira parcela. Entra automaticamente pela tela de Vendas.'],
-  ['Nutrição futura', 'nutricao', 'nutricao', null, 'Sem momento agora. Registrar o motivo e a data para retomar o contato.'],
-  ['Perdido', 'perdido', 'perdido', null, 'Negócio encerrado. O motivo da perda alimenta os relatórios.'],
+  ['Nutrição futura', 'nutricao', 'nutricao', null, 'Arquivado: sem momento agora. Registrar o motivo e a data para retomar o contato.'],
+  ['Perdido', 'perdido', 'perdido', null, 'Arquivado: negócio encerrado. O motivo da perda (MP) alimenta os relatórios.'],
 ];
 // Etapas da versão anterior do funil → nova chave (usado na migração de bancos existentes)
 const OLD_STAGE_MAP = {
   'Novo prospect': 'prospect', 'Tentativa de contato': 'tentativa', 'Contato realizado': 'tentativa', 'Lead qualificado': 'qualificado',
   'Diagnóstico ou reunião agendada': 'r1', 'Diagnóstico realizado': 'r1', 'Simulação em elaboração': 'negociacao',
-  'Proposta apresentada': 'follow_up', 'Follow-up': 'follow_up', 'Em negociação': 'negociacao', 'Venda concluída': 'venda',
+  'Proposta apresentada': 'negociacao', 'Follow-up': 'negociacao', 'Em negociação': 'negociacao', 'Venda concluída': 'venda',
   Perdido: 'perdido', 'Nutrição futura': 'nutricao',
 };
 
@@ -1013,6 +1025,8 @@ const DEFAULT_SETTINGS = {
   // R1: título do evento ({cliente}, {empresa}) e duração padrão em minutos
   r1_title_template: '[R1] {cliente} | {empresa}',
   r1_duration_min: 30,
+  r2_title_template: '[R2] {cliente} | {empresa}',
+  r2_duration_min: 60,
   // Domínio da empresa: quem entra no Meet com conta deste domínio não conta como cliente na presença da R1
   internal_domain: 'veroconsorciosbr.com.br',
   // Reserva mínima de caixa (relatório de saldos: o que passar disso é excedente de caixa)
@@ -1135,8 +1149,10 @@ function seedDefaults(db) {
   // v7: coluna "R1 bolo" (entre R1 e Negociação) e regras de passagem revisadas
   if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_v7_funil'").get()) {
     const r1 = db.prepare("SELECT * FROM pipeline_stages WHERE key = 'r1'").get();
-    if (r1 && !db.prepare("SELECT 1 FROM pipeline_stages WHERE key = 'r1_bolo'").get()) {
-      const [name, kind, key, rot, playbook] = DEFAULT_STAGES.find((x) => x[2] === 'r1_bolo');
+    // (a coluna "R1 bolo" saiu do funil na v11: só é criada por bancos que ainda passam por esta etapa da migração)
+    const boloDef = ['R1 bolo', 'aberta', 'r1_bolo', 3, 'O cliente agendou a R1 e não compareceu.'];
+    if (r1 && !db.prepare("SELECT 1 FROM settings WHERE key = 'migr_v11_pipeline'").get() && db.prepare('SELECT COUNT(*) AS n FROM opportunities').get().n > 0 && !db.prepare("SELECT 1 FROM pipeline_stages WHERE key = 'r1_bolo'").get()) {
+      const [name, kind, key, rot, playbook] = boloDef;
       db.prepare('UPDATE pipeline_stages SET position = position + 1 WHERE position > ?').run(r1.position);
       db.prepare('INSERT INTO pipeline_stages (name, position, kind, key, rot_days, playbook, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(name, r1.position + 1, kind, key, rot, playbook, now);
     }
@@ -1182,6 +1198,49 @@ function seedDefaults(db) {
     const smtp = getSetting(db, 'smtp');
     if (smtp && smtp.from_email === 'admin@veroconsorciosbr.com.br') db.prepare("UPDATE settings SET value = ? WHERE key = 'smtp'").run(JSON.stringify({ ...smtp, from_email: 'noreply@veroconsorciosbr.com.br' }));
     db.prepare("INSERT INTO settings (key, value) VALUES ('migr_v10_r1', 'true')").run();
+  }
+  // v11: pipeline geral (0 Prospect … 7 Venda): "Lead qualificado" vira "Qualificação", entra a R2, "R1 bolo" vira a marca
+  // NS (no-show) no cartão da R1 e "Follow-up" se junta à Negociação. Motivos de perda em 9 categorias (MP) e área de negócio.
+  if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_v11_pipeline'").get()) {
+    const byKey = Object.fromEntries(db.prepare('SELECT key, id FROM pipeline_stages WHERE key IS NOT NULL').all().map((r) => [r.key, r.id]));
+    if (byKey.r1_bolo && byKey.r1) {
+      db.prepare('UPDATE opportunities SET stage_id = ? WHERE stage_id = ?').run(byKey.r1, byKey.r1_bolo);
+      db.prepare("UPDATE pipeline_stages SET active = 0, key = NULL, name = 'R1 bolo (antiga)', position = 900 WHERE id = ?").run(byKey.r1_bolo);
+    }
+    if (byKey.follow_up && byKey.negociacao) {
+      db.prepare('UPDATE opportunities SET stage_id = ? WHERE stage_id = ?').run(byKey.negociacao, byKey.follow_up);
+      db.prepare("UPDATE pipeline_stages SET active = 0, key = NULL, name = 'Follow-up (antiga)', position = 901 WHERE id = ?").run(byKey.follow_up);
+    }
+    if (byKey.prospect) {
+      DEFAULT_STAGES.forEach(([name, kind, key, rot, playbook], i) => {
+        const id = db.prepare('SELECT id FROM pipeline_stages WHERE key = ?').get(key)?.id;
+        if (id) db.prepare('UPDATE pipeline_stages SET name = ?, kind = ?, rot_days = COALESCE(rot_days, ?), playbook = ?, position = ?, active = 1 WHERE id = ?').run(key === 'qualificado' || key === 'negociacao' ? name : db.prepare('SELECT name FROM pipeline_stages WHERE id = ?').get(id).name, kind, rot, playbook, i, id);
+        else db.prepare('INSERT INTO pipeline_stages (name, position, kind, key, rot_days, playbook, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(name, i, kind, key, rot, playbook, now);
+      });
+    }
+    const rules = getSetting(db, 'stage_rules');
+    if (rules && typeof rules === 'object') {
+      delete rules.r1_bolo;
+      delete rules.follow_up;
+      rules.r2 = ['r1_realizada', 'r2_agendada'];
+      rules.negociacao = ['r2_realizada'];
+      db.prepare("UPDATE settings SET value = ? WHERE key = 'stage_rules'").run(JSON.stringify(rules));
+    }
+    // Reuniões existentes são R1; as que o cliente faltou continuam marcadas como no-show
+    db.prepare("UPDATE tasks SET meeting_kind = CASE WHEN title LIKE '[R2]%' THEN 'r2' ELSE 'r1' END WHERE type = 'reuniao' AND meeting_kind IS NULL").run();
+    // Motivos de perda: as 9 categorias (MP); os motivos antigos ficam inativos (o histórico mantém o nome)
+    const keep = new Set(MOTIVOS_PERDA.map(([v]) => v));
+    MOTIVOS_PERDA.forEach(([value, label, flags], i) => {
+      const cur = db.prepare("SELECT id FROM options WHERE list = 'motivo_perda' AND value = ?").get(value);
+      if (cur) db.prepare('UPDATE options SET label = ?, position = ?, flags = ?, active = 1 WHERE id = ?').run(label, i, JSON.stringify(flags), cur.id);
+      else db.prepare("INSERT INTO options (list, value, label, position, flags) VALUES ('motivo_perda', ?, ?, ?, ?)").run(value, label, i, JSON.stringify(flags));
+    });
+    for (const r of db.prepare("SELECT id, value FROM options WHERE list = 'motivo_perda'").all()) if (!keep.has(r.value)) db.prepare('UPDATE options SET active = 0, position = 100 + position WHERE id = ?').run(r.id);
+    // Canal "Direct" (Instagram) nas atividades
+    if (db.prepare("SELECT COUNT(*) AS n FROM options WHERE list = 'canal'").get().n && !db.prepare("SELECT 1 FROM options WHERE list = 'canal' AND value = 'direct'").get()) {
+      db.prepare("INSERT INTO options (list, value, label, position, flags) VALUES ('canal', 'direct', 'Direct (Instagram)', 3, '{}')").run();
+    }
+    db.prepare("INSERT INTO settings (key, value) VALUES ('migr_v11_pipeline', 'true')").run();
   }
   // Central de documentos: pastas padrão (o administrador cria subpastas dentro delas)
   if (db.prepare('SELECT COUNT(*) AS n FROM doc_folders').get().n === 0) {
@@ -1274,6 +1333,8 @@ const ADDED_COLUMNS = {
     // Presença no Google Meet: aguardando, r1_feita (cliente de fora da empresa entrou) ou sem_cliente; e-mail de confirmação
     ['attendance_status', 'TEXT'], ['attendance_checked_at', 'TEXT'], ['attendance_detail', 'TEXT'], ['attended_at', 'TEXT'],
     ['calendar_owner_id', 'INTEGER REFERENCES users(id)'], ['confirmation_sent_at', 'TEXT'],
+    // Reuniões R1 e R2: tipo, remarcação (reunião anterior) e confirmação de presença pelo cliente
+    ['meeting_kind', 'TEXT'], ['rescheduled_from', 'INTEGER REFERENCES tasks(id)'], ['confirmed_at', 'TEXT'],
   ],
   products: [
     ['administrator_id', 'INTEGER REFERENCES administrators(id)'], ['plan_code', 'TEXT'], ['admin_fee_pct', 'REAL'], ['reserve_fund_pct', 'REAL'],
@@ -1296,6 +1357,8 @@ const ADDED_COLUMNS = {
     ['credit_purpose_type', 'TEXT'], ['has_bid_resources', 'TEXT'], ['had_consortium', 'TEXT'], ['has_financing', 'TEXT'], ['decision_notes', 'TEXT'],
     ['housing_purpose', 'TEXT'], ['bid_source', 'TEXT'], ['has_property', 'TEXT'], ['property_type', 'TEXT'], ['property_value', 'REAL'],
     ['property_free_liens', 'TEXT'], ['pays_rent', 'TEXT'], ['rent_value', 'REAL'], ['temperature', 'TEXT'], ['temperature_reason', 'TEXT'],
+    // Plataforma multiárea: área responsável (consórcio, planejamento, seguros, investimentos); "ganho" do pré-vendas = R1 agendada
+    ['business_area', "TEXT NOT NULL DEFAULT 'consorcio'"], ['r1_won_at', 'TEXT'], ['co_owner_id', 'INTEGER REFERENCES users(id)'],
   ],
   proposals: [
     ['simulator_token_hash', 'TEXT'], ['simulator_token_expires_at', 'TEXT'], ['generated_at', 'TEXT'], ['pdf_attachment_id', 'INTEGER REFERENCES attachments(id)'],

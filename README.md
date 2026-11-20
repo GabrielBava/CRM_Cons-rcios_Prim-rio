@@ -1,24 +1,17 @@
 # Vero Consórcios: ERP/CRM de consórcios primários
 
-ERP/CRM para a venda de consórcios contratados do zero, do primeiro contato ao pós-venda. No topo à direita ficam o sino de notificações e o menu do usuário (foto, Meu cadastro, Alterar senha e Sair). O menu lateral tem 17 itens e o grupo Financeiro:
+Plataforma de gestão da empresa inteira (consórcio, planejamento financeiro, seguros e investimentos), do primeiro contato ao pós-venda. No topo à direita ficam o sino de notificações e o menu do usuário (foto, Meu cadastro, Alterar senha e Sair). O menu lateral pode ser **recolhido** pelo botão no canto superior esquerdo (fica só o símbolo da Vero e os ícones) e é organizado em grupos:
 
-1. Painel inicial
-2. Prospects e leads (distribuição com roleta)
-3. CRM (funil com regras de passagem e a coluna R1 bolo, qualificação em 5 blocos, ordenação, ações em massa e painel lateral com Agendar R1, troca de responsável e informações de negócio editáveis)
-4. Agenda e tarefas (Agendar R1 com Google Agenda, Google Meet e convite ao cliente; modelo da R1 com os dados do especialista)
-5. Simulador
-6. Propostas (esteira de propostas D0–D10, características do plano com adesão, divisão das cotas, aceitas e recusadas com motivo)
-7. Clientes
-8. Metas
-9. Pré-venda (link da ficha cadastral, termo de adesão com grupo, cota e contrato de cada cota, contrato, pagamento por Pix ou boleto e comprovante)
-10. Vendas (aguardando a alocação da cota; o especialista informa a alocação e o time confirma)
-11. Pós-venda (funil de farm com linha do tempo D+N e alertas, satisfação NPS e estratégias de lance com histórico)
-12. Comissões e cancelamentos
-13. Treinamentos (inclui a trilha de integração do especialista: marca Vero, kit WhatsApp Business/LinkedIn e treinamento de consórcios)
-14. Administradoras
-15. Planos
-16. Relatórios
-17. Usuários (perfis e liberação de telas por usuário)
+- **Painel inicial**
+- **Operacional:** Pipeline, Agendas e tarefas, Propostas e Pré-venda
+- **Ferramentas:** um só item com Simulador, Modelo da R1, Kit do especialista, Manual da marca, Importar leads e modelo da transcrição da R1
+- **Gestão de vendas:** Clientes, Vendas, Pós-venda, Metas, Comissões e cancelamentos e Relatórios
+- **Gestão do time** (líder de equipe para cima): Organograma do time, Dashboard squad e Distribuição de leads
+- **Treinamentos**
+- **Financeiro** (administrador)
+- **Administração** (administrador): Administradoras, Planos, Colaboradores, Central de documentos, Usuários e Configurações
+
+**Pipeline** (o mesmo para todas as áreas): 0 Prospect · 1 Lead · 2 Tentativa de contato · 3 Qualificação · 4 R1 · 5 R2 · 6 Negociação · 7 Venda, com Nutrição futura e Perdido arquivados (aparecem ao marcar "Mostrar arquivados" ou como áreas para soltar o cartão ao arrastar). O cartão mostra área responsável, origem e campanha, valor estimado, temperatura com PF/PJ, SLA da atividade, score (0–100), próxima ação e as marcas das reuniões: **NS** (amarelo, o cliente não compareceu), **R** (azul, remarcada), data da R1/R2 e "R2 não agendada". O painel do lead (clique no nome) traz **Ganho** (agendar a R1 = ganho do pré-vendas; abre o pop-up e completa a qualificação que faltar) e **Perdido** (só com ao menos uma atividade; motivos MP1 a MP9), o bloco **R1/R2** com Concluir, Remarcar, Não compareceu e Confirmar presença, e as abas Detalhes, Atividades (Telefone, WhatsApp, E-mail, Direct), Qualificação, Tarefas, Agendas, Notas, Propostas e Histórico.
 
 **Financeiro** (caixa da empresa): Visão geral (só o administrador), Contas a pagar (pontual, parcelada, recorrente ou assinatura, com comprovante, responsável e motivo do atraso), Contas a receber (instituição pagadora, motivo, conta de entrada e rateio por competência) e Cadastros (categorias prontas, centros de custo, parceiros, contas bancárias e formas de pagamento).
 
@@ -179,7 +172,7 @@ docs/
 ## Novo especialista, R1 e ficha do cliente
 
 - **Primeiro acesso:** o usuário criado pelo administrador recebe uma senha provisória; a plataforma só abre depois da troca. Especialistas seguem a trilha do Painel inicial (Meu cadastro, Conheça a Vero, Kit do especialista) e, no fim, o treinamento de consórcios é liberado em Treinamentos.
-- **Agendar R1:** o mesmo pop-up no funil (Lead qualificado → R1), no painel lateral, na ficha e na Agenda: cliente e e-mail, horários de 15 em 15 minutos, 30 minutos por padrão, título "[R1] Cliente | Vero Consórcios". Com o Google Agenda conectado, o clique em "Agendar R1" já cria o evento na agenda do especialista com Google Meet, envia o convite ao cliente, salva o link na R1 e libera o modelo da R1 para baixar. O cliente recebe também a confirmação por e-mail (remetente `noreply@`). O pop-up oferece "Conectar Google Agenda" a quem ainda não conectou.
+- **Agendar R1 / R2:** o mesmo pop-up no pipeline (arrastar para R1 ou R2, botão Ganho), no painel lateral, na ficha e na Agenda (a R2 tem 60 minutos por padrão e título "[R2] Cliente | Vero Consórcios"): cliente e e-mail, horários de 15 em 15 minutos, 30 minutos por padrão, título "[R1] Cliente | Vero Consórcios". Com o Google Agenda conectado, o clique em "Agendar R1" já cria o evento na agenda do especialista com Google Meet, envia o convite ao cliente, salva o link na R1 e libera o modelo da R1 para baixar. O cliente recebe também a confirmação por e-mail (remetente `noreply@`). O pop-up oferece "Conectar Google Agenda" a quem ainda não conectou.
 - **R1 feita (presença pelo Google Meet):** a cada 5 minutos o CRM confere a sala do Meet das R1 em andamento (API do Google Meet). Conta como "R1 feita" quando há pelo menos 2 participantes e ao menos um é de fora da empresa (o cliente); o especialista sozinho, ou só pessoas da empresa, não conta. A reunião é concluída como realizada no horário em que o cliente entrou, e o especialista é avisado. Botão "Verificar presença" para conferir na hora.
 - **Modelo da R1:** o modelo oficial da Vero (13 seções com notas do apresentador), preenchido com nome, foto, WhatsApp, e-mail, cargo e apresentação do especialista e o nome do cliente; abre ou baixa (HTML) pela reunião. O administrador troca o modelo em Configurações › Modelo da R1 (campos `{{...}}`).
 - **Planos:** a proposta e o simulador usam só as administradoras e os planos ativos (pelo código), mais a opção "Outros" com condições livres.
