@@ -443,6 +443,49 @@ function createRouter(db) {
 
   /* ---------- Gestão do time (líder e administrador) ---------- */
   add('GET', '/api/time/organograma', ({ user }) => require('./services/team').orgChart(db, user));
+  add('GET', '/api/time/one-on-ones', ({ user }) => require('./services/calendar').listOneOnOnes(db, user));
+  add('POST', '/api/time/one-on-ones', ({ user, body }) => require('./services/calendar').scheduleOneOnOne(db, user, body));
+
+  /* ---------- Calendário 360 (somente leitura) ---------- */
+  add('GET', '/api/calendario', ({ user, query }) => require('./services/calendar').events(db, user, query));
+
+  /* ---------- Comunicação: Inbox (chat interno), Tickets e WhatsApp da empresa ---------- */
+  const comms = require('./services/comms');
+  const wa = require('./services/whatsapp');
+  add('GET', '/api/comunicacao/resumo', ({ user }) => comms.summary(db, user));
+  add('GET', '/api/inbox/pessoas', ({ user }) => comms.directory(db, user));
+  add('GET', '/api/inbox/conversas', ({ user }) => comms.listConversations(db, user));
+  add('POST', '/api/inbox/conversas', ({ user, body }) => (body.user_id ? comms.openDirect(db, user, body.user_id) : comms.createGroup(db, user, body)));
+  add('PATCH', '/api/inbox/conversas/:id', ({ user, params, body }) => comms.updateGroup(db, user, params.id, body));
+  add('GET', '/api/inbox/conversas/:id/mensagens', ({ user, params, query }) => comms.messages(db, user, params.id, query));
+  add('POST', '/api/inbox/conversas/:id/mensagens', ({ user, params, body }) => comms.sendMessage(db, user, params.id, body), { bodyLimit: 22e6 });
+  add('GET', '/api/inbox/arquivos/:id', ({ user, params, res }) => {
+    const f = comms.chatFile(db, user, params.id);
+    return sendBinary(res, f.filename, f.mime, f.content);
+  });
+  add('GET', '/api/tickets', ({ user, query }) => comms.listTickets(db, user, query));
+  add('POST', '/api/tickets', ({ user, body }) => comms.createTicket(db, user, body), { bodyLimit: 80e6 });
+  add('GET', '/api/tickets/:id', ({ user, params }) => comms.getTicket(db, user, params.id));
+  add('POST', '/api/tickets/:id/acao', ({ user, params, body }) => comms.ticketAction(db, user, params.id, body), { bodyLimit: 80e6 });
+  add('GET', '/api/tickets/arquivos/:id', ({ user, params, res }) => {
+    const f = comms.ticketFile(db, user, params.id);
+    return sendBinary(res, f.filename, f.mime, f.content);
+  });
+  add('GET', '/api/whatsapp/status', ({ user, req }) => wa.status(db, user, req));
+  add('PUT', '/api/whatsapp/config', ({ user, body }) => wa.saveConfig(db, user, body));
+  add('GET', '/api/whatsapp/conversas', ({ user, query }) => wa.listConversations(db, user, query));
+  add('POST', '/api/whatsapp/conversas', ({ user, body }) => wa.startConversation(db, user, body));
+  add('GET', '/api/whatsapp/conversas/:id', ({ user, params, query }) => wa.getConversation(db, user, params.id, query));
+  add('PATCH', '/api/whatsapp/conversas/:id', ({ user, params, body }) => wa.updateConversation(db, user, params.id, body));
+  add('POST', '/api/whatsapp/conversas/:id/mensagens', ({ user, params, body }) => wa.sendMessage(db, user, params.id, body));
+  add('GET', '/api/whatsapp/midia/:id', async ({ user, params, res }) => {
+    const f = await wa.media(db, user, params.id);
+    return sendBinary(res, f.filename, f.mime, f.content);
+  });
+  // Webhook da Meta (API oficial do WhatsApp Business): verificação (GET) e mensagens/status (POST)
+  add('GET', '/api/whatsapp/webhook', ({ query, res }) => wa.verifyWebhook(db, query, res), { integration: true });
+  add('POST', '/api/whatsapp/webhook', ({ req, body }) => wa.receiveWebhook(db, req, body), { integration: true, bodyLimit: 4e6 });
+
   add('GET', '/api/time/squad', ({ user, query }) => require('./services/team').squadDashboard(db, user, query));
 
   /* ---------- Colaboradores (RH) ---------- */

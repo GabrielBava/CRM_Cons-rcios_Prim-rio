@@ -1,11 +1,66 @@
 // Gestão do time (líder de equipe e administrador): organograma e dashboard da squad.
-import { get } from '../api.js';
-import { html, render, $, on, avatar, fmtMoney, fmtNum, fmtPct, toastError, subnav, selectOptions, empty, table } from '../ui.js';
+import { get, post } from '../api.js';
+import { html, render, $, on, avatar, fmtMoney, fmtNum, fmtPct, toast, toastError, subnav, selectOptions, empty, table, modal, field, fmtDateTime, badge, state } from '../ui.js';
 
-const tabs = (active) => subnav([['#/time/organograma', 'Organograma do time', 'organograma'], ['#/time/squad', 'Dashboard squad', 'squad']], active);
+const tabs = (active) => subnav([['#/time/organograma', 'Organograma do time', 'organograma'], ['#/time/squad', 'Dashboard squad', 'squad'], ['#/time/one-on-ones', 'One-on-ones', 'oneonone']], active);
 
 export async function show(view, { id }) {
+  if (id === 'one-on-ones') return oneOnOnes(view);
   return id === 'squad' ? squad(view) : orgChart(view);
+}
+
+/* ------------------------- One-on-ones ------------------------- */
+
+const pad = (n) => String(n).padStart(2, '0');
+/** O líder marca o one-on-one com alguém da equipe: aparece no calendário dos dois (Operacional › Calendário). */
+async function oneOnOnes(view) {
+  render(view, html`<div class="page">${tabs('oneonone')}
+    <div class="page-head"><div><h1>One-on-ones</h1><p class="muted">Conversas individuais do líder com cada pessoa do time. O one-on-one marcado aqui aparece no calendário do líder e do liderado.</p></div>
+      <div class="actions"><button class="btn primary" data-act="new">+ Marcar one-on-one</button></div></div>
+    <div id="oo"></div></div>`);
+  let org = null;
+  const load = async () => {
+    const box = $('#oo', view);
+    let rows;
+    try {
+      [rows, org] = await Promise.all([get('/api/time/one-on-ones'), org ? Promise.resolve(org) : get('/api/time/organograma')]);
+    } catch (e) {
+      return render(box, html`<div class="alert danger">${e.message}</div>`);
+    }
+    const st = (t) => (t.status === 'pendente' ? (new Date(t.due_at) < new Date() ? badge('Aguardando registro', 'warn') : badge('Agendado', 'info')) : badge('Realizado', 'ok'));
+    render(box, rows.length ? html`<section class="card">${table([
+      { label: 'Quando', render: (t) => html`<strong>${fmtDateTime(t.due_at)}</strong>${t.ends_at ? html`<br><small>até ${new Date(t.ends_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</small>` : ''}` },
+      { label: 'Pessoa', render: (t) => html`<span class="sq-person">${avatar({ name: t.member_name, photo: t.member_photo }, 28)} ${t.member_name}</span>` },
+      { label: 'Marcado por', render: (t) => t.leader_name || '—' },
+      { label: 'Pauta', render: (t) => (t.notes ? html`<small>${t.notes}</small>` : html`<span class="muted">—</span>`) },
+      { label: 'Situação', render: (t) => html`${st(t)}${t.meeting_url ? html` <a class="small" href="${t.meeting_url}" target="_blank" rel="noopener">link</a>` : ''}` },
+    ], rows)}</section>` : empty('Nenhum one-on-one marcado. Use "Marcar one-on-one".'));
+  };
+  on(view, 'click', '[data-act=new]', async () => {
+    if (!org) org = await get('/api/time/organograma').catch(() => null);
+    const people = org ? [...org.teams.flatMap((t) => [t.leader, ...t.members]), ...org.no_team].filter((u) => u && u.id !== undefined && u.id !== state.user.id) : [];
+    const seen = new Set();
+    const opts = people.filter((u) => !seen.has(u.id) && seen.add(u.id)).map((u) => ({ value: u.id, label: u.name }));
+    const d = new Date(Date.now() + 86400000);
+    const day = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const r = await modal({
+      title: 'Marcar one-on-one',
+      body: html`<div class="grid">
+        ${field({ name: 'user_id', label: 'Com quem', type: 'select', options: opts, required: true, full: true })}
+        ${field({ name: 'date', label: 'Data', type: 'date', value: day, required: true })}
+        ${field({ name: 'start', label: 'Início', type: 'time', value: '09:00', required: true })}
+        ${field({ name: 'end', label: 'Término', type: 'time', value: '09:30', required: true })}
+        ${field({ name: 'meeting_url', label: 'Link da videochamada (opcional)', type: 'url', placeholder: 'https://meet.google.com/…', full: true })}
+        ${field({ name: 'agenda', label: 'Pauta', type: 'textarea', rows: 3, full: true, placeholder: 'Ex.: metas do mês, pipeline, desenvolvimento, feedback' })}</div>`,
+      submitLabel: 'Marcar',
+      onSubmit: (v) => post('/api/time/one-on-ones', { user_id: v.user_id, start_at: new Date(`${v.date}T${v.start}:00`).toISOString(), end_at: new Date(`${v.date}T${v.end}:00`).toISOString(), meeting_url: v.meeting_url, agenda: v.agenda }),
+    });
+    if (r) {
+      toast('One-on-one marcado: já aparece no calendário de vocês dois.');
+      load();
+    }
+  });
+  await load();
 }
 
 /* ------------------------- Organograma ------------------------- */

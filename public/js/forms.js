@@ -36,12 +36,12 @@ export function quickCreateContact(defaults = {}) {
     </div>
     <p class="hint">Só o nome é obrigatório. Campos marcados como <span class="rec">recomendado</span> podem ser completados depois.</p>
     <div class="grid">
-      ${field({ name: 'name', label: 'Nome completo ou nome de contato', required: true, full: true })}
+      ${field({ name: 'name', label: 'Nome completo ou nome de contato', required: true, full: true, value: defaults.name })}
       <div class="pj-only full grid" ${kind === 'PJ' ? '' : raw('hidden')}>
         ${field({ name: 'trade_name', label: 'Empresa / nome fantasia', recommended: true })}
         ${field({ name: 'contact_role', label: 'Cargo do contato' })}
       </div>
-      ${field({ name: 'phone1', label: 'Telefone principal', type: 'tel', recommended: true, placeholder: '(11) 91234-5678' })}
+      ${field({ name: 'phone1', label: 'Telefone principal', type: 'tel', recommended: true, placeholder: '(11) 91234-5678', value: defaults.phone1 })}
       ${field({ name: 'phone2', label: 'Telefone secundário', type: 'tel' })}
       ${field({ name: 'email', label: 'E-mail', type: 'email', recommended: true })}
       ${field({ name: 'city', label: 'Cidade' })}
@@ -115,7 +115,7 @@ export function quickCreateContact(defaults = {}) {
       try {
         const r = await post('/api/cadastros', payload);
         toast(`Cadastro ${r.code} criado.`);
-        nav(`#/leads/${r.id}`);
+        if (!defaults.stay) nav(`#/leads/${r.id}`);
         return r;
       } catch (e) {
         if (e.status === 409 && e.details?.duplicates) {

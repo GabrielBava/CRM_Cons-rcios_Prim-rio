@@ -34,13 +34,17 @@ import * as peopleView from './views/people.js';
 import * as documentsView from './views/documents.js';
 import * as toolsView from './views/tools.js';
 import * as teamView from './views/team.js';
+import * as calendarView from './views/calendar.js';
+import * as commsView from './views/comms.js';
 import { icon } from './icons.js';
 
 // Rotas do menu lateral: [rota, rótulo, tela, módulo de permissão]
 const NAV = [
   ['painel', 'Painel inicial', dashboard, 'painel'],
   ['funil', 'Pipeline', pipeline, 'crm'],
+  ['calendario', 'Calendário', calendarView, 'calendario'],
   ['agenda', 'Agendas e tarefas', agenda, 'agenda'],
+  ['comunicacao', 'Comunicação', commsView, null],
   ['propostas', 'Propostas', proposalsView, 'propostas'],
   ['prevenda', 'Pré-venda', presales, 'prevenda'],
   ['ferramentas', 'Ferramentas', toolsView, null],
@@ -66,10 +70,11 @@ const NAV = [
  */
 const NAV_GROUPS = () => [
   ['', true, [['painel', 'Painel inicial', 'painel', 'painel']]],
-  ['Operacional', true, [['funil', 'Pipeline', 'crm', 'crm'], ['agenda', 'Agendas e tarefas', 'agenda', 'agenda'], ['propostas', 'Propostas', 'propostas', 'propostas'], ['prevenda', 'Pré-venda', 'prevenda', 'prevenda']]],
+  ['Operacional', true, [['funil', 'Pipeline', 'crm', 'crm'], ['calendario', 'Calendário', 'calendario', 'calendario'], ['agenda', 'Agendas e tarefas', 'agenda', 'agenda'], ['propostas', 'Propostas', 'propostas', 'propostas'], ['prevenda', 'Pré-venda', 'prevenda', 'prevenda']]],
+  ['Comunicação', true, [['comunicacao/inbox', 'Inbox', 'chat', 'inbox'], ['comunicacao/tickets', 'Tickets', 'ticket', 'tickets'], ['comunicacao/whatsapp', 'WhatsApp', 'whatsapp', 'whatsapp']]],
   ['', true, [['ferramentas', 'Ferramentas', 'ferramentas', null]]],
   ['Gestão de vendas', true, [['clientes', 'Clientes', 'clientes', 'clientes'], ['vendas', 'Vendas', 'vendas', 'vendas'], ['posvenda', 'Pós-venda', 'posvenda', 'posvenda'], ['metas', 'Metas', 'metas', 'metas'], ['comissoes', 'Comissões e cancelamentos', 'comissoes', 'comissoes'], ['relatorios', 'Relatórios', 'relatorios', 'relatorios']]],
-  ['Gestão do time', ['admin', 'gestor'].includes(state.user?.role), [['time/organograma', 'Organograma do time', 'organograma', 'time'], ['time/squad', 'Dashboard squad', 'painel', 'time'], ['entrada', 'Distribuição de leads', 'leads', 'distribuicao']]],
+  ['Gestão do time', ['admin', 'gestor'].includes(state.user?.role), [['time/organograma', 'Organograma do time', 'organograma', 'time'], ['time/squad', 'Dashboard squad', 'painel', 'time'], ['time/one-on-ones', 'One-on-ones', 'agenda', 'time'], ['entrada', 'Distribuição de leads', 'leads', 'distribuicao']]],
   ['', true, [['treinamentos', 'Treinamentos', 'treinamentos', 'treinamentos']]],
   ['Financeiro', allowed('financeiro'), finLinks()],
   ['Administração', true, [['administradoras', 'Administradoras', 'administradoras', 'administradoras'], ['planos', 'Planos', 'planos', 'planos'], ['colaboradores', 'Colaboradores', 'colaboradores', 'colaboradores'], ['documentos', 'Central de documentos', 'documentos', 'documentos'], ['usuarios', 'Usuários', 'usuarios', 'usuarios'], ['configuracoes', 'Configurações', 'configuracoes', 'configuracoes']]],
@@ -88,7 +93,7 @@ const EXTRA = {
   'meu-cadastro': [profileView, null, null],
   integracao: [onboardingView, null, 'ferramentas'],
 };
-const navLink = ([k, label, ic]) => html`<a href="#/${k}" data-nav="${k}" title="${label}">${icon(ic)}<span>${label}</span></a>`;
+const navLink = ([k, label, ic]) => html`<a href="#/${k}" data-nav="${k}" title="${label}">${icon(ic)}<span>${label}</span>${k.startsWith('comunicacao/') ? html`<b class="nav-count" data-count="${k.split('/')[1]}" hidden></b>` : ''}</a>`;
 const allowed = (mod) => !mod || (state.user?.modules || []).includes(mod);
 // Financeiro da empresa: quem não tem o módulo, mas é responsável por lançamentos, abre pagar/receber pelos avisos.
 const finAccess = () => allowed('financeiro') || !!state.user?.fin_responsible;
@@ -357,9 +362,28 @@ function closeMenusGlobal() {
 /* ---------- Notificações (sino) ---------- */
 let notifTimer = null;
 let notifLast = 0;
+/** Contadores do menu Comunicação: mensagens não lidas no Inbox e no WhatsApp e tickets aguardando você. */
+export async function loadCommCounts() {
+  if (!state.user || !$('[data-count]', app)) return;
+  let d;
+  try {
+    d = await get('/api/comunicacao/resumo');
+  } catch {
+    return;
+  }
+  for (const [k, n] of Object.entries(d)) {
+    const b = $(`[data-count="${k}"]`, app);
+    if (!b) continue;
+    b.hidden = !n;
+    b.textContent = n > 99 ? '99+' : String(n);
+  }
+}
+window.addEventListener('crm:comm-counts', () => loadCommCounts());
+
 async function loadNotifications(renderPanel) {
   if (!state.user || !$('.notif-badge', app)) return;
   notifLast = Date.now();
+  loadCommCounts();
   let d;
   try {
     d = await get('/api/notificacoes', { limit: 30 });
@@ -381,7 +405,7 @@ async function loadNotifications(renderPanel) {
 function startNotifications() {
   stopNotifications();
   loadNotifications(false);
-  notifTimer = setInterval(() => loadNotifications(false), 60000);
+  notifTimer = setInterval(() => loadNotifications(false), 30000);
 }
 function stopNotifications() {
   if (notifTimer) clearInterval(notifTimer);
@@ -446,6 +470,7 @@ async function route() {
   let navKey = navItem ? key : extra?.[2];
   if (key === 'financeiro') navKey = parts[1] ? `financeiro/${parts[1]}` : state.user.role === 'admin' && allowed('financeiro') ? 'financeiro' : 'financeiro/pagar';
   if (key === 'time') navKey = `time/${parts[1] || 'organograma'}`;
+  if (key === 'comunicacao') navKey = `comunicacao/${parts[1] || 'inbox'}`;
   document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === navKey));
   let view = $('#view');
   if (!view) return;

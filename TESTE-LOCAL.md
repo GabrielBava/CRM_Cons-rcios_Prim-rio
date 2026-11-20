@@ -156,6 +156,20 @@ cliques em `iniciar-windows.bat`. Ao fechar a área restrita, tudo é apagado.
 8. No painel lateral: engrenagem para **trocar o responsável** (com motivo) e **Editar** no bloco do negócio (área, co-responsável,
    valor estimado e qualificação).
 
+### H3. Calendário e Comunicação
+
+1. **Operacional › Calendário:** veja o seu dia, semana, mês ou um período. Estão ali as R1 e R2, os one-on-ones, as tarefas
+   e as atividades registradas. O calendário só mostra: clique num item para ver os detalhes (não dá para agendar por ele).
+   Como líder (gestora@demo.local), escolha "Toda a equipe" ou uma pessoa no seletor "Calendário de".
+2. **Gestão do time › One-on-ones:** a líder marca o one-on-one com alguém do time; ele aparece no calendário dos dois.
+3. **Comunicação › Inbox:** chat interno. "Conversa" fala com uma pessoa; "Grupo" cria um grupo. Anexe arquivos pelo clipe.
+   O número vermelho no menu mostra as mensagens não lidas.
+4. **Comunicação › Tickets:** "+ Novo ticket" com título, responsável, categoria, prazo, descrição e anexos. O responsável
+   começa a atuar, devolve (pedindo o que falta) ou conclui com a entrega; o solicitante responde, reabre ou cancela.
+5. **Comunicação › WhatsApp:** na demonstração está em modo de teste (as mensagens ficam só no CRM). Para ligar o número
+   oficial, o administrador preenche Configurações › Integrações › WhatsApp da empresa (ou as chaves `WHATSAPP_*` do
+   `config.env`) e cadastra o webhook na Meta. No painel do lead, "WhatsApp da empresa" abre a conversa com o cliente.
+
 ### H2. Menu lateral e Gestão do time
 
 1. O botão no canto superior esquerdo recolhe o menu (fica só o símbolo da Vero e os ícones); clique de novo para expandir.

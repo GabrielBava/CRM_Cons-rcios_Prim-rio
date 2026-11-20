@@ -357,6 +357,7 @@ function seedDemo(db, password) {
   seedTreasuryDemo(db, { admin, gestor, c1, PDF });
   seedPeopleDemo(db, { admin, gestor, c1, c2, team, PDF });
   seedDocumentsDemo(db, { admin, PDF });
+  seedCommsDemo(db, { admin, gestor, c1, c2, PDF, ids });
   finance.overdueSweep(db);
   sales.presaleSweep(db);
   sales.commissionSweep(db);
@@ -515,6 +516,66 @@ function seedDocumentsDemo(db, { admin, PDF }) {
   up(lic, 'Certificado digital e-CNPJ A1', { issuer: 'Certificadora', expires_at: dateAgo(-200), tags: 'certificado digital' });
   up(folder(/Marca/), 'Manual da marca Vero Consórcios', { tags: 'marca, identidade visual' });
   documents.expirySweep(db);
+}
+
+/**
+ * Comunicação e calendário: one-on-ones marcados pela líder, conversas do Inbox, tickets em várias situações e
+ * conversas do WhatsApp da empresa em modo de teste (sem a conta da Meta conectada).
+ */
+function seedCommsDemo(db, { admin, gestor, c1, c2, PDF, ids }) {
+  const calendar = require('./services/calendar');
+  const comms = require('./services/comms');
+  const wa = require('./services/whatsapp');
+  const at = (days, h, m = 0) => {
+    const d = new Date(Date.now() + days * DAY);
+    d.setHours(h, m, 0, 0);
+    return d.toISOString();
+  };
+  // One-on-ones da líder com cada especialista (um já realizado, outros na semana)
+  calendar.scheduleOneOnOne(db, gestor, { user_id: c1.id, start_at: at(1, 9), end_at: at(1, 9, 30), agenda: 'Metas do mês, pipeline e R1 da semana.' });
+  calendar.scheduleOneOnOne(db, gestor, { user_id: c2.id, start_at: at(2, 10), end_at: at(2, 10, 30), agenda: 'No-show da R1 e plano de remarcação.' });
+  const done = calendar.scheduleOneOnOne(db, gestor, { user_id: c1.id, start_at: at(3, 16), end_at: at(3, 16, 45) }).id;
+  db.prepare("UPDATE tasks SET due_at = ?, ends_at = ?, status = 'concluida', completed_at = ? WHERE id = ?").run(at(-6, 9), at(-6, 9, 30), at(-6, 9, 30), done);
+
+  // Inbox: conversa direta e grupo do time
+  const d1 = comms.openDirect(db, c1, gestor.id).id;
+  comms.sendMessage(db, c1, d1, { body: 'Gestora, o cliente da proposta de R$ 250 mil pediu para baixar a parcela. Posso refazer com lance embutido?' });
+  comms.sendMessage(db, gestor, d1, { body: 'Pode sim. Mostra os dois cenários e me manda antes de enviar.' });
+  comms.sendMessage(db, c1, d1, { body: 'Combinado, segue o rascunho.', file: { filename: 'proposta-rascunho.pdf', content_base64: PDF } });
+  const g = comms.createGroup(db, gestor, { title: 'Time Centro', member_ids: [c1.id, c2.id, admin.id] }).id;
+  comms.sendMessage(db, gestor, g, { body: 'Bom dia, time! Hoje às 9h alinhamento rápido das R1 da semana.' });
+  comms.sendMessage(db, c2, g, { body: 'Fechado. Tenho 3 R1 confirmadas.' });
+  const d2 = comms.openDirect(db, admin, c2.id).id;
+  comms.sendMessage(db, admin, d2, { body: 'Parabéns pela venda de ontem! 👏' });
+
+  // Tickets: um aberto para o administrador (marketing), um devolvido ao especialista e um concluído
+  const due = (n) => new Date(Date.now() + n * DAY).toISOString().slice(0, 10);
+  comms.createTicket(db, c1, { title: 'Arte para campanha "Imóvel sem juros"', description: 'Post 1080x1080 e versão stories com a taxa da campanha e o logo da administradora parceira. Uso no Instagram e no WhatsApp.', assignee_id: admin.id, category: 'marketing', priority: 'alta', due_date: due(3), files: [{ filename: 'briefing-campanha.pdf', content_base64: PDF }] });
+  const t2 = comms.createTicket(db, c2, { title: 'Liberar acesso ao portal da administradora', description: 'Preciso do acesso ao portal para acompanhar as assembleias dos meus clientes.', assignee_id: gestor.id, category: 'ti', priority: 'normal', due_date: due(2) }).id;
+  comms.ticketAction(db, gestor, t2, { action: 'iniciar' });
+  comms.ticketAction(db, gestor, t2, { action: 'devolver', body: 'Me envie o seu CPF e o e-mail que vai usar no portal.' });
+  const t3 = comms.createTicket(db, gestor, { title: 'Revisar contrato de parceria', description: 'Conferir as cláusulas de comissão antes da renovação.', assignee_id: admin.id, category: 'juridico', priority: 'normal', due_date: due(-2) }).id;
+  comms.ticketAction(db, admin, t3, { action: 'concluir', body: 'Revisado: cláusula 7 ajustada. Versão final anexa.', files: [{ filename: 'contrato-revisado.pdf', content_base64: PDF }] });
+
+  // WhatsApp em modo de teste: conversas recebidas de leads e de um número sem cadastro
+  db.prepare("INSERT INTO settings (key, value) VALUES ('whatsapp_sandbox', 'true') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+  db.prepare("INSERT INTO settings (key, value) VALUES ('whatsapp_template_name', '\"retomar_contato\"') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+  const ts = (minAgo) => String(Math.floor((Date.now() - minAgo * 60000) / 1000));
+  const msg = (from, name, id, text, minAgo) => ({ entry: [{ changes: [{ value: { contacts: [{ wa_id: from, profile: { name } }], messages: [{ from, id, timestamp: ts(minAgo), type: 'text', text: { body: text } }] } }] }] });
+  const req = { headers: {}, rawBody: '' };
+  const leads = ids.slice(1, 4).map((id) => db.prepare('SELECT id, name, whatsapp, phone1, owner_id FROM contacts WHERE id = ?').get(id));
+  const lines = ['Oi! Vi o anúncio do consórcio de imóvel, pode me explicar como funciona?', 'Boa tarde, recebi a proposta. Dá para fazer em 180 meses?', 'Consigo usar o FGTS no lance?'];
+  leads.forEach((c, i) => {
+    const w = wa.toWaId(c.whatsapp || c.phone1);
+    if (!w) return;
+    wa.receiveWebhook(db, req, msg(w, c.name.split(' ')[0], `wamid.demo.in${i}`, lines[i], 30 + i * 90));
+  });
+  if (leads[0]) {
+    const conv = db.prepare('SELECT id FROM wa_conversations WHERE contact_id = ?').get(leads[0].id);
+    const owner = db.prepare('SELECT * FROM users WHERE id = ?').get(leads[0].owner_id) || c1;
+    if (conv) wa.sendMessage(db, { ...owner, modules: null }, conv.id, { body: `Olá, ${leads[0].name.split(' ')[0]}! Claro: no consórcio você paga parcelas sem juros e é contemplado por sorteio ou lance. Posso te ligar em 5 minutos?` }).catch(() => {});
+  }
+  wa.receiveWebhook(db, req, msg('5511955554321', 'Marcos', 'wamid.demo.unknown', 'Olá, quero saber sobre consórcio de veículo.', 12));
 }
 
 module.exports = { seedDemo, DEMO_USERS };

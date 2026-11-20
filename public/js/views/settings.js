@@ -108,6 +108,33 @@ function googleCard(g) {
   </section>`;
 }
 
+/** WhatsApp da empresa pela API oficial (Cloud API da Meta): número, token, webhook e modelo para iniciar conversa. */
+function whatsappCard(w) {
+  return html`<section class="card integ">
+    <div class="section-head"><h3>WhatsApp da empresa (API oficial)</h3>${badge(w.configured ? 'Conectado' : w.sandbox ? 'Modo de teste' : 'Não conectado', w.configured ? 'ok' : w.sandbox ? 'warn' : 'muted')}</div>
+    <p>Liga o número oficial da empresa ao CRM: as conversas aparecem em <a href="#/comunicacao/whatsapp">Comunicação › WhatsApp</a>, ligadas ao lead pelo telefone e ao especialista responsável, e entram no histórico do cliente.</p>
+    <ol class="small">
+      <li>No <a href="https://developers.facebook.com/apps" target="_blank" rel="noopener">Meta for Developers</a>, crie um app do tipo <strong>Empresa</strong> e adicione o produto <strong>WhatsApp</strong>, vinculado à conta do WhatsApp Business da Vero.</li>
+      <li>Em WhatsApp › Configuração da API, copie o <strong>Phone number ID</strong>. Gere um <strong>token de acesso permanente</strong> (Usuário do sistema no Gerenciador de Negócios, com a permissão whatsapp_business_messaging).</li>
+      <li>Em WhatsApp › Configuração › Webhook, informe a URL <code class="selectable">${w.webhook_url}</code> e o token de verificação <code class="selectable">${w.verify_token || '(salve para gerar)'}</code>; assine o campo <strong>messages</strong>.</li>
+      <li>Em Configurações do app › Básico, copie a <strong>Chave secreta do aplicativo</strong> (App Secret): o CRM confere a assinatura de cada evento.</li>
+      <li>Crie e aprove no Gerenciador do WhatsApp um <strong>modelo</strong> de mensagem para iniciar conversas (a Meta exige modelo fora da janela de 24 horas).</li>
+    </ol>
+    ${can.admin() ? html`<form data-wa-form class="grid" novalidate>
+      ${w.from_env ? html`<p class="hint full">Número e token definidos no config.env do servidor (WHATSAPP_PHONE_NUMBER_ID e WHATSAPP_TOKEN).</p>` : html`
+      ${field({ name: 'phone_number_id', label: 'Phone number ID', value: w.phone_number_id || '', placeholder: '1098765432101234' })}
+      ${field({ name: 'token', label: w.configured ? 'Token de acesso (já salvo; preencha só para trocar)' : 'Token de acesso permanente', type: 'password' })}`}
+      ${field({ name: 'app_secret', label: w.has_app_secret ? 'App Secret (já salvo; preencha só para trocar)' : 'App Secret (chave secreta do aplicativo)', type: 'password' })}
+      ${field({ name: 'verify_token', label: 'Token de verificação do webhook', value: w.verify_token || '' })}
+      ${field({ name: 'display_number', label: 'Número exibido', value: w.display_number || '', placeholder: '+55 (11) 9 0000-0000' })}
+      ${field({ name: 'template_name', label: 'Modelo para iniciar conversa', value: w.template?.name || '', placeholder: 'ex.: retomar_contato' })}
+      ${field({ name: 'template_lang', label: 'Idioma do modelo', value: w.template?.language || 'pt_BR' })}
+      ${field({ name: 'sandbox', label: 'Modo de teste enquanto a conta não está conectada (as mensagens ficam só no CRM)', type: 'checkbox', value: w.sandbox, full: true })}
+      <div class="inline-actions full"><button class="btn primary" type="submit">Salvar</button></div>
+    </form>` : ''}
+  </section>`;
+}
+
 /** E-mail (SMTP): a ficha de adesão sai do endereço da empresa (padrão noreply@veroconsorciosbr.com.br). */
 function emailCard(st) {
   return html`<section class="card integ">
@@ -336,7 +363,8 @@ const RENDER = {
     };
     const g = await get('/api/google/status').catch(() => null);
     const em = await get('/api/email/status').catch(() => null);
-    render(box, html`${g ? googleCard(g) : ''}${em ? emailCard(em) : ''}<div class="alert">Nenhuma integração é considerada conectada sem validação: o status "Ativa" só pode ser marcado após o recebimento de ao menos um evento real processado com sucesso. Detalhes técnicos em <code>docs/INTEGRACOES.md</code>.</div>
+    const wa = await get('/api/whatsapp/status').catch(() => null);
+    render(box, html`${g ? googleCard(g) : ''}${wa ? whatsappCard(wa) : ''}${em ? emailCard(em) : ''}<div class="alert">Nenhuma integração é considerada conectada sem validação: o status "Ativa" só pode ser marcado após o recebimento de ao menos um evento real processado com sucesso. Detalhes técnicos em <code>docs/INTEGRACOES.md</code>.</div>
       ${list.map((i) => html`<section class="card integ" data-key="${i.key}">
         <div class="section-head"><h3>${i.name}</h3>${statusIntegration(i.effective_status, i.effective_status_label)}</div>
         <p>${i.description}</p>
@@ -371,6 +399,17 @@ const RENDER = {
         const r = await post('/api/email/teste', { base: location.href.split('#')[0], logo_url: new URL('img/vero-logo-dark.png', document.baseURI).href });
         if (r.sent) toast(`E-mail de teste enviado para ${r.to}.`);
         else toastError(new Error(r.reason === 'nao_configurado' ? 'Configure o servidor SMTP primeiro.' : `Falha no envio: ${r.error}`));
+      } catch (ex) {
+        toastError(ex);
+      }
+    });
+    on(box, 'submit', '[data-wa-form]', async (e, f) => {
+      e.preventDefault();
+      try {
+        const d = formData(f);
+        await put('/api/whatsapp/config', { ...d, sandbox: !!f.sandbox.checked });
+        toast('WhatsApp da empresa configurado.');
+        redraw();
       } catch (ex) {
         toastError(ex);
       }

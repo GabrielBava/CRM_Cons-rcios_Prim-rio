@@ -19,7 +19,7 @@ Situação nesta versão:
 | Discadora | Endpoint implementado. **Fornecedor não definido: integração pendente.** |
 | Simulador | Fluxo de link e retorno implementado no CRM. **Depende de implementação no simulador: integração pendente.** Enquanto isso, a simulação pode ser registrada manualmente. |
 | Meta Ads (Lead Ads) | **Conector direto não implementado.** Leads podem chegar pela API de entrada de leads por meio de uma ferramenta intermediária. |
-| WhatsApp | Endpoint de recebimento de eventos implementado, **somente para registro no histórico (não envia mensagens). Provedor não definido.** |
+| WhatsApp | **API oficial do WhatsApp Business (Cloud API da Meta):** webhook de recebimento e envio de mensagens implementados (seção 10); precisa da conta da Meta conectada (número, token e App Secret). Há também o endpoint genérico de registro de mensagens de outros provedores (seção 4). |
 | API de entrada de leads | Implementada (endpoint próprio do CRM). |
 | Qualificação pela R1 (transcrição) | Endpoint implementado no CRM. **O modelo que lê a transcrição da reunião ainda não existe: integração futura.** |
 
@@ -143,9 +143,9 @@ Campos padrão: `id_lead_plataforma`, `plataforma` (ex.: `meta_ads`), `nome`, `t
 - Sem correspondência: `criado`, com relacionamento "lead" e o responsável padrão configurado. Sem responsável padrão, **a roleta distribui na hora** (sem esperar a rotina de 15 minutos).
 - Leads de formulário (origens Meta Ads, Instagram, Facebook, LinkedIn, TikTok, landing page e site, configuráveis em `auto_tentativa_origins`) chegam com nome e contato e entram direto na etapa **Tentativa de contato**, com a tarefa de primeiro contato para o especialista.
 
-## 4. WhatsApp: `POST /api/integracoes/whatsapp/mensagens`
+## 4. WhatsApp (outros provedores): `POST /api/integracoes/whatsapp/mensagens`
 
-Serve apenas para **registrar no histórico**. O CRM não envia mensagens.
+Endpoint genérico para **registrar no histórico** mensagens vindas de um provedor intermediário. Para conversar pelo número oficial da empresa dentro do CRM, use a integração direta com a API oficial (seção 10).
 
 Campos padrão: `id_mensagem` (obrigatório, usado para idempotência), `telefone`, `direcao` (`entrada`/`saida`), `data`, `tipo`, `texto`.
 
@@ -217,6 +217,18 @@ O futuro agente de IA que ler a transcrição pode gerar qualquer um desses form
 - **Privacidade:** clientes aparecem só pelo código; CPF, RG, telefone, e-mail e dados bancários de clientes e colaboradores não saem pela conexão BI. Cada leitura fica nos registros da integração.
 - **Power BI:** Obter dados › Web › `https://SEU-CRM/api/bi/vendas?formato=csv&token=…` (ou JSON com o cabeçalho Authorization em "Avançado"). Agende a atualização no Power BI Service.
 - **Relatórios em Excel:** cada relatório exporta `.xlsx` (`GET /api/relatorios/:key/xlsx`) e o administrador exporta o pacote completo (`GET /api/relatorios-pacote.xlsx?grupo=`).
+
+## 10. WhatsApp da empresa (API oficial do WhatsApp Business)
+
+Tela: **Comunicação › WhatsApp**. Configuração: **Configurações › Integrações › WhatsApp da empresa** ou no `config.env`.
+
+- **Credenciais (Meta for Developers, app do tipo Empresa com o produto WhatsApp):** `WHATSAPP_PHONE_NUMBER_ID` (WhatsApp › Configuração da API), `WHATSAPP_TOKEN` (token permanente de um Usuário do sistema no Gerenciador de Negócios, com `whatsapp_business_messaging` e `whatsapp_business_management`), `WHATSAPP_APP_SECRET` (Configurações do app › Básico: confere a assinatura `X-Hub-Signature-256` de cada evento), `WHATSAPP_VERIFY_TOKEN` (qualquer texto; o mesmo é informado na Meta) e, se preciso, `WHATSAPP_API_VERSION` (padrão `v21.0`). Pela tela, o token e o App Secret ficam cifrados no banco.
+- **Webhook:** `https://SEU-CRM/api/whatsapp/webhook`. `GET` responde o `hub.challenge` quando `hub.verify_token` confere; `POST` recebe `messages` (texto, botão, lista, localização, imagem, documento, áudio e vídeo) e `statuses` (enviada, entregue, lida, falhou). Assine o campo **messages**. O endereço precisa ser HTTPS público (`PUBLIC_URL`).
+- **Conversas:** cada número (`wa_id`) vira uma conversa, ligada ao cadastro pelo WhatsApp/telefone (com ou sem o nono dígito) e atribuída ao responsável pelo cliente. Número sem cadastro: aparece em "Sem cadastro" e a gestão é avisada; a conversa pode ser vinculada a um cadastro ou virar lead. Escopo: especialista vê as suas, líder as da equipe, administrador todas.
+- **Envio:** `POST /api/whatsapp/conversas/:id/mensagens` com `body` (texto livre, só até 24 horas depois da última mensagem do cliente) ou `template` + `language` + `params` (modelo aprovado no Gerenciador do WhatsApp, obrigatório fora da janela). Respeita a oposição a contato por WhatsApp do cadastro.
+- **Histórico:** cada mensagem recebida ou enviada entra no histórico do lead como atividade de WhatsApp (`mensagem_recebida` / `mensagem_enviada`, origem `whatsapp`).
+- **Mídia:** `GET /api/whatsapp/midia/:id` baixa a foto, o áudio ou o documento recebido pela API da Meta.
+- **Modo de teste:** sem a conta conectada, o administrador pode ligar o modo de teste: as mensagens ficam só no CRM (marcadas "teste"), para treinar a equipe.
 
 ## Exportação para discadora
 

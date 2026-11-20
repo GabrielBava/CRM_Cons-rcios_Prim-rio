@@ -2086,3 +2086,232 @@ test('conexão BI: bases em JSON e CSV com o token da integração, sem dados pe
   assert.equal((await call(null, 'GET', '/api/bi/inexistente', undefined, h)).status, 400);
   assert.equal((await fetch(`${base}/api/bi/vendas?token=errado`)).status, 401);
 });
+
+test('calendário 360: só leitura, reúne tarefas, R1/R2, atividades e o one-on-one marcado pelo líder; escopo por perfil', async () => {
+  const c1 = await userId('c1@t.com');
+  const c2 = await userId('c2@t.com');
+  const day = (n, h = 14) => {
+    const d = new Date(Date.now() + n * 86400000);
+    d.setUTCHours(h, 0, 0, 0);
+    return d.toISOString();
+  };
+  // One-on-one: só líder/administrador, só com quem é da equipe
+  assert.equal((await call('c1', 'POST', '/api/time/one-on-ones', { user_id: c1, start_at: day(2), end_at: day(2, 15) })).status, 403);
+  assert.equal((await call('gestor', 'POST', '/api/time/one-on-ones', { user_id: c2, start_at: day(2), end_at: day(2, 15) })).status, 403, 'fora da equipe');
+  assert.equal((await call('gestor', 'POST', '/api/time/one-on-ones', { user_id: c1, start_at: day(2, 15), end_at: day(2, 14) })).status, 400);
+  const oo = await call('gestor', 'POST', '/api/time/one-on-ones', { user_id: c1, start_at: day(2), end_at: day(2, 15), agenda: 'Metas do mês e pipeline' });
+  assert.equal(oo.status, 200, JSON.stringify(oo.data));
+  assert.ok((await call('gestor', 'GET', '/api/time/one-on-ones')).data.some((t) => t.id === oo.data.id && t.member_name === 'Cons 1'));
+  // Calendário do especialista: o próprio, com o one-on-one e as atividades registradas
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Calendário', phone1: '11 94446-3001', origin: 'site', relationship: 'lead' });
+  await call('c1', 'POST', '/api/atividades', { contact_id: c.data.id, type: 'ligacao_realizada', result: 'atendida' });
+  await call('c1', 'POST', '/api/tarefas', { contact_id: c.data.id, type: 'ligar', title: 'Ligar de volta', due_at: day(1, 13) });
+  const from = new Date(Date.now() - 86400000).toISOString();
+  const to = new Date(Date.now() + 7 * 86400000).toISOString();
+  const cal = await call('c1', 'GET', `/api/calendario?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+  assert.equal(cal.status, 200, JSON.stringify(cal.data));
+  assert.equal(cal.data.scope, 'Meu calendário');
+  const kinds = new Set(cal.data.events.map((e) => e.kind));
+  assert.ok(kinds.has('one_on_one') && kinds.has('atividade') && kinds.has('tarefa'), [...kinds].join(','));
+  const one = cal.data.events.find((e) => e.kind === 'one_on_one');
+  assert.equal(one.created_by_name, 'Gestor');
+  assert.ok(one.end, 'one-on-one com término');
+  assert.ok(cal.data.totals.one_on_one >= 1 && cal.data.totals.atividades >= 1);
+  assert.ok(!cal.data.events.some((e) => e.user_id && e.user_id !== c1 && e.kind !== 'one_on_one'), 'só os registros do próprio especialista');
+  // O líder vê o calendário dele (com o one-on-one que marcou), de alguém da equipe ou da equipe toda
+  const lead = await call('gestor', 'GET', `/api/calendario?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+  assert.ok(lead.data.events.some((e) => e.kind === 'one_on_one'), 'líder vê o one-on-one que marcou');
+  assert.equal((await call('gestor', 'GET', `/api/calendario?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&user_id=${c1}`)).data.scope, 'Calendário de Cons 1');
+  assert.equal((await call('gestor', 'GET', `/api/calendario?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&user_id=${c2}`)).status, 403);
+  assert.equal((await call('c1', 'GET', `/api/calendario?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&user_id=${c2}`)).status, 403);
+  assert.equal((await call('gestor', 'GET', `/api/calendario?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&todos=1`)).data.scope, 'Toda a equipe');
+  // Período inválido; o calendário não tem rota de criação
+  assert.equal((await call('c1', 'GET', `/api/calendario?from=${encodeURIComponent(to)}&to=${encodeURIComponent(from)}`)).status, 400);
+  assert.equal((await call('c1', 'POST', '/api/calendario', {})).status, 405);
+});
+
+test('inbox: conversa direta e em grupo, anexos, não lidas no resumo e só participantes leem', async () => {
+  const c1 = await userId('c1@t.com');
+  const c2 = await userId('c2@t.com');
+  const gestor = await userId('gestor@t.com');
+  const people = await call('c1', 'GET', '/api/inbox/pessoas');
+  assert.ok(people.data.some((u) => u.id === gestor) && !people.data.some((u) => u.id === c1));
+  const d = await call('c1', 'POST', '/api/inbox/conversas', { user_id: gestor });
+  assert.equal(d.status, 200);
+  assert.equal((await call('gestor', 'POST', '/api/inbox/conversas', { user_id: c1 })).data.id, d.data.id, 'mesma conversa direta');
+  assert.equal((await call('c1', 'POST', `/api/inbox/conversas/${d.data.id}/mensagens`, {})).status, 400);
+  const m1 = await call('c1', 'POST', `/api/inbox/conversas/${d.data.id}/mensagens`, { body: 'Bom dia! Pode revisar a proposta do cliente X?' });
+  assert.equal(m1.status, 200, JSON.stringify(m1.data));
+  const m2 = await call('c1', 'POST', `/api/inbox/conversas/${d.data.id}/mensagens`, { body: 'Segue o PDF', file: { filename: 'proposta.pdf', content_base64: PDF } });
+  assert.equal(m2.data.filename, 'proposta.pdf');
+  assert.equal((await call('c1', 'POST', `/api/inbox/conversas/${d.data.id}/mensagens`, { file: { filename: 'virus.exe', content_base64: PDF } })).status, 400);
+  assert.equal((await call('gestor', 'GET', '/api/comunicacao/resumo')).data.inbox, 2);
+  const list = (await call('gestor', 'GET', '/api/inbox/conversas')).data;
+  const conv = list.find((x) => x.id === d.data.id);
+  assert.equal(conv.title, 'Cons 1');
+  assert.equal(conv.unread, 2);
+  const msgs = await call('gestor', 'GET', `/api/inbox/conversas/${d.data.id}/mensagens`);
+  assert.equal(msgs.data.rows.length, 2);
+  assert.equal((await call('gestor', 'GET', '/api/comunicacao/resumo')).data.inbox, 0, 'abrir marca como lidas');
+  const after = await call('gestor', 'GET', `/api/inbox/conversas/${d.data.id}/mensagens?after_id=${m1.data.id}`);
+  assert.equal(after.data.rows.length, 1);
+  const file = await fetch(`${base}/api/inbox/arquivos/${m2.data.id}`, { headers: { Cookie: sessions.gestor } });
+  assert.equal(file.status, 200);
+  assert.equal((await call('c2', 'GET', `/api/inbox/conversas/${d.data.id}/mensagens`)).status, 403, 'quem não participa não lê');
+  assert.equal((await fetch(`${base}/api/inbox/arquivos/${m2.data.id}`, { headers: { Cookie: sessions.c2 } })).status, 403);
+  // Grupo
+  assert.equal((await call('c1', 'POST', '/api/inbox/conversas', { title: 'Sem gente', member_ids: [] })).status, 400);
+  const g = await call('gestor', 'POST', '/api/inbox/conversas', { title: 'Time A', member_ids: [c1, c2] });
+  assert.equal(g.status, 200);
+  await call('c2', 'POST', `/api/inbox/conversas/${g.data.id}/mensagens`, { body: 'Reunião às 9h amanhã' });
+  assert.ok((await call('c1', 'GET', '/api/comunicacao/resumo')).data.inbox >= 1);
+  assert.equal((await call('c1', 'PATCH', `/api/inbox/conversas/${g.data.id}`, { remove_ids: [c2] })).status, 403, 'só quem criou altera');
+  assert.equal((await call('c2', 'PATCH', `/api/inbox/conversas/${g.data.id}`, { leave: true })).status, 200);
+  assert.equal((await call('c2', 'GET', `/api/inbox/conversas/${g.data.id}/mensagens`)).status, 403, 'saiu do grupo');
+});
+
+test('tickets: abertura com responsável e anexo, iniciar, devolver, responder, concluir, reabrir e permissões', async () => {
+  const gestor = await userId('gestor@t.com');
+  const c2 = await userId('c2@t.com');
+  assert.equal((await call('c1', 'POST', '/api/tickets', { title: 'Arte', description: '' , assignee_id: gestor })).status, 400);
+  assert.equal((await call('c1', 'POST', '/api/tickets', { title: 'Arte', description: 'x' })).status, 400, 'responsável obrigatório');
+  const t = await call('c1', 'POST', '/api/tickets', {
+    title: 'Arte para campanha de imóvel', description: 'Post 1080x1080 para Instagram com a taxa da campanha.', assignee_id: gestor, category: 'marketing', priority: 'alta',
+    due_date: new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10), files: [{ filename: 'briefing.pdf', content_base64: PDF }],
+  });
+  assert.equal(t.status, 200, JSON.stringify(t.data));
+  assert.match(t.data.code, /^T-\d{6}$/);
+  assert.ok((await call('gestor', 'GET', '/api/notificacoes')).data.rows.some((n) => n.kind === 'ticket' && n.link === `#/comunicacao/tickets/${t.data.id}`));
+  assert.equal((await call('gestor', 'GET', '/api/comunicacao/resumo')).data.tickets, 1);
+  assert.ok((await call('gestor', 'GET', '/api/tickets?caixa=recebidos')).data.some((x) => x.id === t.data.id));
+  assert.ok((await call('c1', 'GET', '/api/tickets?caixa=enviados')).data.some((x) => x.id === t.data.id));
+  assert.equal((await call('c2', 'GET', `/api/tickets/${t.data.id}`)).status, 403);
+  assert.equal((await call('c1', 'GET', '/api/tickets?caixa=todos')).status, 403);
+  let d = (await call('gestor', 'GET', `/api/tickets/${t.data.id}`)).data;
+  assert.equal(d.files.length, 1);
+  assert.equal(d.can.iniciar, true);
+  assert.equal(d.can.responder, false);
+  // Solicitante não conclui o próprio ticket; responsável inicia, devolve (com motivo) e o solicitante responde
+  assert.equal((await call('c1', 'POST', `/api/tickets/${t.data.id}/acao`, { action: 'concluir' })).status, 403);
+  assert.equal((await call('gestor', 'POST', `/api/tickets/${t.data.id}/acao`, { action: 'iniciar' })).data.status, 'em_andamento');
+  assert.equal((await call('gestor', 'POST', `/api/tickets/${t.data.id}/acao`, { action: 'devolver' })).status, 400, 'devolver exige o que falta');
+  d = (await call('gestor', 'POST', `/api/tickets/${t.data.id}/acao`, { action: 'devolver', body: 'Qual a taxa e o prazo da campanha?' })).data;
+  assert.equal(d.status, 'devolvido');
+  assert.equal((await call('c1', 'GET', '/api/comunicacao/resumo')).data.tickets, 1, 'devolvido aparece para o solicitante');
+  d = (await call('c1', 'POST', `/api/tickets/${t.data.id}/acao`, { action: 'responder', body: 'Taxa 15%, prazo 200 meses.', files: [{ filename: 'tabela.xlsx', content_base64: PDF }] })).data;
+  assert.equal(d.status, 'em_andamento');
+  d = (await call('gestor', 'POST', `/api/tickets/${t.data.id}/acao`, { action: 'concluir', body: 'Arte entregue.', files: [{ filename: 'arte-final.png', content_base64: PDF }] })).data;
+  assert.equal(d.status, 'concluido');
+  assert.equal(d.resolution, 'Arte entregue.');
+  assert.equal(d.files.length, 3);
+  assert.deepEqual(d.events.map((e) => e.kind), ['criado', 'iniciado', 'devolvido', 'respondido', 'concluido']);
+  const f = await fetch(`${base}/api/tickets/arquivos/${d.files[2].id}`, { headers: { Cookie: sessions.c1 } });
+  assert.equal(f.status, 200);
+  // Reabrir exige motivo; transferir para outra pessoa
+  assert.equal((await call('c1', 'POST', `/api/tickets/${t.data.id}/acao`, { action: 'reabrir' })).status, 400);
+  assert.equal((await call('c1', 'POST', `/api/tickets/${t.data.id}/acao`, { action: 'reabrir', body: 'Faltou a versão para stories.' })).data.status, 'aberto');
+  d = (await call('gestor', 'POST', `/api/tickets/${t.data.id}/acao`, { action: 'transferir', assignee_id: c2, body: 'Fica com o C2.' })).data;
+  assert.equal(d.assignee_id, c2);
+  assert.ok((await call('c2', 'GET', '/api/tickets?caixa=recebidos')).data.some((x) => x.id === t.data.id));
+  assert.equal((await call('admin', 'GET', '/api/tickets?caixa=todos&status=abertos')).data.some((x) => x.id === t.data.id), true);
+  assert.equal((await call('c1', 'POST', `/api/tickets/${t.data.id}/acao`, { action: 'cancelar', body: 'Campanha suspensa.' })).data.status, 'cancelado');
+});
+
+test('WhatsApp da empresa: webhook da Meta (verificação e assinatura), conversa ligada ao lead, janela de 24h, modelo e status', async () => {
+  const crypto = require('node:crypto');
+  // Sem conexão: envio recusado com a orientação
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Zap', phone1: '11 98765-4321', whatsapp: '11 98765-4321', origin: 'site', relationship: 'lead' });
+  const start = await call('c1', 'POST', '/api/whatsapp/conversas', { contact_id: c.data.id });
+  assert.equal(start.status, 200, JSON.stringify(start.data));
+  const conv = (await call('c1', 'GET', `/api/whatsapp/conversas/${start.data.id}`)).data.conversation;
+  assert.equal(conv.wa_id, '5511987654321');
+  assert.equal(conv.window_open, false);
+  const off = await call('c1', 'POST', `/api/whatsapp/conversas/${start.data.id}/mensagens`, { body: 'Olá' });
+  assert.equal(off.status, 400);
+  assert.match(off.data.error, /ainda não está conectado/);
+  // Administrador conecta (token, phone number id, app secret e token de verificação)
+  assert.equal((await call('c1', 'PUT', '/api/whatsapp/config', { phone_number_id: '123' })).status, 403);
+  assert.equal((await call('admin', 'PUT', '/api/whatsapp/config', { phone_number_id: '1098765', token: 'EAAG-teste', app_secret: 'segredo-app', verify_token: 'verifica-vero', template_name: 'retomar_contato' })).status, 200);
+  const st = (await call('admin', 'GET', '/api/whatsapp/status')).data;
+  assert.equal(st.configured, true);
+  assert.match(st.webhook_url, /\/api\/whatsapp\/webhook$/);
+  assert.equal((await call('c1', 'GET', '/api/whatsapp/status')).data.verify_token, undefined, 'só o administrador vê o token de verificação');
+  // Verificação do webhook
+  const v = await fetch(`${base}/api/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=verifica-vero&hub.challenge=12345`);
+  assert.equal(v.status, 200);
+  assert.equal(await v.text(), '12345');
+  assert.equal((await fetch(`${base}/api/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=errado&hub.challenge=1`)).status, 403);
+  // Fora da janela de 24h: só o modelo
+  const realFetch = globalThis.fetch;
+  const sent = [];
+  globalThis.fetch = async (url, opts = {}) => {
+    if (String(url).startsWith('https://graph.facebook.com/')) {
+      sent.push([String(url), JSON.parse(opts.body), opts.headers.Authorization]);
+      return new Response(JSON.stringify({ messages: [{ id: `wamid.out${sent.length}` }] }), { status: 200 });
+    }
+    return realFetch(url, opts);
+  };
+  try {
+    const noWin = await call('c1', 'POST', `/api/whatsapp/conversas/${start.data.id}/mensagens`, { body: 'Olá, tudo bem?' });
+    assert.equal(noWin.status, 400);
+    assert.equal(noWin.data.details.needs_template, true);
+    const tpl = await call('c1', 'POST', `/api/whatsapp/conversas/${start.data.id}/mensagens`, { template: 'retomar_contato', params: ['Cliente'] });
+    assert.equal(tpl.status, 200, JSON.stringify(tpl.data));
+    assert.equal(tpl.data.status, 'enviada');
+    assert.equal(sent[0][0], 'https://graph.facebook.com/v21.0/1098765/messages');
+    assert.equal(sent[0][1].type, 'template');
+    assert.equal(sent[0][1].to, '5511987654321');
+    assert.equal(sent[0][2], 'Bearer EAAG-teste');
+    // Mensagem do cliente pelo webhook (assinada): vira mensagem da conversa, atividade no lead e aviso ao responsável
+    const payload = JSON.stringify({ object: 'whatsapp_business_account', entry: [{ id: 'WABA', changes: [{ field: 'messages', value: {
+      messaging_product: 'whatsapp', metadata: { phone_number_id: '1098765' }, contacts: [{ wa_id: '551187654321', profile: { name: 'Zap' } }],
+      messages: [{ from: '551187654321', id: 'wamid.in1', timestamp: String(Math.floor(Date.now() / 1000)), type: 'text', text: { body: 'Oi! Tenho interesse no consórcio.' } }],
+      statuses: [{ id: 'wamid.out1', status: 'delivered', timestamp: String(Math.floor(Date.now() / 1000)), recipient_id: '5511987654321' }],
+    } }] }] });
+    const bad = await fetch(`${base}/api/whatsapp/webhook`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Hub-Signature-256': 'sha256=000' }, body: payload });
+    assert.equal(bad.status, 401, 'assinatura inválida é recusada');
+    const sig = `sha256=${crypto.createHmac('sha256', 'segredo-app').update(payload).digest('hex')}`;
+    const ok = await fetch(`${base}/api/whatsapp/webhook`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Hub-Signature-256': sig }, body: payload });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(await ok.json(), { mensagens: 1, status: 1 });
+    // Repetição do mesmo evento não duplica
+    await fetch(`${base}/api/whatsapp/webhook`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Hub-Signature-256': sig }, body: payload });
+    const list = (await call('c1', 'GET', '/api/whatsapp/conversas')).data;
+    const row = list.find((x) => x.id === start.data.id);
+    assert.ok(row, 'número sem o nono dígito cai na mesma conversa do cadastro');
+    assert.equal(row.unread, 1);
+    assert.equal(row.window_open, true);
+    assert.equal((await call('c1', 'GET', '/api/comunicacao/resumo')).data.whatsapp, 1);
+    const full = (await call('c1', 'GET', `/api/whatsapp/conversas/${start.data.id}`)).data;
+    assert.equal(full.messages.filter((m) => m.direction === 'in').length, 1);
+    assert.equal(full.messages.find((m) => m.wamid === 'wamid.out1').status, 'entregue');
+    assert.ok((await call('c1', 'GET', '/api/notificacoes')).data.rows.some((n) => n.kind === 'whatsapp'));
+    // Dentro da janela: texto livre; mensagens entram no histórico do lead
+    const txt = await call('c1', 'POST', `/api/whatsapp/conversas/${start.data.id}/mensagens`, { body: 'Que ótimo! Posso te ligar agora?' });
+    assert.equal(txt.status, 200, JSON.stringify(txt.data));
+    assert.equal(sent[1][1].type, 'text');
+    const hist = (await call('c1', 'GET', `/api/cadastros/${c.data.id}/historico`)).data.rows;
+    assert.ok(hist.some((a) => a.type === 'mensagem_recebida' && a.source === 'whatsapp'));
+    assert.ok(hist.filter((a) => a.type === 'mensagem_enviada' && a.source === 'whatsapp').length >= 2);
+    // Número desconhecido: conversa sem cadastro, avisando a gestão; outro especialista não vê
+    const p2 = JSON.stringify({ entry: [{ changes: [{ value: { contacts: [{ wa_id: '5531977776543', profile: { name: 'Desconhecido' } }], messages: [{ from: '5531977776543', id: 'wamid.in2', timestamp: String(Math.floor(Date.now() / 1000)), type: 'image', image: { id: 'MEDIA1', mime_type: 'image/jpeg', caption: 'Segue a foto' } }] } }] }] });
+    await fetch(`${base}/api/whatsapp/webhook`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Hub-Signature-256': `sha256=${crypto.createHmac('sha256', 'segredo-app').update(p2).digest('hex')}` }, body: p2 });
+    const adminList = (await call('admin', 'GET', '/api/whatsapp/conversas?filtro=sem_cadastro')).data;
+    const unk = adminList.find((x) => x.wa_id === '5531977776543');
+    assert.ok(unk && !unk.contact_id);
+    assert.equal(unk.name, 'Desconhecido');
+    assert.equal((await call('c2', 'GET', `/api/whatsapp/conversas/${start.data.id}`)).status, 403);
+    assert.equal((await call('leitor', 'GET', '/api/whatsapp/conversas')).status, 403, 'perfil de leitura sem WhatsApp');
+    // Vincular a conversa a um cadastro
+    const linked = await call('admin', 'PATCH', `/api/whatsapp/conversas/${unk.id}`, { contact_id: c.data.id, status: 'encerrada' });
+    assert.equal(linked.status, 200, JSON.stringify(linked.data));
+    assert.equal(linked.data.conversation.contact_id, c.data.id);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  // Oposição a contato por WhatsApp bloqueia o envio
+  assert.equal((await call('c1', 'POST', `/api/cadastros/${c.data.id}/consentimentos`, { channel: 'whatsapp', status: 'oposicao', source: 'pedido pelo WhatsApp' })).status, 200);
+  const blocked = await call('c1', 'POST', `/api/whatsapp/conversas/${start.data.id}/mensagens`, { template: 'retomar_contato' });
+  assert.equal(blocked.status, 400);
+  assert.match(blocked.data.error, /oposição/);
+});

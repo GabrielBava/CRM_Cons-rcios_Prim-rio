@@ -646,3 +646,15 @@ Lance informado = recurso próprio para lance, valor do lance, FGTS. A temperatu
 
 **Administradoras.** Acesso ao portal com endereço, usuário e **senha**. A senha fica cifrada no banco (AES-256-GCM com a chave `CRM_SECRET_KEY` ou o arquivo `<banco>.key`, criado na primeira execução e que deve entrar no backup), não aparece em listagens e só o administrador consegue ver; cada consulta fica na auditoria.
 
+
+## 19. Calendário 360 e Comunicação (Inbox, Tickets e WhatsApp)
+
+**Calendário (Operacional).** Visão somente leitura, por dia, semana, mês ou período, de tudo o que a pessoa tem para fazer e do que já fez: R1 e R2 (com no-show e presença confirmada), one-on-ones, tarefas (pendentes, atrasadas e concluídas) e as atividades registradas (ligações, WhatsApp, e-mail, direct, conversas e notas). Filtros por tipo, com contadores. O especialista vê o próprio calendário; o líder escolhe uma pessoa da equipe ou a equipe inteira; o administrador, qualquer pessoa, um time ou a empresa. O calendário não cria nada: as reuniões nascem no Pipeline e em Agendas e tarefas, e os one-on-ones em Gestão do time.
+
+**One-on-one (Gestão do time).** O líder (ou o administrador) marca o one-on-one com alguém da equipe, com início, término, pauta e link opcional. Vira uma tarefa do tipo "One-on-one" do liderado e aparece no calendário dos dois.
+
+**Inbox.** Chat interno entre colaboradores: conversa direta (uma por par de pessoas) ou grupo (quem cria inclui, retira e renomeia; qualquer participante pode sair). Mensagens de até 4.000 caracteres, anexos de até 15 MB, separação por dia, atualização automática e contador de não lidas no menu. Só os participantes leem a conversa e os anexos.
+
+**Tickets.** Chamado interno com título, descrição, responsável, categoria (marketing, comercial, operacional, financeiro, TI, RH, jurídico, outro), prioridade, prazo e anexos. Fluxo: **aberto → em andamento → devolvido** (o responsável pede o que falta, com motivo) **→ respondido → concluído** (com a entrega e anexos); o solicitante pode reabrir um concluído ou cancelar; o responsável ou o administrador transfere. Cada passo fica no andamento do ticket e avisa a outra parte no sino. Caixas: "Para mim", "Abertos por mim" e "Todos" (administrador) ou "Do meu time" (líder). Prazo vencido aparece em vermelho.
+
+**WhatsApp da empresa.** Conversas com clientes pelo número oficial (API do WhatsApp Business), ligadas ao cadastro pelo telefone e ao responsável pelo cliente; cada mensagem entra no histórico do lead. Texto livre até 24 horas depois da última mensagem do cliente; fora disso, a conversa recomeça com um modelo aprovado. Conversas de números sem cadastro podem ser vinculadas ou virar lead. Detalhes técnicos em `docs/INTEGRACOES.md`, seção 10.

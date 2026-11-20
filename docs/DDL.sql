@@ -1,7 +1,7 @@
 -- =====================================================================
 -- Vero Consórcios (ERP/CRM) — DDL completo do banco (SQLite)
 -- Gerado por scripts/ddl.js a partir de um banco novo, com todas as migrações aplicadas.
--- 69 tabelas · 196 chaves estrangeiras declaradas · 49 índices
+-- 77 tabelas · 213 chaves estrangeiras declaradas · 58 índices
 --
 -- Observações
 --  - O SQLite verifica as chaves estrangeiras na gravação (PRAGMA foreign_keys = ON), não na criação:
@@ -1375,6 +1375,121 @@ CREATE TABLE IF NOT EXISTS company_documents (
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_company_docs ON company_documents(folder_id, status);
+
+-- ---------------------------------------------------------------------
+-- Comunicação (Inbox, Tickets e WhatsApp)
+-- ---------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS chat_conversations (
+  id INTEGER PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('direta','grupo')),
+  title TEXT,
+  direct_key TEXT UNIQUE,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  last_message_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS chat_members (
+  conversation_id INTEGER NOT NULL REFERENCES chat_conversations(id),
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  last_read_id INTEGER NOT NULL DEFAULT 0,
+  joined_at TEXT NOT NULL,
+  left_at TEXT,
+  PRIMARY KEY (conversation_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_chat_members_user ON chat_members(user_id);
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id INTEGER PRIMARY KEY,
+  conversation_id INTEGER NOT NULL REFERENCES chat_conversations(id),
+  user_id INTEGER REFERENCES users(id),
+  body TEXT,
+  filename TEXT,
+  mime TEXT,
+  size INTEGER,
+  content BLOB,
+  system INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chat_messages ON chat_messages(conversation_id, id);
+
+CREATE TABLE IF NOT EXISTS tickets (
+  id INTEGER PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'outro',
+  priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('baixa','normal','alta','urgente')),
+  status TEXT NOT NULL DEFAULT 'aberto' CHECK (status IN ('aberto','em_andamento','devolvido','concluido','cancelado')),
+  requester_id INTEGER NOT NULL REFERENCES users(id),
+  assignee_id INTEGER NOT NULL REFERENCES users(id),
+  due_date TEXT,
+  contact_id INTEGER REFERENCES contacts(id),
+  resolution TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  started_at TEXT,
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_tickets_assignee ON tickets(assignee_id, status);
+CREATE INDEX IF NOT EXISTS idx_tickets_requester ON tickets(requester_id, status);
+
+CREATE TABLE IF NOT EXISTS ticket_events (
+  id INTEGER PRIMARY KEY,
+  ticket_id INTEGER NOT NULL REFERENCES tickets(id),
+  user_id INTEGER REFERENCES users(id),
+  kind TEXT NOT NULL,
+  body TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ticket_events ON ticket_events(ticket_id, id);
+
+CREATE TABLE IF NOT EXISTS ticket_files (
+  id INTEGER PRIMARY KEY,
+  ticket_id INTEGER NOT NULL REFERENCES tickets(id),
+  event_id INTEGER REFERENCES ticket_events(id),
+  filename TEXT NOT NULL,
+  mime TEXT,
+  size INTEGER NOT NULL,
+  content BLOB NOT NULL,
+  uploaded_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ticket_files ON ticket_files(ticket_id);
+
+CREATE TABLE IF NOT EXISTS wa_conversations (
+  id INTEGER PRIMARY KEY,
+  wa_id TEXT NOT NULL UNIQUE,
+  contact_id INTEGER REFERENCES contacts(id),
+  profile_name TEXT,
+  assigned_to INTEGER REFERENCES users(id),
+  status TEXT NOT NULL DEFAULT 'aberta' CHECK (status IN ('aberta','encerrada')),
+  unread INTEGER NOT NULL DEFAULT 0,
+  last_message_at TEXT,
+  last_inbound_at TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_wa_conv_assigned ON wa_conversations(assigned_to, last_message_at);
+CREATE INDEX IF NOT EXISTS idx_wa_conv_contact ON wa_conversations(contact_id);
+
+CREATE TABLE IF NOT EXISTS wa_messages (
+  id INTEGER PRIMARY KEY,
+  conversation_id INTEGER NOT NULL REFERENCES wa_conversations(id),
+  wamid TEXT UNIQUE,
+  direction TEXT NOT NULL CHECK (direction IN ('in','out')),
+  kind TEXT NOT NULL DEFAULT 'text',
+  body TEXT,
+  media_id TEXT,
+  media_mime TEXT,
+  filename TEXT,
+  status TEXT NOT NULL DEFAULT 'pendente',
+  error TEXT,
+  user_id INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  status_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_wa_messages ON wa_messages(conversation_id, id);
 
 -- ---------------------------------------------------------------------
 -- Financeiro da empresa

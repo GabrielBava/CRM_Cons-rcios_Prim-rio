@@ -3,10 +3,11 @@
 Plataforma de gestão da empresa inteira (consórcio, planejamento financeiro, seguros e investimentos), do primeiro contato ao pós-venda. No topo à direita ficam o sino de notificações e o menu do usuário (foto, Meu cadastro, Alterar senha e Sair). O menu lateral pode ser **recolhido** pelo botão no canto superior esquerdo (fica só o símbolo da Vero e os ícones) e é organizado em grupos:
 
 - **Painel inicial**
-- **Operacional:** Pipeline, Agendas e tarefas, Propostas e Pré-venda
+- **Operacional:** Pipeline, Calendário (panorama 360 somente leitura: R1, R2, one-on-ones, tarefas e atividades por dia, semana, mês ou período), Agendas e tarefas, Propostas e Pré-venda
+- **Comunicação:** Inbox (chat interno entre colaboradores, conversas diretas e grupos, com anexos), Tickets (chamados internos com responsável, prazo e anexos: aberto → em andamento → devolvido → concluído) e WhatsApp (número oficial da empresa pela API do WhatsApp Business, conversas ligadas ao lead)
 - **Ferramentas:** um só item com Simulador, Modelo da R1, Kit do especialista, Manual da marca, Importar leads e modelo da transcrição da R1
 - **Gestão de vendas:** Clientes, Vendas, Pós-venda, Metas, Comissões e cancelamentos e Relatórios
-- **Gestão do time** (líder de equipe para cima): Organograma do time, Dashboard squad e Distribuição de leads
+- **Gestão do time** (líder de equipe para cima): Organograma do time, Dashboard squad, One-on-ones (o líder marca e aparece no calendário dos dois) e Distribuição de leads
 - **Treinamentos**
 - **Financeiro** (administrador)
 - **Administração** (administrador): Administradoras, Planos, Colaboradores, Central de documentos, Usuários e Configurações

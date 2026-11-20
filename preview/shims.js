@@ -161,6 +161,28 @@
       }
       return out;
     },
+    // HMAC-SHA256 (assinatura do webhook do WhatsApp)
+    createHmac(alg, key) {
+      let k = typeof key === 'string' ? enc.encode(key) : key;
+      if (k.length > 64) k = sha256(k);
+      const pad = (byte) => {
+        const b = new Uint8Array(64);
+        b.set(k);
+        for (let i = 0; i < 64; i++) b[i] ^= byte;
+        return b;
+      };
+      const inner = cryptoShim.createHash().update(pad(0x36));
+      return {
+        update(v) {
+          inner.update(v);
+          return this;
+        },
+        digest(encoding) {
+          const out = Buffer.from(sha256(Buffer.concat([pad(0x5c), inner.digest()])));
+          return encoding ? out.toString(encoding) : out;
+        },
+      };
+    },
     timingSafeEqual(a, b) {
       if (a.length !== b.length) throw new Error('Tamanhos diferentes');
       let r = 0;

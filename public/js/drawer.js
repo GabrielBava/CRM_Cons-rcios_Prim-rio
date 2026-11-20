@@ -1,7 +1,7 @@
 // Painel lateral (gaveta) com o resumo do lead/cliente: consulta rápida sem sair da tela atual.
 // Modelo de painel de lead: cabeçalho com Ganho/Perdido, bloco R1/R2 à direita e abas em carrossel.
 import { get, post, patch } from './api.js';
-import { html, raw, render, $, $$, on, state, badge, relBadge, optLabel, K, fmtMoney, fmtDate, fmtDateTime, relTime, can, empty, optoutBadge, modal, field, opts, userItems, toast, toastError, formData, avatar } from './ui.js';
+import { html, raw, render, $, $$, on, state, badge, relBadge, optLabel, K, fmtMoney, fmtDate, fmtDateTime, relTime, can, empty, optoutBadge, modal, field, opts, userItems, toast, toastError, formData, avatar, hasModule } from './ui.js';
 import { activityForm, taskForm, moveStage, lostDialog, completeTask, cancelTask, opportunityForm, proposalForm, proposalDetail, openProposalSimulator } from './forms.js';
 import { qualProgress, qualBlocks, tempBadge } from './qualification.js';
 import { scheduleMeetingDialog, meetingLinks, meetingCard, bindMeetingCards, R1_STAGES, MEETING_LABEL } from './meeting.js';
@@ -179,6 +179,7 @@ export async function openLeadDrawer(contactId, { oppId = null, onChange = null,
         <div class="lead-contact">
           ${c.phone1 ? html`<a href="tel:${String(c.phone1).replace(/[^\d+]/g, '')}" title="Ligar">${icon('telefone', 14)} ${c.phone1}</a>` : ''}
           ${wa ? html`<a href="${wa}" target="_blank" rel="noopener" title="Abrir o WhatsApp">${icon('whatsapp', 14)} WhatsApp</a>` : ''}
+          ${wa && hasModule('whatsapp') ? html`<a href="#/comunicacao/whatsapp?contato=${c.id}" data-close title="Conversar pelo WhatsApp oficial da empresa (fica no CRM)">${icon('chat', 14)} WhatsApp da empresa</a>` : ''}
           ${c.email ? html`<a href="mailto:${c.email}" title="Enviar e-mail">${icon('email', 14)} ${c.email}</a>` : ''}
           <a href="#/leads/${c.id}" data-close class="muted">Abrir cadastro completo →</a>
         </div>

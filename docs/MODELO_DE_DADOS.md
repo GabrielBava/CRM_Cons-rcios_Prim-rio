@@ -2,7 +2,7 @@
 
 Gerado por `scripts/ddl.js` (rode `node scripts/ddl.js` depois de mudar o esquema). O DDL completo está em [`DDL.sql`](DDL.sql).
 
-**69 tabelas**, **196 chaves estrangeiras** declaradas e **17 relacionamentos lógicos** (sem FOREIGN KEY no banco, garantidos pela aplicação).
+**77 tabelas**, **213 chaves estrangeiras** declaradas e **17 relacionamentos lógicos** (sem FOREIGN KEY no banco, garantidos pela aplicação).
 
 ## Visão geral do fluxo comercial
 
@@ -289,6 +289,28 @@ erDiagram
 | `company_documents` | `previous_id` | `company_documents(id)` | — |
 | `company_documents` | `uploaded_by` | `users(id)` | — |
 
+### Comunicação (Inbox, Tickets e WhatsApp)
+
+| Tabela | Coluna | Referência | Regra |
+|---|---|---|---|
+| `chat_conversations` | `created_by` | `users(id)` | — |
+| `chat_members` | `conversation_id` | `chat_conversations(id)` | — |
+| `chat_members` | `user_id` | `users(id)` | — |
+| `chat_messages` | `conversation_id` | `chat_conversations(id)` | — |
+| `chat_messages` | `user_id` | `users(id)` | — |
+| `tickets` | `requester_id` | `users(id)` | — |
+| `tickets` | `assignee_id` | `users(id)` | — |
+| `tickets` | `contact_id` | `contacts(id)` | — |
+| `ticket_events` | `ticket_id` | `tickets(id)` | — |
+| `ticket_events` | `user_id` | `users(id)` | — |
+| `ticket_files` | `ticket_id` | `tickets(id)` | — |
+| `ticket_files` | `event_id` | `ticket_events(id)` | — |
+| `ticket_files` | `uploaded_by` | `users(id)` | — |
+| `wa_conversations` | `contact_id` | `contacts(id)` | — |
+| `wa_conversations` | `assigned_to` | `users(id)` | — |
+| `wa_messages` | `conversation_id` | `wa_conversations(id)` | — |
+| `wa_messages` | `user_id` | `users(id)` | — |
+
 ### Financeiro da empresa
 
 | Tabela | Coluna | Referência | Regra |
@@ -484,6 +506,24 @@ Colunas acrescentadas por migração (o SQLite não permite incluir chave estran
 **`doc_folders`** — `id` (PK), `parent_id` (FK), `name`, `description`, `position`, `system`, `created_by` (FK), `created_at`, `updated_at`
 
 **`company_documents`** — `id` (PK), `folder_id` (FK), `title`, `description`, `doc_number`, `issuer`, `issue_date`, `expires_at`, `tags`, `filename`, `mime`, `size`, `content`, `version`, `previous_id` (FK), `status`, `expiry_alerted_at`, `uploaded_by` (FK), `created_at`, `updated_at`
+
+### Comunicação (Inbox, Tickets e WhatsApp)
+
+**`chat_conversations`** — `id` (PK), `kind`, `title`, `direct_key`, `created_by` (FK), `created_at`, `last_message_at`
+
+**`chat_members`** — `conversation_id` (PK) (FK), `user_id` (PK) (FK), `last_read_id`, `joined_at`, `left_at`
+
+**`chat_messages`** — `id` (PK), `conversation_id` (FK), `user_id` (FK), `body`, `filename`, `mime`, `size`, `content`, `system`, `created_at`
+
+**`tickets`** — `id` (PK), `code`, `title`, `description`, `category`, `priority`, `status`, `requester_id` (FK), `assignee_id` (FK), `due_date`, `contact_id` (FK), `resolution`, `created_at`, `updated_at`, `started_at`, `completed_at`
+
+**`ticket_events`** — `id` (PK), `ticket_id` (FK), `user_id` (FK), `kind`, `body`, `created_at`
+
+**`ticket_files`** — `id` (PK), `ticket_id` (FK), `event_id` (FK), `filename`, `mime`, `size`, `content`, `uploaded_by` (FK), `created_at`
+
+**`wa_conversations`** — `id` (PK), `wa_id`, `contact_id` (FK), `profile_name`, `assigned_to` (FK), `status`, `unread`, `last_message_at`, `last_inbound_at`, `created_at`
+
+**`wa_messages`** — `id` (PK), `conversation_id` (FK), `wamid`, `direction`, `kind`, `body`, `media_id`, `media_mime`, `filename`, `status`, `error`, `user_id` (FK), `created_at`, `status_at`
 
 ### Financeiro da empresa
 

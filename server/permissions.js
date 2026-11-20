@@ -13,6 +13,7 @@ const MODULES = [
   { key: 'distribuicao', label: 'Prospects e leads (distribuição)', group: 'Comercial' },
   { key: 'crm', label: 'CRM (funil, leads e atividades)', group: 'Comercial' },
   { key: 'agenda', label: 'Agenda e tarefas', group: 'Comercial' },
+  { key: 'calendario', label: 'Calendário (visão 360 de agendas e atividades)', group: 'Comercial' },
   { key: 'simulador', label: 'Simulador', group: 'Comercial' },
   { key: 'propostas', label: 'Propostas', group: 'Comercial' },
   { key: 'clientes', label: 'Clientes', group: 'Comercial' },
@@ -22,6 +23,9 @@ const MODULES = [
   { key: 'posvenda', label: 'Pós-venda (checklist, NPS e lances)', group: 'Operação' },
   { key: 'comissoes', label: 'Comissões e cancelamentos', group: 'Operação' },
   { key: 'treinamentos', label: 'Treinamentos', group: 'Operação' },
+  { key: 'inbox', label: 'Inbox (chat interno)', group: 'Comunicação' },
+  { key: 'tickets', label: 'Tickets (chamados internos)', group: 'Comunicação' },
+  { key: 'whatsapp', label: 'WhatsApp da empresa (conversas com clientes)', group: 'Comunicação' },
   { key: 'financeiro', label: 'Financeiro (contas a pagar, a receber e cadastros)', group: 'Financeiro' },
   { key: 'time', label: 'Gestão do time (organograma e dashboard da squad)', group: 'Gestão' },
   { key: 'colaboradores', label: 'Colaboradores (RH: cadastro, contratos, remuneração e benefícios)', group: 'Pessoas' },
@@ -34,7 +38,7 @@ const MODULES = [
 ];
 const MODULE_KEYS = MODULES.map((m) => m.key);
 
-const COMMERCIAL = ['painel', 'crm', 'agenda', 'simulador', 'propostas', 'clientes', 'metas', 'prevenda', 'vendas', 'posvenda', 'comissoes', 'treinamentos'];
+const COMMERCIAL = ['painel', 'crm', 'agenda', 'calendario', 'inbox', 'tickets', 'whatsapp', 'simulador', 'propostas', 'clientes', 'metas', 'prevenda', 'vendas', 'posvenda', 'comissoes', 'treinamentos'];
 
 /** Módulos padrão de cada perfil. */
 const ROLE_MODULES = {
@@ -42,7 +46,7 @@ const ROLE_MODULES = {
   gestor: [...COMMERCIAL, 'distribuicao', 'relatorios', 'time'],
   // Especialista: em Relatórios vê só as próprias vendas e comissões, sem dados de leads e sem exportar
   consultor: [...COMMERCIAL, 'relatorios'],
-  leitura: ['painel', 'crm', 'clientes', 'propostas', 'posvenda', 'treinamentos'],
+  leitura: ['painel', 'crm', 'calendario', 'inbox', 'tickets', 'clientes', 'propostas', 'posvenda', 'treinamentos'],
 };
 
 /** Módulos que só o administrador acessa, mesmo que sejam incluídos manualmente para outro perfil. */
