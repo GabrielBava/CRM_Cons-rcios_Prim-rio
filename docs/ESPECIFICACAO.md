@@ -740,9 +740,8 @@ O **Ganho** antes da hora pede, no mesmo pop-up, o canal do contato (quando aind
 **Opções da proposta.** Link da proposta, Gerar PDF e Mensagem do WhatsApp ficam num único botão **Opções**, que abre o menu (kanban, lista, detalhe e painel do lead).
 
 **Menu lateral.**
-- **Ferramentas:** Ferramentas por área, Simulador de consórcio (nova guia), Simulador de propostas, Diagnóstico financeiro, Base da IA Vero e Kit do especialista.
+- **Ferramentas e Treinamentos:** só os itens **Ferramentas** (por área: simuladores, diagnóstico financeiro, modelo da R1, Base da IA Vero, kit do especialista, manual da marca e importação) e **Treinamentos** (abas Materiais, Integração e, para o administrador, Acompanhamento da equipe).
 - **Gestão do time:** só **Organograma**, **Dashboard**, **BI** e **Distribuição de leads** (as mesmas abas no topo das quatro telas). One-on-ones viraram um botão no Organograma.
-- **Treinamentos:** Trilhas e materiais, Integração, Conheça a Vero e (administrador) Acompanhamento da equipe.
 
 **Validações dos indicadores (BI e painel inicial).**
 | Indicador | Definição |

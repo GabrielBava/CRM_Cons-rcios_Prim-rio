@@ -23,7 +23,7 @@ export async function show(view, { params = {} } = {}) {
   render(view, html`<div class="page">
     <div class="page-head"><div><h1>Treinamentos</h1><p class="muted">Materiais por tema, com questionário de fixação. Os obrigatórios aparecem no painel inicial até serem concluídos.</p></div>
       ${admin ? html`<div class="actions"><button class="btn primary" data-act="new">+ Novo material</button></div>` : ''}</div>
-    ${admin ? subnav([['#/treinamentos', 'Materiais', 'materiais'], ['#/treinamentos?aba=acompanhamento', 'Acompanhamento da equipe', 'acompanhamento']], tab) : ''}
+    ${subnav([['#/treinamentos', 'Materiais', 'materiais'], ['#/integracao', 'Integração', 'integracao'], ...(admin ? [['#/treinamentos?aba=acompanhamento', 'Acompanhamento da equipe', 'acompanhamento']] : [])], tab)}
     <div id="tab"></div></div>`);
   const box = fresh($('#tab', view));
   // Recarrega a tela pelo roteador (elemento novo, sem ouvintes duplicados)

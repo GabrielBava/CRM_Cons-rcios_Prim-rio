@@ -211,7 +211,7 @@ docs/
 - **Diagnóstico** só pelo painel do lead (trava na ferramenta avulsa), sem refazer, com resumo (Nota/Estrela Vero, Bússola e Matriz) e proposta do planejamento por modelo (implementação ou Plataforma Exclusiva).
 - **Novo lead em blocos** (Dados, Origem, Área, Geral) com alerta de duplicidade que não impede o cadastro.
 - **Painel do lead:** atividade com resultado e próxima ação; tarefas de aproximação que só se concluem registrando o que foi feito; **triagem** de 6 perguntas obrigatória para a R1; agendas e propostas reorganizadas; opções da proposta num botão só.
-- **Menu:** grupos Ferramentas e Treinamentos; Gestão do time com Organograma, Dashboard, BI e Distribuição de leads. **BI** com no-show R1/R2, TMA (tempo na etapa) e TME (sem atividade) em horas e receita com planejamento. Detalhes em `docs/ESPECIFICACAO.md` §23.
+- **Menu:** grupo Ferramentas e Treinamentos (só os dois itens); Gestão do time com Organograma, Dashboard, BI e Distribuição de leads. **BI** com no-show R1/R2, TMA (tempo na etapa) e TME (sem atividade) em horas e receita com planejamento. Detalhes em `docs/ESPECIFICACAO.md` §23.
 
 ## Configuração local (senhas e chaves)
 

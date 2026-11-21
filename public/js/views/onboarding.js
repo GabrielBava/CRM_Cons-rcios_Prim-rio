@@ -66,7 +66,7 @@ export async function show(view, { id }) {
   };
   render(view, html`<div class="page">
     <div class="page-head"><div><h1>Integração do especialista</h1><p class="muted">Senha, cadastro, marca, canais de atendimento e treinamento de consórcios.</p></div></div>
-    <nav class="tabs"><a href="#/integracao" class="${tab === 'etapas' ? 'active' : ''}">Etapas</a><a href="#/integracao/marca" class="${tab === 'marca' ? 'active' : ''}">Conheça a Vero</a><a href="#/integracao/kit" class="${tab === 'kit' ? 'active' : ''}">Kit do especialista</a></nav>
+    <nav class="tabs"><a href="#/treinamentos">← Treinamentos</a><a href="#/integracao" class="${tab === 'etapas' ? 'active' : ''}">Etapas</a><a href="#/integracao/marca" class="${tab === 'marca' ? 'active' : ''}">Conheça a Vero</a><a href="#/integracao/kit" class="${tab === 'kit' ? 'active' : ''}">Kit do especialista</a></nav>
     ${tab === 'etapas' ? (st.active ? onboardingCard(st) || html`<div class="alert ok-alert">Integração concluída. Bem-vindo(a) à Vero!</div>` : html`<div class="alert">A trilha de integração é ativada para novos especialistas. O guia da marca e o kit continuam disponíveis nas abas acima.</div>`) : ''}
     ${tab === 'marca' ? html`<section class="card">${brandGuide()}<div class="ob-foot">${doneBtn('marca', 'Li o guia da marca: concluir etapa')}</div></section>` : ''}
     ${tab === 'kit' ? html`<section class="card">

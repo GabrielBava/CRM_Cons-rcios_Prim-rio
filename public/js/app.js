@@ -72,10 +72,9 @@ const NAV_GROUPS = () => [
   ['', true, [['painel', 'Painel inicial', 'painel', 'painel']]],
   ['Operacional', true, [['funil', 'Pipeline', 'crm', 'crm'], ['calendario', 'Calendário', 'calendario', 'calendario'], ['agenda', 'Agendas e tarefas', 'agenda', 'agenda'], ['propostas', 'Propostas', 'propostas', 'propostas'], ['prevenda', 'Pré-venda', 'prevenda', 'prevenda']]],
   ['Comunicação', true, [['comunicacao/inbox', 'Inbox', 'chat', 'inbox'], ['comunicacao/tickets', 'Tickets', 'ticket', 'tickets'], ['comunicacao/whatsapp', 'WhatsApp', 'whatsapp', 'whatsapp']]],
-  ['Ferramentas', true, [['ferramentas', 'Ferramentas por área', 'ferramentas', null], ['ferramentas/simulador-consorcio.html', 'Simulador de consórcio', 'simulador', null], ['simulador', 'Simulador de propostas', 'propostas', 'simulador'], ['ferramentas/diagnostico', 'Diagnóstico financeiro', 'diagnostico', null], ['ferramentas/ia', 'Base da IA Vero', 'ia', null], ['integracao/kit', 'Kit do especialista', 'baixar', null]]],
+  ['Ferramentas e Treinamentos', true, [['ferramentas', 'Ferramentas', 'ferramentas', null], ['treinamentos', 'Treinamentos', 'treinamentos', 'treinamentos']]],
   ['Gestão de vendas', true, [['clientes', 'Clientes', 'clientes', 'clientes'], ['vendas', 'Vendas', 'vendas', 'vendas'], ['posvenda', 'Pós-venda', 'posvenda', 'posvenda'], ['metas', 'Metas', 'metas', 'metas'], ['comissoes', 'Comissões e cancelamentos', 'comissoes', 'comissoes'], ['relatorios', 'Relatórios', 'relatorios', 'relatorios']]],
   ['Gestão do time', ['admin', 'gestor'].includes(state.user?.role), [['time/organograma', 'Organograma', 'organograma', 'time'], ['time/squad', 'Dashboard', 'painel', 'time'], ['time/bi', 'BI', 'relatorios', 'time'], ['entrada', 'Distribuição de leads', 'leads', 'distribuicao']]],
-  ['Treinamentos', true, [['treinamentos', 'Trilhas e materiais', 'treinamentos', 'treinamentos'], ['integracao', 'Integração', 'confirmar', null], ['integracao/marca', 'Conheça a Vero', 'avaliacao', null], ...(state.user?.role === 'admin' ? [['treinamentos?aba=acompanhamento', 'Acompanhamento da equipe', 'relatorios', 'treinamentos']] : [])]],
   ['Financeiro', allowed('financeiro'), finLinks()],
   ['Consórcios', true, [['administradoras', 'Administradoras', 'administradoras', 'administradoras'], ['planos', 'Planos', 'planos', 'planos']]],
   ['Administração', true, [['colaboradores', 'Colaboradores', 'colaboradores', 'colaboradores'], ['documentos', 'Central de documentos', 'documentos', 'documentos'], ['usuarios', 'Usuários', 'usuarios', 'usuarios'], ['configuracoes', 'Configurações', 'configuracoes', 'configuracoes']]],
@@ -86,19 +85,15 @@ const EXTRA = {
   leads: [leads, 'crm', 'funil'],
   atividades: [activities, 'crm', 'funil'],
   importar: [importer, 'crm', 'funil'],
-  simulador: [simulator, 'simulador', 'simulador'],
+  simulador: [simulator, 'simulador', 'ferramentas'],
   simulacoes: [sales, 'propostas', 'propostas'],
   'parcelas-clientes': [financeView, 'clientes', 'clientes'],
   financeiro: [treasuryView, 'financeiro', 'financeiro'],
   produtos: [plans, 'planos', 'planos'],
   'meu-cadastro': [profileView, null, null],
-  integracao: [onboardingView, null, 'integracao'],
+  integracao: [onboardingView, null, 'treinamentos'],
 };
-// Item que termina em .html é uma ferramenta externa (abre numa nova guia)
-const navLink = ([k, label, ic]) => (k.endsWith('.html')
-  ? html`<a href="${k}" target="_blank" rel="noopener" title="${label} (abre numa nova guia)">${icon(ic)}<span>${label}</span></a>`
-  : navItemLink([k, label, ic]));
-const navItemLink = ([k, label, ic]) => html`<a href="#/${k}" data-nav="${k}" title="${label}">${icon(ic)}<span>${label}</span>${k.startsWith('comunicacao/') ? html`<b class="nav-count" data-count="${k.split('/')[1]}" hidden></b>` : ''}</a>`;
+const navLink = ([k, label, ic]) => html`<a href="#/${k}" data-nav="${k}" title="${label}">${icon(ic)}<span>${label}</span>${k.startsWith('comunicacao/') ? html`<b class="nav-count" data-count="${k.split('/')[1]}" hidden></b>` : ''}</a>`;
 const allowed = (mod) => !mod || (state.user?.modules || []).includes(mod);
 // Financeiro da empresa: quem não tem o módulo, mas é responsável por lançamentos, abre pagar/receber pelos avisos.
 const finAccess = () => allowed('financeiro') || !!state.user?.fin_responsible;
@@ -493,9 +488,8 @@ async function route() {
   if (key === 'financeiro') navKey = parts[1] ? `financeiro/${parts[1]}` : state.user.role === 'admin' && allowed('financeiro') ? 'financeiro' : 'financeiro/pagar';
   if (key === 'time') navKey = `time/${parts[1] || 'organograma'}`;
   if (key === 'comunicacao') navKey = `comunicacao/${parts[1] || 'inbox'}`;
-  if (key === 'ferramentas' && ['ia', 'diagnostico'].includes(parts[1])) navKey = `ferramentas/${parts[1]}`;
-  if (key === 'integracao') navKey = ['marca', 'kit'].includes(parts[1]) ? `integracao/${parts[1]}` : 'integracao';
-  if (key === 'treinamentos' && state.user.role === 'admin' && /(^|&)aba=acompanhamento/.test(qs || '')) navKey = 'treinamentos?aba=acompanhamento';
+  // Kit do especialista e manual da marca abrem pela tela Ferramentas; as etapas da integração, por Treinamentos
+  if (key === 'integracao' && ['marca', 'kit'].includes(parts[1])) navKey = 'ferramentas';
   document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === navKey));
   let view = $('#view');
   if (!view) return;

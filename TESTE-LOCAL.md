@@ -228,12 +228,13 @@ cliques em `iniciar-windows.bat`. Ao fechar a área restrita, tudo é apagado.
 3. **Qualificação › Triagem:** responda as 6 perguntas com interesse "Sim" e salve: o lead vai para Qualificação. Tente
    agendar a R1 num lead sem triagem: o agendamento pede as 6 respostas.
 4. **Agendas:** data em destaque, Concluir na linha de cima, Remarcar e Não compareceu abaixo e "Confirmar presença".
-5. **Diagnóstico:** em **Ferramentas › Diagnóstico financeiro**, escolha o cliente: o painel abre na aba Diagnóstico. No lead
+5. **Diagnóstico:** em **Ferramentas › Planejamento financeiro › Diagnóstico financeiro**, escolha o cliente: o painel abre na aba Diagnóstico. No lead
    da demonstração com diagnóstico concluído, veja Nota/Estrela Vero, Bússola e Matriz e clique em **Gerar proposta**
    (Modelo de implementação ou Plataforma Exclusiva). Abra `ferramentas/diagnostico-financeiro.html` direto: aparece a trava.
 6. **Propostas › Gerar proposta** no painel: Consórcio abre o simulador; Planejamento só com diagnóstico concluído; Seguros e
    Investimentos desabilitados. Em qualquer proposta, o botão **Opções** abre Link, PDF e WhatsApp.
-7. **Menu:** grupos Ferramentas e Treinamentos; **Gestão do time** com Organograma, Dashboard, BI e Distribuição de leads.
+7. **Menu:** grupo **Ferramentas e Treinamentos** só com os itens Ferramentas e Treinamentos; **Gestão do time** com
+   Organograma, Dashboard, BI e Distribuição de leads.
 8. **BI:** No-show R1 e R2 separados, TMA (tempo na etapa) e TME (sem atividade) em horas, taxa de conversão e receita com
    planejamento. Aceite uma proposta de planejamento e veja a receita subir.
 
