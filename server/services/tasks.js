@@ -77,6 +77,13 @@ function updateTask(db, user, id, data) {
   const now = nowIso();
   if (data.action === 'concluir' || data.action === 'cancelar') {
     if (t.status !== 'pendente') throw badRequest('Esta tarefa já foi encerrada.');
+    // Tarefa de aproximação (criada pela próxima ação de uma atividade): só pode ser concluída
+    if (data.action === 'cancelar' && t.source_activity_id) throw badRequest('Tarefa de aproximação: não pode ser cancelada. Conclua registrando o que foi feito (e a próxima ação, se não houve contato).');
+    // Concluir registrando a atividade feita (canal, resultado, observação e a próxima ação, que vira uma nova tarefa)
+    if (data.action === 'concluir' && data.activity && typeof data.activity === 'object' && t.contact_id && t.type !== 'reuniao') {
+      const act = require('./activities').createActivity(db, user, { ...data.activity, contact_id: t.contact_id, opportunity_id: t.opportunity_id || data.activity.opportunity_id });
+      data = { ...data, notes: clean(data.notes) || `Concluída com a atividade #${act}${data.activity.notes ? `: ${clean(data.activity.notes)}` : ''}` };
+    }
     const status = data.action === 'concluir' ? 'concluida' : 'cancelada';
     let outcome = clean(data.outcome);
     if (t.type === 'reuniao' && status === 'concluida') {

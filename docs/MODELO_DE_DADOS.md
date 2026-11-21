@@ -2,7 +2,7 @@
 
 Gerado por `scripts/ddl.js` (rode `node scripts/ddl.js` depois de mudar o esquema). O DDL completo está em [`DDL.sql`](DDL.sql).
 
-**83 tabelas**, **230 chaves estrangeiras** declaradas e **17 relacionamentos lógicos** (sem FOREIGN KEY no banco, garantidos pela aplicação).
+**83 tabelas**, **232 chaves estrangeiras** declaradas e **17 relacionamentos lógicos** (sem FOREIGN KEY no banco, garantidos pela aplicação).
 
 ## Visão geral do fluxo comercial
 
@@ -121,6 +121,7 @@ erDiagram
 | `opportunities` | `owner_id` | `users(id)` | — |
 | `opportunities` | `created_by` | `users(id)` | — |
 | `opportunities` | `updated_by` | `users(id)` | — |
+| `opportunities` | `triaged_by` | `users(id)` | — |
 | `opportunities` | `co_owner_id` | `users(id)` | — |
 | `opportunities` | `qualified_by` | `users(id)` | — |
 | `opportunities` | `lost_from_stage_id` | `pipeline_stages(id)` | — |
@@ -140,6 +141,7 @@ erDiagram
 | `tasks` | `assigned_to` | `users(id)` | — |
 | `tasks` | `created_by` | `users(id)` | — |
 | `tasks` | `completed_by` | `users(id)` | — |
+| `tasks` | `source_activity_id` | `activities(id)` | — |
 | `tasks` | `proposal_id` | `proposals(id)` | — |
 | `tasks` | `calendar_owner_id` | `users(id)` | — |
 | `tasks` | `rescheduled_from` | `tasks(id)` | — |
@@ -441,7 +443,7 @@ Colunas acrescentadas por migração (o SQLite não permite incluir chave estran
 
 **`pipeline_stages`** — `id` (PK), `name`, `position`, `kind`, `active`, `created_at`, `key`, `playbook`, `rot_days`, `training_id`
 
-**`opportunities`** — `id` (PK), `code`, `uid`, `contact_id` (FK), `company_contact_id` (FK), `title`, `product_id` (FK), `stage_id` (FK), `status`, `priority`, `credit_category`, `credit_value`, `term_months`, `installment_min`, `installment_max`, `quotas`, `payment_modality`, `strategy`, `strategy_validated_by` (FK), `strategy_validated_at`, `contemplation_type`, `bid_own_resources`, `fgts_available`, `embedded_bid_interest`, `urgency`, `objective`, `qualification_criteria`, `next_action`, `next_action_at`, `lost_reason`, `lost_notes`, `pause_reason`, `custom`, `stage_entered_at`, `last_activity_at`, `closed_at`, `owner_id` (FK), `created_by` (FK), `updated_by` (FK), `created_at`, `updated_at`, `objective_type`, `product_type`, `credit_purpose`, `financial_moment`, `employment_type`, `has_fgts`, `decision_maker`, `existing_products`, `existing_consortium_value`, `existing_consortium_admin`, `existing_financing_balance`, `existing_financing_cet`, `existing_financing_bank`, `credit_purpose_type`, `has_bid_resources`, `had_consortium`, `has_financing`, `decision_notes`, `housing_purpose`, `bid_source`, `has_property`, `property_type`, `property_value`, `property_free_liens`, `pays_rent`, `rent_value`, `temperature`, `temperature_reason`, `business_area`, `r1_won_at`, `co_owner_id` (FK), `expected_close_date`, `qualified_at`, `qualified_by` (FK), `lost_from_stage_id` (FK)
+**`opportunities`** — `id` (PK), `code`, `uid`, `contact_id` (FK), `company_contact_id` (FK), `title`, `product_id` (FK), `stage_id` (FK), `status`, `priority`, `credit_category`, `credit_value`, `term_months`, `installment_min`, `installment_max`, `quotas`, `payment_modality`, `strategy`, `strategy_validated_by` (FK), `strategy_validated_at`, `contemplation_type`, `bid_own_resources`, `fgts_available`, `embedded_bid_interest`, `urgency`, `objective`, `qualification_criteria`, `next_action`, `next_action_at`, `lost_reason`, `lost_notes`, `pause_reason`, `custom`, `stage_entered_at`, `last_activity_at`, `closed_at`, `owner_id` (FK), `created_by` (FK), `updated_by` (FK), `created_at`, `updated_at`, `triage`, `triaged_at`, `triaged_by` (FK), `objective_type`, `product_type`, `credit_purpose`, `financial_moment`, `employment_type`, `has_fgts`, `decision_maker`, `existing_products`, `existing_consortium_value`, `existing_consortium_admin`, `existing_financing_balance`, `existing_financing_cet`, `existing_financing_bank`, `credit_purpose_type`, `has_bid_resources`, `had_consortium`, `has_financing`, `decision_notes`, `housing_purpose`, `bid_source`, `has_property`, `property_type`, `property_value`, `property_free_liens`, `pays_rent`, `rent_value`, `temperature`, `temperature_reason`, `business_area`, `r1_won_at`, `co_owner_id` (FK), `expected_close_date`, `qualified_at`, `qualified_by` (FK), `lost_from_stage_id` (FK)
 
 **`stage_history`** — `id` (PK), `opportunity_id` (FK), `from_stage_id` (FK), `to_stage_id` (FK), `from_stage_name`, `to_stage_name`, `seconds_in_previous`, `reason`, `user_id` (FK), `moved_at`
 
@@ -449,7 +451,7 @@ Colunas acrescentadas por migração (o SQLite não permite incluir chave estran
 
 **`activities`** — `id` (PK), `contact_id` (FK), `company_contact_id` (FK), `opportunity_id` (FK), `type`, `channel`, `direction`, `result`, `duration_seconds`, `notes`, `next_action`, `return_at`, `occurred_at`, `source`, `external_id`, `call_event_id`, `ref_type`, `ref_id`, `user_id` (FK), `created_by` (FK), `created_at`
 
-**`tasks`** — `id` (PK), `contact_id` (FK), `opportunity_id` (FK), `type`, `title`, `notes`, `due_at`, `status`, `outcome`, `assigned_to` (FK), `created_by` (FK), `created_at`, `updated_at`, `completed_at`, `completed_by` (FK), `priority`, `proposal_id` (FK), `cadence_step`, `pre_sale_id`, `sale_id`, `ends_at`, `attendee_email`, `meeting_url`, `google_event_id`, `calendar_status`, `attendance_status`, `attendance_checked_at`, `attendance_detail`, `attended_at`, `calendar_owner_id` (FK), `confirmation_sent_at`, `meeting_kind`, `rescheduled_from` (FK), `confirmed_at`
+**`tasks`** — `id` (PK), `contact_id` (FK), `opportunity_id` (FK), `type`, `title`, `notes`, `due_at`, `status`, `outcome`, `assigned_to` (FK), `created_by` (FK), `created_at`, `updated_at`, `completed_at`, `completed_by` (FK), `source_activity_id` (FK), `priority`, `proposal_id` (FK), `cadence_step`, `pre_sale_id`, `sale_id`, `ends_at`, `attendee_email`, `meeting_url`, `google_event_id`, `calendar_status`, `attendance_status`, `attendance_checked_at`, `attendance_detail`, `attended_at`, `calendar_owner_id` (FK), `confirmation_sent_at`, `meeting_kind`, `rescheduled_from` (FK), `confirmed_at`
 
 **`distribution_log`** — `id` (PK), `contact_id` (FK), `from_user` (FK), `to_user` (FK), `method`, `by_user` (FK), `created_at`
 
@@ -469,7 +471,7 @@ Colunas acrescentadas por migração (o SQLite não permite incluir chave estran
 
 **`simulation_links`** — `id` (PK), `token_hash`, `contact_id` (FK), `opportunity_id` (FK), `created_by` (FK), `origin_screen`, `created_at`, `expires_at`, `first_used_at`, `last_used_at`, `revoked_at`
 
-**`proposals`** — `id` (PK), `code`, `contact_id` (FK), `opportunity_id` (FK), `simulation_id` (FK), `version`, `previous_id` (FK), `product_id` (FK), `credit_value`, `term_months`, `initial_installment`, `payment_modality`, `admin_fee_pct`, `reserve_fund_pct`, `insurance_pct`, `other_costs`, `readjustment_index`, `readjustment_assumptions`, `strategy`, `status`, `link_url`, `valid_until`, `notes`, `presented_at`, `owner_id` (FK), `created_by` (FK), `created_at`, `updated_at`, `simulator_token_hash`, `simulator_token_expires_at`, `generated_at`, `pdf_attachment_id` (FK), `accepted_at`, `accepted_channel`, `accepted_by` (FK), `refusal_reason`, `category`, `sent_channel`, `last_response_at`, `last_response`, `refusal_notes`, `refused_at`, `retake_at`, `has_adhesion`, `adhesion_pct`, `adhesion_months`, `reducer_pct`, `readjustment_rate`, `bid_deduction`, `contemplation_month`, `embedded_bid_pct`, `quotas`, `quota_split_strategy`, `quota_values`, `quota_split_notes`, `administrator_id` (FK), `plan_other`, `public_token`, `link_created_at`, `link_first_opened_at`, `link_last_opened_at`, `link_views`, `link_seconds`, `link_max_scroll`, `link_advanced_at`, `link_advanced_note`, `consortium_kind`, `entry_value`, `remaining_installments`, `diagnostic_id` (FK), `pricing`, `area`, `description`
+**`proposals`** — `id` (PK), `code`, `contact_id` (FK), `opportunity_id` (FK), `simulation_id` (FK), `version`, `previous_id` (FK), `product_id` (FK), `credit_value`, `term_months`, `initial_installment`, `payment_modality`, `admin_fee_pct`, `reserve_fund_pct`, `insurance_pct`, `other_costs`, `readjustment_index`, `readjustment_assumptions`, `strategy`, `status`, `link_url`, `valid_until`, `notes`, `presented_at`, `owner_id` (FK), `created_by` (FK), `created_at`, `updated_at`, `simulator_token_hash`, `simulator_token_expires_at`, `generated_at`, `pdf_attachment_id` (FK), `accepted_at`, `accepted_channel`, `accepted_by` (FK), `refusal_reason`, `category`, `sent_channel`, `last_response_at`, `last_response`, `refusal_notes`, `refused_at`, `retake_at`, `has_adhesion`, `adhesion_pct`, `adhesion_months`, `reducer_pct`, `readjustment_rate`, `bid_deduction`, `contemplation_month`, `embedded_bid_pct`, `quotas`, `quota_split_strategy`, `quota_values`, `quota_split_notes`, `administrator_id` (FK), `plan_other`, `public_token`, `link_created_at`, `link_first_opened_at`, `link_last_opened_at`, `link_views`, `link_seconds`, `link_max_scroll`, `link_advanced_at`, `link_advanced_note`, `consortium_kind`, `entry_value`, `remaining_installments`, `diagnostic_id` (FK), `pricing`, `plan_model`, `area`, `description`
 
 **`proposal_views`** — `id` (PK), `proposal_id` (FK), `started_at`, `last_seen_at`, `seconds`, `max_scroll`, `sections`, `device`
 

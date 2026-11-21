@@ -864,6 +864,45 @@ const DEFAULT_OPTIONS = {
     ['outro', 'Outro'],
   ],
   area_negocio: AREAS_NEGOCIO,
+  // Resultado do contato por mensagem (WhatsApp, e-mail, direct, LinkedIn)
+  resultado_mensagem: [
+    ['respondeu', 'Respondeu', { efetivo: true }],
+    ['visualizou', 'Visualizou e não respondeu'],
+    ['sem_resposta', 'Enviada, sem resposta'],
+    ['retorno_solicitado', 'Pediu retorno em outro momento', { efetivo: true }],
+    ['nao_entregue', 'Não entregue / contato inválido'],
+    ['sem_interesse', 'Respondeu sem interesse', { efetivo: true }],
+  ],
+  // Próxima ação da atividade (cria a tarefa de aproximação)
+  proxima_acao: [
+    ['nova_tentativa', 'Nova tentativa de contato'],
+    ['ligar', 'Ligar novamente'],
+    ['whatsapp', 'Enviar mensagem no WhatsApp'],
+    ['email', 'Enviar e-mail'],
+    ['retorno', 'Retornar quando o cliente pediu'],
+    ['agendar_r1', 'Agendar a R1'],
+    ['enviar_material', 'Enviar material / simulação'],
+    ['followup', 'Follow-up da proposta'],
+  ],
+  // Triagem (aba Qualificação): obrigatória para agendar a R1
+  triagem_impacto: [
+    ['imediato', 'Imediato (até 30 dias)'],
+    ['curto', 'Curto prazo (até 3 meses)'],
+    ['medio', 'Médio prazo (3 a 12 meses)'],
+    ['longo', 'Longo prazo (mais de 12 meses)'],
+  ],
+  triagem_decisor: [
+    ['sim', 'Sim, decide sozinho'],
+    ['compartilhado', 'Decide com outra pessoa'],
+    ['nao', 'Não é o decisor'],
+  ],
+  faixa_investimento: [
+    ['ate_500', 'Até R$ 500 por mês'],
+    ['500_1000', 'R$ 500 a R$ 1.000 por mês'],
+    ['1000_2000', 'R$ 1.000 a R$ 2.000 por mês'],
+    ['2000_5000', 'R$ 2.000 a R$ 5.000 por mês'],
+    ['acima_5000', 'Acima de R$ 5.000 por mês'],
+  ],
   resultado_ligacao: [
     ['atendida', 'Atendida', { efetivo: true }],
     ['nao_atendida', 'Não atendida'],
@@ -1302,6 +1341,22 @@ function seedDefaults(db) {
     }
     db.prepare("INSERT INTO settings (key, value) VALUES ('migr_v13_arquivos', 'true')").run();
   }
+  // v15: a passagem para Qualificação pede a triagem concluída (a qualificação detalhada fica opcional)
+  if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_v15_triagem'").get()) {
+    const custom = db.prepare("SELECT value FROM settings WHERE key = 'stage_rules'").get();
+    if (custom?.value) {
+      try {
+        const rules = JSON.parse(custom.value);
+        if (rules && typeof rules === 'object') {
+          for (const k of Object.keys(rules)) if (Array.isArray(rules[k])) rules[k] = rules[k].map((r) => (r === 'qualificacao_concluida' ? 'triagem_concluida' : r));
+          db.prepare("UPDATE settings SET value = ? WHERE key = 'stage_rules'").run(JSON.stringify(rules));
+        }
+      } catch {
+        /* regra salva inválida: fica a padrão */
+      }
+    }
+    db.prepare("INSERT INTO settings (key, value) VALUES ('migr_v15_triagem', 'true')").run();
+  }
   // v14: treinamento do follow-up de propostas com a régua Dia 0 a Dia 21 e o link rastreável
   if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_v14_regua'").get()) {
     const { TRAININGS } = require('./services/onboarding-content');
@@ -1394,6 +1449,7 @@ const ADDED_COLUMNS = {
   teams: [['leader_id', 'INTEGER REFERENCES users(id)']],
   pipeline_stages: [['key', 'TEXT'], ['playbook', 'TEXT'], ['rot_days', 'INTEGER'], ['training_id', 'INTEGER']],
   tasks: [
+    ['source_activity_id', 'INTEGER REFERENCES activities(id)'],
     ['priority', "TEXT NOT NULL DEFAULT 'normal'"], ['proposal_id', 'INTEGER REFERENCES proposals(id)'], ['cadence_step', 'TEXT'], ['pre_sale_id', 'INTEGER'], ['sale_id', 'INTEGER'],
     // Reuniões (R1): término, convidado, link da videoconferência e evento no Google Agenda
     ['ends_at', 'TEXT'], ['attendee_email', 'TEXT'], ['meeting_url', 'TEXT'], ['google_event_id', 'TEXT'], ['calendar_status', 'TEXT'],
@@ -1417,6 +1473,7 @@ const ADDED_COLUMNS = {
     ['verify_hash', 'TEXT'], ['verify_expires_at', 'TEXT'], ['verify_fails', 'INTEGER NOT NULL DEFAULT 0'], ['verify_locked_until', 'TEXT'], ['verified_at', 'TEXT'],
   ],
   opportunities: [
+    ['triage', 'TEXT'], ['triaged_at', 'TEXT'], ['triaged_by', 'INTEGER REFERENCES users(id)'],
     ['objective_type', 'TEXT'], ['product_type', 'TEXT'], ['credit_purpose', 'TEXT'], ['financial_moment', 'TEXT'],
     ['employment_type', 'TEXT'], ['has_fgts', 'TEXT'], ['decision_maker', 'TEXT'], ['existing_products', 'TEXT'],
     ['existing_consortium_value', 'REAL'], ['existing_consortium_admin', 'TEXT'], ['existing_financing_balance', 'REAL'],
@@ -1434,6 +1491,7 @@ const ADDED_COLUMNS = {
   // IA Vero: cada "Nova conversa" do chat é uma conversa (thread) própria
   ai_messages: [['thread', 'TEXT']],
   referrals: [['removed_at', 'TEXT']],
+
   diagnostics: [['pricing', 'TEXT']],
   proposals: [
     ['simulator_token_hash', 'TEXT'], ['simulator_token_expires_at', 'TEXT'], ['generated_at', 'TEXT'], ['pdf_attachment_id', 'INTEGER REFERENCES attachments(id)'],
@@ -1451,7 +1509,7 @@ const ADDED_COLUMNS = {
     ['link_advanced_at', 'TEXT'], ['link_advanced_note', 'TEXT'],
     // Consórcio: cota nova ou carta contemplada (entrada/ágio e parcelas restantes); planejamento vindo do diagnóstico
     ['consortium_kind', 'TEXT'], ['entry_value', 'REAL'], ['remaining_installments', 'INTEGER'], ['diagnostic_id', 'INTEGER REFERENCES diagnostics(id)'],
-    ['pricing', 'TEXT'],
+    ['pricing', 'TEXT'], ['plan_model', 'TEXT'],
     // Propostas de todas as áreas: consórcio (simulador) e seguros, planejamento financeiro e investimentos (registro direto)
     ['area', "TEXT NOT NULL DEFAULT 'consorcio'"], ['description', 'TEXT'],
   ],

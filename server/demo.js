@@ -147,7 +147,8 @@ function seedDemo(db, password) {
       }
       if (st === 'qualificado') {
         activities.createActivity(db, owner, { contact_id: contactId, opportunity_id: opp.id, type: 'ligacao_realizada', result: 'atendida', duration: 240 + i * 11, notes: 'Conversa sobre objetivo, prazo e parcela possível.', occurred_at: when });
-        // Qualificação preenchida e concluída (o lead passa de Tentativa para Qualificação)
+        // Triagem (6 perguntas) e qualificação preenchida (o lead passa de Tentativa para Qualificação)
+        opps.saveTriage(db, owner, opp.id, { interesse: 'sim', dor: 'sim', dor_descricao: rnd(['Paga aluguel e quer a casa própria', 'Quer trocar o carro sem financiamento', 'Quer investir em imóvel'], i), impacto: rnd(['curto', 'medio', 'imediato'], i), decisor: rnd(['sim', 'compartilhado'], i), faixa_investimento: rnd(['1000_2000', '2000_5000', '500_1000'], i), faixa_renda: rnd(['6k_10k', '10k_20k', '20k_40k'], i) });
         opps.concludeQualification(db, owner, opp.id, { fields: {
           objective_type: i % 3 ? 'aquisicao' : 'investimento', urgency: rnd(['curto', 'medio', 'longo'], i), installment_max: 1500 + i * 50, term_months: 200,
           strategy: rnd(['aquisicao', 'planejamento', 'formacao_patrimonial'], i), product_type: 'primario', employment_type: rnd(['clt', 'pj', 'empresario'], i), has_fgts: i % 2 ? 'sim' : 'nao',
@@ -370,7 +371,22 @@ function seedDemo(db, password) {
         plano: [{ titulo: 'Montar a reserva com 15% da renda', prazo: 'curto' }, { titulo: 'Consórcio de imóvel com lance planejado', prazo: 'médio' }, { titulo: 'Seguro de vida para proteger a renda', prazo: 'curto' }, { titulo: 'Previdência privada (PGBL)', prazo: 'longo' }],
         dependentes: [{ nome: 'Filho' }], imoveis: [], moveis: [{ tipo: 'Carro' }], financiamentos: [], emprestimos: [], cartoes: [{ banco: 'Cartão' }],
         recomendacoes: [{ nome: 'Paulo Mendes', contato: '(11) 98888-1201' }, { nome: 'Carla Nunes', contato: 'carla.nunes@example.com' }],
-      }, precificacao: { valor: 4800, pix_total: 4560, cartao_total: 5172.38, parcelas: 10, parcela: 517.24, condicao: 'pix' } });
+      }, precificacao: { valor: 4800, pix_total: 4560, cartao_total: 5172.38, parcelas: 10, parcela: 517.24, condicao: 'pix' },
+      resultado: {
+        estrela: { nota: 58, pilares: [['organizacao', 'Organização', 72, 'ok'], ['comportamento', 'Comportamento', 64, 'atencao'], ['protecao', 'Proteção', 31, 'critico'], ['reserva', 'Reserva', 45, 'atencao'],
+          ['dividas', 'Dívidas', 80, 'ok'], ['futuro', 'Futuro', 38, 'critico'], ['patrimonio', 'Patrimônio', 66, 'atencao'], ['legado', 'Legado', 50, 'atencao']].map(([id, nome, pct, status]) => ({ id, nome, pct, status })) },
+        matriz: [
+          { titulo: 'Seguro de vida', area: 'Proteção', produto: 'Seguro', prioridade: 'Alta', prazo: 'Curto', potencial: 9, detalhe: 'Seguro de vida com capital de R$ 620 mil para proteger a renda da família.' },
+          { titulo: 'Consórcio de imóvel', area: 'Patrimônio', produto: 'Consórcio', prioridade: 'Alta', prazo: 'Médio', potencial: 8, detalhe: 'Carta de R$ 450 mil com lance planejado para o imóvel em 3 anos, sem juros.' },
+          { titulo: 'Reserva de emergência', area: 'Reserva', produto: 'Investimento', prioridade: 'Média', prazo: 'Curto', potencial: 6, detalhe: 'Completar 6 meses de despesas em liquidez diária.' },
+          { titulo: 'Plano de independência financeira', area: 'Futuro', produto: 'Investimento', prioridade: 'Média', prazo: 'Longo', potencial: 5, detalhe: 'Investir R$ 1.800/mês para a aposentadoria aos 55 anos.' },
+          { titulo: 'Previdência (PGBL)', area: 'Fiscal/Tributário', produto: 'Previdência', prioridade: 'Baixa', prazo: 'Médio', potencial: 4, detalhe: 'Usar o PGBL para deduzir até 12% da renda no IR.' },
+        ],
+        bussola: { nota: 54, norte: { id: 'protecao', nome: 'Liberdade financeira', status: 'critico', resumo: 'Sem seguro de vida e com reserva de 2 meses.', acao: 'Contratar o seguro de vida e completar a reserva' },
+          dimensoes: [{ id: 'organizacao', nome: 'Organização', nota: 70, status: 'ok', resumo: 'Sobra de 18% da renda.' }, { id: 'patrimonio', nome: 'Patrimônio', nota: 58, status: 'atencao', resumo: 'Imóvel próprio em 3 anos.' },
+            { id: 'liberdade', nome: 'Liberdade financeira', nota: 34, status: 'critico', resumo: 'Proteção e reserva abaixo do necessário.' }, { id: 'ativos', nome: 'Gestão de ativos', nota: 52, status: 'atencao', resumo: 'R$ 48 mil em reserva e investimentos.' }] },
+      } });
+      diagnostics.generateProposal(db, dOwner, d.id, { model: 'implementacao' });
     }
     // Arquivos do lead (aba Arquivos): extrato da carteira para avaliar a migração
     if (ids[6]) {

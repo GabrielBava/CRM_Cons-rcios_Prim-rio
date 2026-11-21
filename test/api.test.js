@@ -8,6 +8,13 @@ let appDb;
 let base;
 const sessions = {};
 
+/** Triagem completa (6 perguntas) do negócio aberto do contato: libera a R1. */
+async function triage(who, contactId, extra = {}) {
+  const c = (await call(who, 'GET', `/api/cadastros/${contactId}`)).data;
+  const opp = c.opportunities.find((o) => o.status === 'aberta') || c.opportunities[0];
+  return call(who, 'PUT', `/api/oportunidades/${opp.id}/triagem`, { interesse: 'sim', dor: 'sim', impacto: 'curto', decisor: 'sim', faixa_investimento: '1000_2000', faixa_renda: '6k_10k', ...extra });
+}
+
 async function call(who, method, url, body, headers = {}) {
   const h = { 'X-Requested-With': 'crm', ...headers };
   if (who && sessions[who]) h.Cookie = sessions[who];
@@ -626,16 +633,22 @@ test('funil: passagem sequencial com critérios de entrada; voltar exige motivo;
   assert.deepEqual(t0.data.details.missing.map((m) => m.key), ['tentativa_registrada']);
   assert.equal((await call('c1', 'POST', '/api/atividades', { contact_id: c.data.id, type: 'linkedin_enviado', notes: 'DM no LinkedIn' })).status, 200);
   assert.equal((await call('c1', 'GET', `/api/oportunidades/${opp.id}`)).data.stage_id, st('tentativa').id, 'atividade de contato leva o lead para Tentativa');
-  // Tentativa → Qualificação: só com a qualificação concluída (ao menos um campo preenchido + "Concluir qualificação")
+  // Tentativa → Qualificação: só com a triagem concluída (6 perguntas, com interesse); a qualificação detalhada é opcional
   const q = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('qualificado').id });
   assert.equal(q.status, 400);
-  assert.deepEqual(q.data.details.missing.map((m) => m.key), ['qualificacao_concluida']);
-  assert.match(q.data.details.missing[0].label, /Qualificação do cliente concluída/);
-  assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/concluir-qualificacao`, {})).status, 400, 'qualificação vazia');
-  const cq = await call('c1', 'POST', `/api/oportunidades/${opp.id}/concluir-qualificacao`, { fields: { objective_type: 'aquisicao', urgency: 'medio' } });
+  assert.deepEqual(q.data.details.missing.map((m) => m.key), ['triagem_concluida']);
+  assert.match(q.data.details.missing[0].label, /Triagem concluída/);
+  const part = await call('c1', 'PUT', `/api/oportunidades/${opp.id}/triagem`, { interesse: 'sim', dor: 'sim' });
+  assert.equal(part.data.done, false);
+  assert.equal(part.data.missing.length, 4);
+  assert.equal((await call('c1', 'PUT', `/api/oportunidades/${opp.id}/triagem`, { impacto: 'xyz' })).status, 400, 'opção inválida');
+  const cq = await call('c1', 'PUT', `/api/oportunidades/${opp.id}/triagem`, { impacto: 'curto', decisor: 'compartilhado', faixa_investimento: '1000_2000', faixa_renda: '6k_10k' });
   assert.equal(cq.status, 200, JSON.stringify(cq.data));
+  assert.equal(cq.data.done, true);
   assert.equal(cq.data.moved, 'qualificado');
-  assert.ok(cq.data.qualified_at);
+  assert.ok(cq.data.triaged_at);
+  // A qualificação detalhada continua disponível (opcional)
+  assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/concluir-qualificacao`, { fields: { objective_type: 'aquisicao', urgency: 'medio' } })).status, 200);
   // Voltar exige motivo
   assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('lead').id })).status, 400);
   assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('lead').id, reason: 'Registrado por engano' })).status, 200);
@@ -678,20 +691,24 @@ test('pipeline 0–7: Prospect vai direto para Tentativa; Ganho agenda a R1 e le
   start.setUTCHours(17, 0, 0, 0);
   const bad = await call('c1', 'POST', '/api/r1/agendar', { contact_id: c.data.id, start_at: start.toISOString(), end_at: start.toISOString() });
   assert.equal(bad.status, 400, 'término depois do início');
-  // Ganho sem qualificação: a R1 fica agendada, mas o lead não pula a Qualificação
-  const g1 = await call('c1', 'POST', '/api/reunioes/agendar', { kind: 'r1', contact_id: c.data.id, opportunity_id: opp.id, start_at: start.toISOString(), end_at: new Date(start.getTime() + 30 * 60000).toISOString(), email: 'prospect.direto@exemplo.com', video: true, move_to_stage: true });
+  const r1Body = { kind: 'r1', contact_id: c.data.id, opportunity_id: opp.id, start_at: start.toISOString(), end_at: new Date(start.getTime() + 30 * 60000).toISOString(), email: 'prospect.direto@exemplo.com', video: true, move_to_stage: true };
+  // Sem a triagem (6 perguntas), a R1 não é agendada
+  const noTri = await call('c1', 'POST', '/api/reunioes/agendar', r1Body);
+  assert.equal(noTri.status, 400);
+  assert.match(noTri.data.error, /triagem/);
+  // Triagem sem interesse também não libera a R1
+  await triage('c1', c.data.id, { interesse: 'nao' });
+  assert.match((await call('c1', 'POST', '/api/reunioes/agendar', r1Body)).data.error, /não demonstrou interesse/);
+  // Triagem concluída com interesse: o lead vai para Qualificação e o "Ganho" agenda a R1 e leva o lead para a coluna R1
+  const tri = await triage('c1', c.data.id);
+  assert.equal(tri.data.moved, 'qualificado');
+  const g1 = await call('c1', 'POST', '/api/reunioes/agendar', r1Body);
   assert.equal(g1.status, 200, JSON.stringify(g1.data));
   assert.equal(g1.data.kind, 'r1');
-  assert.equal(g1.data.moved, false);
-  assert.match(g1.data.move_error, /Qualificação do cliente concluída/);
+  assert.equal(g1.data.moved, true);
   assert.equal(g1.data.google.reason, 'nao_configurado');
   assert.match(g1.data.calendar_link, /^https:\/\/calendar\.google\.com\/calendar\/render\?action=TEMPLATE/);
   assert.match(g1.data.calendar_link, /add=prospect.direto%40exemplo.com/);
-  // Com a qualificação preenchida (no próprio pop-up do Ganho), o "ganho" leva o lead direto para a R1
-  const cq = await call('c1', 'POST', `/api/oportunidades/${opp.id}/concluir-qualificacao`, { fields: { objective_type: 'aquisicao', credit_category: 'imovel', credit_value: 300000, urgency: 'curto' } });
-  assert.equal(cq.data.moved, 'qualificado');
-  const won = await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('r1').id, ganho: true });
-  assert.equal(won.status, 200, JSON.stringify(won.data));
   const after = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data;
   assert.equal(after.email, 'prospect.direto@exemplo.com', 'e-mail informado no agendamento completa o cadastro');
   assert.equal(after.opportunities[0].stage_id, st('r1').id);
@@ -706,8 +723,9 @@ test('pipeline 0–7: Prospect vai direto para Tentativa; Ganho agenda a R1 e le
   const c2 = await call('c1', 'POST', '/api/cadastros', { name: 'Ganho Direto', phone1: '11 94445-2011', origin: 'site', relationship: 'lead' });
   const o2 = (await call('c1', 'GET', `/api/cadastros/${c2.data.id}`)).data.opportunities[0];
   await call('c1', 'POST', '/api/atividades', { contact_id: c2.data.id, type: 'mensagem_enviada', notes: 'WhatsApp' });
-  const cq2 = await call('c1', 'POST', `/api/oportunidades/${o2.id}/concluir-qualificacao`, { fields: { objective_type: 'aquisicao', credit_value: 90000, urgency: 'medio', business_area: 'planejamento' } });
-  assert.equal(cq2.data.moved, 'qualificado', 'Lead → (Tentativa) → Qualificação');
+  await call('c1', 'POST', `/api/oportunidades/${o2.id}/concluir-qualificacao`, { fields: { objective_type: 'aquisicao', credit_value: 90000, urgency: 'medio', business_area: 'planejamento' } });
+  const cq2 = await triage('c1', c2.data.id);
+  assert.equal(cq2.data.moved, 'qualificado', 'Lead → (Tentativa) → Qualificação pela triagem');
   const g2 = await call('c1', 'POST', '/api/r1/agendar', { contact_id: c2.data.id, opportunity_id: o2.id, start_at: start.toISOString(), end_at: new Date(start.getTime() + 30 * 60000).toISOString(), email: 'ganho.direto@exemplo.com', move_to_r1: true });
   assert.equal(g2.data.moved, true, 'Qualificação → R1 ao agendar');
   // Modelo da R1 em HTML: nome, foto e contato do especialista + nome do cliente
@@ -748,6 +766,7 @@ test('R1 e R2: Não compareceu (NS), Remarcar (R), confirmar presença, Concluir
     d.setUTCHours(h, 0, 0, 0);
     return { start_at: d.toISOString(), end_at: new Date(d.getTime() + 30 * 60000).toISOString() };
   };
+  await triage('c1', c.data.id);
   const r1 = await call('c1', 'POST', '/api/reunioes/agendar', { kind: 'r1', contact_id: c.data.id, opportunity_id: opp.id, ...at(1), move_to_stage: true });
   assert.equal(r1.data.moved, true);
   const card = async () => (await call('c1', 'GET', `/api/funil?q=${encodeURIComponent('Cliente Reuniões')}`)).data.stages.flatMap((s) => s.cards).find((x) => x.id === opp.id);
@@ -907,6 +926,7 @@ test('Google Agenda: configuração pelo administrador, conexão do especialista
     const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Meet', phone1: '11 94444-1020', email: 'cliente.meet@exemplo.com', origin: 'indicacao' });
     const start = new Date(Date.now() + 3 * 86400000);
     start.setUTCHours(17, 15, 0, 0);
+    await triage('c1', c.data.id);
     const r = await call('c1', 'POST', '/api/r1/agendar', { contact_id: c.data.id, start_at: start.toISOString(), end_at: new Date(start.getTime() + 45 * 60000).toISOString(), video: true });
     assert.equal(r.status, 200, JSON.stringify(r.data));
     assert.equal(r.data.google.synced, true);
@@ -1007,6 +1027,7 @@ test('R1 pelo Google Meet: link automático, confirmação por e-mail (noreply@)
     assert.equal(st.needs_reconnect, false);
     const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Presença', phone1: '11 94444-7070', email: 'cliente.presenca@exemplo.com', origin: 'indicacao' });
     const start = new Date(Date.now() + 10 * 60000);
+    await triage('c1', c.data.id);
     const r = await call('c1', 'POST', '/api/r1/agendar', { contact_id: c.data.id, start_at: start.toISOString(), end_at: new Date(start.getTime() + 30 * 60000).toISOString(), video: true, logo_url: 'https://crm.vero.test/img/vero-logo-dark.png' });
     assert.equal(r.status, 200, JSON.stringify(r.data));
     assert.equal(r.data.meeting_url, 'https://meet.google.com/xyz-abcd-efg', 'link do Meet salvo na R1 sem segundo passo');
@@ -2356,7 +2377,7 @@ test('funil de perdidos: espelho do funil com a etapa da perda e os motivos (MP)
   const c = await call('c1', 'POST', '/api/cadastros', { name: 'Perdido na Qualificação', phone1: '11 93817-5511', origin: 'site', relationship: 'lead' });
   const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
   await call('c1', 'POST', '/api/atividades', { contact_id: c.data.id, type: 'mensagem_enviada', notes: 'WhatsApp' });
-  await call('c1', 'POST', `/api/oportunidades/${opp.id}/concluir-qualificacao`, { fields: { objective_type: 'aquisicao' } });
+  await triage('c1', c.data.id);
   assert.equal((await call('c1', 'POST', `/api/oportunidades/${opp.id}/etapa`, { stage_id: st('perdido'), lost_reason: 'preco', lost_notes: 'Parcela alta' })).status, 200);
   assert.equal((await call('c1', 'GET', '/api/funil/perdidos')).status, 403, 'especialista não vê o funil de perdidos');
   const r = await call('gestor', 'GET', '/api/funil/perdidos?days=30');
@@ -2417,10 +2438,23 @@ test('diagnóstico financeiro: abre com os dados do cliente, salva pela ferramen
   assert.deepEqual(v.summary.objetivos, ['Reserva', 'Imóvel']);
   assert.equal(v.summary.plano[0].titulo, 'Montar a reserva');
   assert.equal(v.summary.patrimonio_itens, 1);
-  // Novo diagnóstico (o concluído vai para o histórico)
+  // Sem "refazer": abrir de novo devolve o mesmo diagnóstico
   const n = await call('c1', 'POST', '/api/diagnosticos', { contact_id: c.data.id, new: true });
-  assert.notEqual(n.data.id, s.data.id);
-  assert.equal((await call('c1', 'GET', `/api/cadastros/${c.data.id}/diagnostico`)).data.history.length, 1);
+  assert.equal(n.data.id, s.data.id);
+  assert.equal(n.data.created, false);
+  assert.equal((await call('c1', 'GET', `/api/cadastros/${c.data.id}/diagnostico`)).data.history.length, 0);
+  // Resultado da ferramenta: Nota Vero, Estrela Vero, Matriz de oportunidades e Bússola chegam ao resumo do lead
+  const resultado = {
+    estrela: { nota: 62, pilares: [{ id: 'organizacao', nome: 'Organização', pct: 70, status: 'ok' }, { id: 'protecao', nome: 'Proteção', pct: 30, status: 'critico' }] },
+    matriz: [{ titulo: 'Seguro de vida', area: 'Proteção', produto: 'Seguro', prioridade: 'Alta', prazo: 'Curto', potencial: 9, detalhe: 'Seguro de vida com capital de R$ 500 mil.' }],
+    bussola: { nota: 58, norte: { id: 'organizacao', nome: 'Organização', status: 'atencao', resumo: 'Sobra baixa.', acao: 'Montar o orçamento' }, dimensoes: [{ id: 'organizacao', nome: 'Organização', nota: 40, status: 'atencao', resumo: 'Sobra baixa.' }] },
+  };
+  await call('c1', 'PUT', `/api/diagnosticos/${s.data.id}/dados`, { data: { id: `crm-${s.data.id}`, coletaFinalizada: true }, resultado });
+  await call('c1', 'PUT', `/api/diagnosticos/${s.data.id}/dados`, { data: { id: `crm-${s.data.id}`, coletaFinalizada: true, x: 2 }, resultado: { estrela: 'inválido' } });
+  const sum = (await call('c1', 'GET', `/api/cadastros/${c.data.id}/diagnostico`)).data.current.summary;
+  assert.equal(sum.resultado.estrela.nota, 62, 'resultado inválido não apaga o anterior');
+  assert.equal(sum.resultado.matriz[0].titulo, 'Seguro de vida');
+  assert.equal(sum.resultado.bussola.norte.acao, 'Montar o orçamento');
   // A página da ferramenta é servida com política própria (script embutido, mesma origem)
   const page = await fetch(`${base}/ferramentas/diagnostico-financeiro.html`);
   if (page.status === 200) assert.match(page.headers.get('content-security-policy'), /script-src 'self' 'unsafe-inline' blob:/);
@@ -2562,6 +2596,7 @@ test('agendas: a R2 só é liberada depois da R1 agendada e concluída', async (
   const early = await call('c1', 'POST', '/api/reunioes/agendar', { kind: 'r2', contact_id: c.data.id, opportunity_id: opp.id, ...at(3) });
   assert.equal(early.status, 400);
   assert.match(early.data.error, /R2 é liberada depois que a R1/);
+  await triage('c1', c.data.id);
   const r1 = await call('c1', 'POST', '/api/reunioes/agendar', { kind: 'r1', contact_id: c.data.id, opportunity_id: opp.id, ...at(1) });
   assert.equal(r1.status, 200, JSON.stringify(r1.data));
   assert.equal((await call('c1', 'POST', '/api/reunioes/agendar', { kind: 'r2', contact_id: c.data.id, opportunity_id: opp.id, ...at(3) })).status, 400, 'R1 agendada mas não concluída');
@@ -2687,29 +2722,38 @@ test('carta contemplada e planejamento: proposta de consórcio contemplada e pro
   assert.equal(kp.consortium_kind, 'contemplada');
   assert.equal(kp.entry_value, 60000);
   assert.equal(kp.product_id, null, 'sem plano de cota nova');
-  // Planejamento: diagnóstico concluído e precificado gera a proposta (gerada, pronta para enviar)
+  // Planejamento: a proposta é gerada pelo botão do diagnóstico concluído, com o modelo escolhido
   const s = await call('c1', 'POST', '/api/diagnosticos', { contact_id: c.data.id });
   const pricing = { valor: 4800, pix_total: 4560, cartao_total: 5140.2, parcelas: 10, parcela: 514.02, condicao: 'pix' };
-  let r = await call('c1', 'PUT', `/api/diagnosticos/${s.data.id}/dados`, { data: { id: `crm-${s.data.id}`, objetivos: [] }, precificacao: pricing });
-  assert.equal(r.data.proposal, null, 'só depois de concluído');
-  r = await call('c1', 'PUT', `/api/diagnosticos/${s.data.id}/dados`, { data: { id: `crm-${s.data.id}`, coletaFinalizada: true }, precificacao: pricing });
-  assert.ok(r.data.proposal, JSON.stringify(r.data));
-  let pl = (await call('c1', 'GET', `/api/propostas/${r.data.proposal.id}`)).data;
+  await call('c1', 'PUT', `/api/diagnosticos/${s.data.id}/dados`, { data: { id: `crm-${s.data.id}`, objetivos: [] }, precificacao: pricing });
+  assert.equal((await call('c1', 'POST', `/api/diagnosticos/${s.data.id}/proposta`, { model: 'implementacao' })).status, 400, 'só com o diagnóstico concluído');
+  const r = await call('c1', 'PUT', `/api/diagnosticos/${s.data.id}/dados`, { data: { id: `crm-${s.data.id}`, coletaFinalizada: true }, precificacao: pricing });
+  assert.equal(r.data.status, 'concluido');
+  assert.equal(r.data.proposal, undefined, 'sem proposta automática');
+  assert.equal((await call('c1', 'POST', `/api/diagnosticos/${s.data.id}/proposta`, {})).status, 400, 'modelo obrigatório');
+  const g = await call('c1', 'POST', `/api/diagnosticos/${s.data.id}/proposta`, { model: 'implementacao' });
+  assert.equal(g.status, 200, JSON.stringify(g.data));
+  let pl = (await call('c1', 'GET', `/api/propostas/${g.data.id}`)).data;
   assert.equal(pl.area, 'planejamento');
+  assert.equal(pl.plan_model, 'implementacao');
   assert.equal(pl.credit_value, 4800);
   assert.equal(pl.status, 'rascunho');
   assert.match(pl.description, /Pix ou boleto/);
-  // Nova precificação antes do envio atualiza a mesma proposta
-  r = await call('c1', 'PUT', `/api/diagnosticos/${s.data.id}/dados`, { data: { id: `crm-${s.data.id}`, coletaFinalizada: true, x: 1 }, precificacao: { ...pricing, valor: 5200 } });
-  assert.equal(r.data.proposal.id, pl.id);
+  // Gerar de novo (antes do envio) atualiza a mesma proposta; valor ajustado recalcula à vista e cartão
+  const g2 = await call('c1', 'POST', `/api/diagnosticos/${s.data.id}/proposta`, { model: 'implementacao', valor: 5200 });
+  assert.equal(g2.data.id, pl.id);
   pl = (await call('c1', 'GET', `/api/propostas/${pl.id}`)).data;
   assert.equal(pl.credit_value, 5200);
-  const link = (await call('c1', 'POST', `/api/propostas/${pl.id}/link`, {})).data;
+  assert.ok(JSON.parse(pl.pricing).pix_total > 4560);
+  const plat = await call('c1', 'POST', `/api/diagnosticos/${s.data.id}/proposta`, { model: 'plataforma' });
+  assert.notEqual(plat.data.id, pl.id, 'outro modelo é outra proposta');
+  const link = (await call('c1', 'POST', `/api/propostas/${plat.data.id}/link`, {})).data;
   const page = await (await fetch(`${base}/api/publico/proposta?token=${link.token}&equipe=1`)).json();
   assert.equal(page.area, 'planejamento');
-  assert.equal(page.pricing.parcelas, 10);
+  assert.equal(page.plan_model, 'plataforma');
+  assert.equal(page.plan_model_label, 'Plataforma Exclusiva');
+  assert.ok(page.plan_model_entregas.length >= 4);
   assert.equal(page.brand, 'Vero Planejamento');
-  assert.equal((await call('c1', 'PUT', `/api/diagnosticos/${s.data.id}/dados`, { data: { id: 'x', coletaFinalizada: true }, precificacao: { valor: -1 } })).data.proposal.id, pl.id, 'precificação inválida não muda a proposta');
 });
 
 test('BI do time: só líder e administrador, filtros de período, colaborador e área, indicadores, funil, MP e insights', async () => {
@@ -2717,10 +2761,29 @@ test('BI do time: só líder e administrador, filtros de período, colaborador e
   const r = await call('admin', 'GET', `/api/time/bi?${new URLSearchParams({ periodo: 'mes' })}`);
   assert.equal(r.status, 200, JSON.stringify(r.data));
   const k = r.data.kpis;
-  for (const key of ['pipeline_qtd', 'pipeline_valor', 'leads_recebidos', 'leads_movimentados', 'taxa_agendamento', 'taxa_no_show', 'taxa_realizacao_r1', 'taxa_realizacao_r2', 'tmr', 'tma', 'tme', 'ligacoes', 'tarefas_criadas', 'tarefas_concluidas', 'tarefas_atraso', 'win_rate', 'ganhos', 'ciclo_dias', 'receita', 'ticket_medio']) {
+  for (const key of ['pipeline_qtd', 'pipeline_valor', 'leads_recebidos', 'leads_movimentados', 'taxa_agendamento', 'taxa_no_show_r1', 'taxa_no_show_r2', 'taxa_realizacao_r1', 'taxa_realizacao_r2', 'tmr', 'tma', 'tme', 'duracao_ligacoes', 'ligacoes', 'tarefas_criadas', 'tarefas_concluidas', 'tarefas_atraso', 'taxa_conversao', 'win_rate', 'ganhos', 'ciclo_dias', 'receita', 'receita_credito', 'receita_planejamento', 'ticket_medio']) {
     assert.ok(key in k, `indicador ${key}`);
   }
+  assert.ok(!('taxa_no_show' in k), 'no-show separado em R1 e R2');
   assert.ok(k.leads_recebidos > 0);
+  // Conversão = ganhos ÷ leads recebidos; no-show por reunião; receita = crédito + planejamento
+  assert.equal(k.taxa_conversao, Math.round((k.ganhos / k.leads_recebidos) * 1000) / 10);
+  if (k.r1_realizadas + k.r1_no_show) assert.equal(k.taxa_no_show_r1, Math.round((k.r1_no_show / (k.r1_realizadas + k.r1_no_show)) * 1000) / 10);
+  assert.equal(k.receita, k.receita_credito + k.receita_planejamento);
+  // TME: leads em andamento sem atividade (em segundos, nunca negativo); TMA: tempo médio na etapa
+  assert.ok(k.tme == null || k.tme >= 0);
+  assert.ok(k.tma == null || k.tma >= 0);
+  // Planejamento aceito entra na receita do período
+  const plan = (await call('c1', 'GET', '/api/propostas?status=rascunho')).data;
+  const planRow = (plan.rows || plan).find((x) => x.area === 'planejamento' && x.status === 'rascunho');
+  assert.ok(planRow, 'proposta de planejamento do teste do diagnóstico');
+  assert.equal((await call('c1', 'POST', `/api/propostas/${planRow.id}/status`, { status: 'aprovada', accepted_channel: 'whatsapp' })).status, 200);
+  const k2 = (await call('admin', 'GET', `/api/time/bi?${new URLSearchParams({ periodo: 'mes' })}`)).data.kpis;
+  assert.equal(k2.receita_planejamento, k.receita_planejamento + planRow.credit_value);
+  assert.equal(k2.receita, k.receita + planRow.credit_value);
+  assert.equal(k2.vendas, k.vendas + 1);
+  const home = (await call('c1', 'GET', '/api/inicio?periodo=mes')).data.v360.kpis;
+  assert.ok(home.receita_planejamento >= planRow.credit_value, 'painel inicial usa a mesma receita');
   assert.ok(r.data.prev && 'leads_recebidos' in r.data.prev, 'período anterior para comparação');
   assert.equal(r.data.funnel[0].pct_topo, 100);
   assert.ok(r.data.funnel.every((s, i) => i === 0 || s.n <= r.data.funnel[i - 1].n), 'funil decrescente');
@@ -2763,4 +2826,45 @@ test('painel inicial 360: período (dia, semana, quinzena, mês, data), indicado
   assert.ok(Array.isArray(v.ranking) && Array.isArray(v.insights));
   assert.ok(v.goal);
   assert.equal((await call('c1', 'GET', '/api/inicio?periodo=data')).status, 400, 'data específica exige a data');
+});
+
+test('novo lead em blocos: área de interesse no negócio, CEP opcional e duplicidade só como alerta', async () => {
+  const a = await call('c1', 'POST', '/api/cadastros', { name: 'Lead Blocos', phone1: '11 93817-5581', email: 'blocos@exemplo.com', origin: 'site', campaign: 'Black Friday', relationship: 'prospect', business_area: 'seguros', cep: '01001-000', initial_notes: 'Quer seguro de vida', create_opportunity: true });
+  assert.equal(a.status, 200, JSON.stringify(a.data));
+  const c = (await call('c1', 'GET', `/api/cadastros/${a.data.id}`)).data;
+  assert.equal(c.relationship, 'prospect');
+  assert.equal(c.opportunities[0].business_area, 'seguros');
+  assert.equal(c.addresses?.[0]?.cep ?? (await call('c1', 'GET', `/api/cadastros/${a.data.id}/enderecos`)).data?.[0]?.cep, '01001000');
+  assert.equal((await call('c1', 'POST', '/api/cadastros', { name: 'CEP Ruim', cep: '123' })).status, 400);
+  // Mesmo telefone: sem confirmação o servidor avisa (409); a tela envia a confirmação e o cadastro sai com o alerta
+  assert.equal((await call('c1', 'POST', '/api/cadastros', { name: 'Lead Repetido', phone1: '11 93817-5581' })).status, 409);
+  const b = await call('c1', 'POST', '/api/cadastros', { name: 'Lead Repetido', phone1: '11 93817-5581', confirm_duplicate: true });
+  assert.equal(b.status, 200);
+  assert.ok(b.data.duplicates_confirmed.some((d) => d.id === a.data.id));
+});
+
+test('atividades e tarefas de aproximação: resultado por canal, próxima ação vira tarefa que não pode ser cancelada e concluir registra a atividade', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Lead Aproximação', phone1: '11 93817-5591', origin: 'site', relationship: 'lead' });
+  const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
+  assert.equal((await call('c1', 'POST', '/api/atividades', { contact_id: c.data.id, opportunity_id: opp.id, type: 'mensagem_enviada', result: 'xyz' })).status, 400, 'resultado inválido');
+  const due = new Date(Date.now() + 86400000).toISOString();
+  const a = await call('c1', 'POST', '/api/atividades', { contact_id: c.data.id, opportunity_id: opp.id, type: 'mensagem_enviada', result: 'sem_resposta', notes: 'WhatsApp de apresentação', next_action: 'Ligar novamente', return_at: due });
+  assert.equal(a.status, 200, JSON.stringify(a.data));
+  let tasks = (await call('c1', 'GET', `/api/tarefas?contact_id=${c.data.id}&status=pendente`)).data.rows;
+  const t = tasks.find((x) => x.title === 'Ligar novamente');
+  assert.ok(t && t.source_activity_id, 'tarefa de aproximação');
+  const cancel = await call('c1', 'PATCH', `/api/tarefas/${t.id}`, { action: 'cancelar' });
+  assert.equal(cancel.status, 400);
+  assert.match(cancel.data.error, /não pode ser cancelada/);
+  // Concluir registrando a ligação sem atendimento e a próxima tentativa (nova tarefa de aproximação)
+  const done = await call('c1', 'PATCH', `/api/tarefas/${t.id}`, { action: 'concluir', activity: { type: 'tentativa_sem_atendimento', result: 'nao_atendida', notes: 'Não atendeu', next_action: 'Nova tentativa de contato', return_at: new Date(Date.now() + 2 * 86400000).toISOString() } });
+  assert.equal(done.status, 200, JSON.stringify(done.data));
+  tasks = (await call('c1', 'GET', `/api/tarefas?contact_id=${c.data.id}`)).data.rows;
+  assert.equal(tasks.find((x) => x.id === t.id).status, 'concluida');
+  assert.ok(tasks.some((x) => x.title === 'Nova tentativa de contato' && x.status === 'pendente' && x.source_activity_id), 'nova tarefa gerada até conseguir o contato');
+  const hist = (await call('c1', 'GET', `/api/cadastros/${c.data.id}/historico?limit=50`)).data.rows;
+  assert.ok(hist.some((h) => h.type === 'tentativa_sem_atendimento' && h.result === 'nao_atendida'), 'atividade registrada ao concluir');
+  // Tarefa comum (sem aproximação) continua podendo ser cancelada
+  const nt = await call('c1', 'POST', '/api/tarefas', { contact_id: c.data.id, title: 'Separar documentos', due_at: due, type: 'retorno' });
+  assert.equal((await call('c1', 'PATCH', `/api/tarefas/${nt.data.id}`, { action: 'cancelar' })).status, 200);
 });

@@ -720,3 +720,40 @@ O **Ganho** antes da hora pede, no mesmo pop-up, o canal do contato (quando aind
 **BI do time** (Gestão do time › BI do time; só líder e administrador). Filtros: período (dia, semana, quinzena, mês vigente ou data específica/intervalo), time, colaborador da squad e área. Indicadores com a comparação contra o período anterior de mesmo tamanho: pipeline geral (qtd) e valor em pipeline, leads recebidos e movimentados, taxa de agendamento, no-show, realização de R1 e R2, TMR, TMA e TME (hh:mm:ss), ligações realizadas, tarefas criadas, concluídas e em atraso, win rate, ciclo médio de vendas, receita gerada e ticket médio; **funil de conversão por etapa** (dos negócios criados no período: quantos chegaram a cada etapa, % da etapa anterior, % do topo e tempo médio), **motivos de perda (MP)**, ranking por colaborador e **Insights da Vero IA** (Regenerar e Copiar). As definições ficam em "Como cada indicador é calculado", na própria tela.
 
 **Menu lateral.** Novo bloco **Consórcios** com Administradoras e Planos (saíram de Administração).
+
+## 23. Diagnóstico pelo lead, cadastro em blocos, triagem, tarefas de aproximação, menu e validações do BI
+
+**Diagnóstico financeiro.** É gerado só pelo painel do lead (aba **Diagnóstico**). No menu **Ferramentas › Diagnóstico financeiro**, o especialista escolhe o cliente e o painel dele abre na aba Diagnóstico; aberta fora do CRM (sem `?crm`), a ferramenta mostra a trava "gere pelo painel do lead". Dentro da ferramenta ficam escondidos Novo cliente, Carregar exemplo, Importar e Exportar backup. Não há botão para refazer: o lead tem um diagnóstico, que pode ser continuado. Concluído, o painel mostra o **resumo**: **Nota Vero** e **Estrela Vero** (8 pilares com a nota de cada um), **Bússola Financeira** (Norte, nota e dimensões) e **Matriz de Oportunidade** (até 12 oportunidades com área, produto, prioridade, prazo e potencial). O responsável recebe o aviso da conclusão.
+
+**Proposta do planejamento pelo diagnóstico.** Botão **Gerar proposta** no resumo, com dois modelos: **Modelo de implementação** (o especialista implementa o plano com o cliente) e **Plataforma Exclusiva** (acompanhamento contínuo na plataforma da Vero). O valor vem da precificação do diagnóstico e pode ser ajustado (à vista e cartão recalculam). Cada modelo é uma proposta; gerar de novo antes do envio atualiza a mesma; depois de enviada, só uma nova versão. A página do cliente mostra o modelo, o resumo e as entregas. *As descrições e entregas dos dois modelos são textos iniciais para a Vero validar.*
+
+**Novo lead em blocos.** **Dados** (nome completo ou empresa, telefone principal, telefone secundário, WhatsApp, e-mail), **Origem** (origem do lead, campanha/ação, CPF/CNPJ e CEP opcionais), **Área** (área de interesse, responsável = usuário que cadastra, sem troca, e tipo Prospect ou Lead) e **Geral** (observações). Telefone, WhatsApp, e-mail ou CPF/CNPJ já existentes na base geram **só um alerta** (ao sair do campo e no aviso após salvar): o cadastro é salvo assim mesmo. CNPJ (14 dígitos) cadastra como PJ. O CEP vira o endereço principal (completado depois).
+
+**Painel do lead.**
+- **Atividades:** sem os botões "cliente fez contato / recebi o contato". Ao registrar, o **resultado** muda conforme o canal (ligação: atendeu, não atendeu, caixa postal…; mensagem, e-mail e direct: respondeu, visualizou, sem resposta…) e a **próxima ação** é uma lista (nova tentativa, ligar, WhatsApp, e-mail, retorno, agendar R1, enviar material, follow-up) com data e hora. Sem contato, a sugestão é "Nova tentativa".
+- **Tarefas:** sempre da mais recente para a mais antiga. A tarefa criada pela próxima ação de uma atividade é de **aproximação** (etiqueta): não pode ser cancelada, só concluída — e concluir abre o mesmo registro (o que foi feito, resultado e próxima ação). Sem contato, a nova próxima ação cria outra tarefa, até conseguir o contato e dar o ganho.
+- **Qualificação:** em cima, a **Triagem** com 6 perguntas — Interesse (sim/não), Existe dor/necessidade?, Impacto (prazo), É o decisor?, Faixa de investimento e Faixa de renda. Com as 6 respostas e interesse "sim", o lead vai para Qualificação e a **R1 é liberada** (agendar a R1 sem triagem é bloqueado; a tela de agendamento também mostra as 6 perguntas). A qualificação detalhada abaixo é opcional. Negócios que já tinham R1 ou qualificação concluída antes desta versão seguem sem exigir a triagem.
+- **Agendas:** a data da reunião em destaque; **Concluir** ocupando a linha; abaixo **Remarcar** e **Não compareceu**; abaixo o texto **Confirmar presença**. Sem o botão Modelo da R1 (continua em Ferramentas).
+- **Propostas:** **Gerar proposta** mostra 4 ícones na ordem Consórcio, Planejamento, Seguros e Investimentos. Consórcio sempre habilitado (abre o simulador com o nome e o contato do cliente; carta contemplada pelo link abaixo); Planejamento habilitado quando o diagnóstico do lead está concluído; Seguros e Investimentos desabilitados.
+- **Recomendações:** só nome, telefone, WhatsApp e e-mail; quem indicou é o próprio lead do painel (o **+** cadastra a indicação dele).
+
+**Opções da proposta.** Link da proposta, Gerar PDF e Mensagem do WhatsApp ficam num único botão **Opções**, que abre o menu (kanban, lista, detalhe e painel do lead).
+
+**Menu lateral.**
+- **Ferramentas:** Ferramentas por área, Simulador de consórcio (nova guia), Simulador de propostas, Diagnóstico financeiro, Base da IA Vero e Kit do especialista.
+- **Gestão do time:** só **Organograma**, **Dashboard**, **BI** e **Distribuição de leads** (as mesmas abas no topo das quatro telas). One-on-ones viraram um botão no Organograma.
+- **Treinamentos:** Trilhas e materiais, Integração, Conheça a Vero e (administrador) Acompanhamento da equipe.
+
+**Validações dos indicadores (BI e painel inicial).**
+| Indicador | Definição |
+|---|---|
+| Taxa de conversão | negócios ganhos no período ÷ leads recebidos no período |
+| TMA | tempo médio que os negócios ficam em cada etapa (saídas de etapas abertas no período), em horas; no funil, o TMA de cada etapa |
+| Receita gerada | crédito vendido (vendas não canceladas) + valor de planejamento vendido (propostas de planejamento aceitas); ticket = receita ÷ vendas |
+| Taxa de agendamento | R1 agendadas ÷ leads recebidos no período |
+| No-show | separado: **R1** (R1 com no-show ÷ R1 realizadas + no-show) e **R2** (idem) — também no Dashboard |
+| TME | tempo médio que os leads em andamento estão **sem nenhuma atividade registrada** (desde a última atividade de contato ou, sem atividade, desde a atribuição), medido no fim do período, em horas |
+| Leads movimentados | negócios que mudaram de etapa no período |
+| Win rate | ganhos ÷ (ganhos + perdidos) fechados no período |
+
+A duração média das ligações (o antigo "TMA de atendimento") continua no BI com esse nome.

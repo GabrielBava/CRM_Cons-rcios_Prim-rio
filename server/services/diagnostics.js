@@ -41,19 +41,49 @@ function summarize(d) {
   };
 }
 
+const num = (v, min = 0, max = 100) => (v == null || v === '' || !Number.isFinite(Number(v)) ? null : Math.max(min, Math.min(max, Math.round(Number(v)))));
+const txt = (v, n = 200) => (v == null ? null : String(v).slice(0, n));
+const STATUS = ['critico', 'atencao', 'ok', 'sem-dados'];
+/** Resultado calculado pela ferramenta: Nota Vero e Estrela Vero (8 pilares), Matriz de oportunidades e Bússola financeira. */
+function cleanResult(x) {
+  if (!x || typeof x !== 'object') return null;
+  const out = {};
+  if (x.estrela && Array.isArray(x.estrela.pilares)) {
+    out.estrela = { nota: num(x.estrela.nota), pilares: x.estrela.pilares.slice(0, 12).map((p) => ({ id: txt(p.id, 40), nome: txt(p.nome, 60), pct: num(p.pct), status: STATUS.includes(p.status) ? p.status : null })) };
+  }
+  if (Array.isArray(x.matriz)) {
+    out.matriz = x.matriz.slice(0, 12).map((o) => ({ titulo: txt(o.titulo, 120), area: txt(o.area, 60), produto: txt(o.produto, 60), prioridade: txt(o.prioridade, 20), prazo: txt(o.prazo, 20), potencial: num(o.potencial, -100, 1000), detalhe: txt(o.detalhe, 300) })).filter((o) => o.titulo);
+  }
+  if (x.bussola && Array.isArray(x.bussola.dimensoes)) {
+    const n = x.bussola.norte;
+    out.bussola = {
+      nota: num(x.bussola.nota),
+      norte: n ? { id: txt(n.id, 40), nome: txt(n.nome, 60), status: STATUS.includes(n.status) ? n.status : null, resumo: txt(n.resumo, 200), acao: txt(n.acao, 200) } : null,
+      dimensoes: x.bussola.dimensoes.slice(0, 6).map((d) => ({ id: txt(d.id, 40), nome: txt(d.nome, 60), nota: num(d.nota), status: STATUS.includes(d.status) ? d.status : null, resumo: txt(d.resumo, 200) })),
+    };
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 const publicRow = (r) => (r ? { id: r.id, contact_id: r.contact_id, status: r.status, created_at: r.created_at, updated_at: r.updated_at, completed_at: r.completed_at, created_by_name: r.created_by_name, summary: r.summary ? JSON.parse(r.summary) : null, url: toolUrl(r.id) } : null);
 
 function forContact(db, user, contactId) {
   const c = loadContact(db, user, contactId);
-  const rows = db.prepare('SELECT d.id, d.contact_id, d.status, d.summary, d.created_at, d.updated_at, d.completed_at, u.name AS created_by_name FROM diagnostics d LEFT JOIN users u ON u.id = d.created_by WHERE d.contact_id = ? ORDER BY d.id DESC').all(c.id);
-  return { current: publicRow(rows[0]), history: rows.slice(1).map(publicRow) };
+  const rows = db.prepare('SELECT d.id, d.contact_id, d.status, d.summary, d.pricing, d.created_at, d.updated_at, d.completed_at, u.name AS created_by_name FROM diagnostics d LEFT JOIN users u ON u.id = d.created_by WHERE d.contact_id = ? ORDER BY d.id DESC').all(c.id);
+  const cur = publicRow(rows[0]);
+  if (cur) {
+    cur.pricing = rows[0].pricing ? JSON.parse(rows[0].pricing) : null;
+    cur.proposals = db.prepare("SELECT id, code, status, plan_model, credit_value FROM proposals WHERE diagnostic_id = ? AND status <> 'substituida' ORDER BY id").all(cur.id);
+  }
+  return { current: cur, history: rows.slice(1).map(publicRow) };
 }
 
 /** Abre o diagnóstico do cliente: retoma o que está em andamento ou cria um novo. */
 function start(db, user, data = {}) {
   const c = loadContact(db, user, data.contact_id, { write: true });
-  const open = db.prepare("SELECT id FROM diagnostics WHERE contact_id = ? AND status = 'em_andamento' ORDER BY id DESC LIMIT 1").get(c.id);
-  if (open && !data.new) return { id: open.id, url: toolUrl(open.id), created: false };
+  // Um diagnóstico por cliente: abre o existente (em andamento ou concluído); não há "refazer"
+  const open = db.prepare('SELECT id FROM diagnostics WHERE contact_id = ? ORDER BY id DESC LIMIT 1').get(c.id);
+  if (open) return { id: open.id, url: toolUrl(open.id), created: false };
   const opp = data.opportunity_id ? db.prepare('SELECT id FROM opportunities WHERE id = ? AND contact_id = ?').get(Number(data.opportunity_id), c.id) : db.prepare("SELECT id FROM opportunities WHERE contact_id = ? AND status = 'aberta' ORDER BY id DESC LIMIT 1").get(c.id);
   const now = nowIso();
   const id = Number(db.prepare("INSERT INTO diagnostics (contact_id, opportunity_id, status, created_by, created_at, updated_at) VALUES (?, ?, 'em_andamento', ?, ?, ?)").run(c.id, opp?.id ?? null, user.id, now, now).lastInsertRowid);
@@ -95,16 +125,21 @@ function saveFromTool(db, user, id, body = {}) {
   // Precificação calculada pela ferramenta (valor do plano, à vista e no cartão); sem uma válida, vale a última recebida
   const pricing = proposals.cleanPricing(body.precificacao) || (d.pricing ? JSON.parse(d.pricing) : null);
   if (pricing) sum.precificacao = pricing;
+  // Nota Vero, Estrela Vero, Matriz e Bússola: sem um resultado novo válido, vale o último recebido
+  const prev = d.summary ? JSON.parse(d.summary) : {};
+  const resultado = cleanResult(body.resultado) || prev.resultado || null;
+  if (resultado) sum.resultado = resultado;
   const status = done || d.status === 'concluido' ? 'concluido' : 'em_andamento';
-  let proposal = null;
   tx(db, () => {
     db.prepare('UPDATE diagnostics SET data = ?, summary = ?, pricing = ?, updated_at = ?, status = ?, completed_at = ? WHERE id = ?')
       .run(json, JSON.stringify(sum), pricing ? JSON.stringify(pricing) : null, now, status, done ? d.completed_at || now : d.completed_at, d.id);
-    if (done && d.status !== 'concluido') audit(db, user, 'diagnostic', d.id, 'concluido', null, d.contact_id);
-    // Concluído e precificado: a proposta do planejamento aparece em Propostas
-    if (status === 'concluido' && pricing) proposal = proposals.fromDiagnostic(db, user, d, pricing);
+    if (done && d.status !== 'concluido') {
+      audit(db, user, 'diagnostic', d.id, 'concluido', null, d.contact_id);
+      const c = db.prepare('SELECT name, owner_id FROM contacts WHERE id = ?').get(d.contact_id);
+      if (c?.owner_id) require('./notifications').notify(db, c.owner_id, { kind: 'diagnostico', title: `Diagnóstico concluído: ${c.name}`, body: 'Veja a Nota Vero, a matriz e a bússola no lead e gere a proposta do planejamento.', link: `#/leads/${d.contact_id}/diagnostico` });
+    }
   });
-  return { ok: true, status, proposal: proposal ? { id: proposal.id, code: proposal.code } : null };
+  return { ok: true, status };
 }
 
 function conclude(db, user, id) {
@@ -112,8 +147,14 @@ function conclude(db, user, id) {
   const now = nowIso();
   db.prepare("UPDATE diagnostics SET status = 'concluido', completed_at = COALESCE(completed_at, ?), updated_at = ? WHERE id = ?").run(now, now, d.id);
   audit(db, user, 'diagnostic', d.id, 'concluido', null, d.contact_id);
-  const proposal = d.pricing ? require('./proposals').fromDiagnostic(db, user, d, JSON.parse(d.pricing)) : null;
-  return { ok: true, proposal: proposal ? { id: proposal.id, code: proposal.code } : null };
+  return { ok: true };
 }
 
-module.exports = { forContact, start, forTool, saveFromTool, conclude, summarize, TOOL_PATH };
+/** "Gerar proposta" do diagnóstico concluído: modelo (implementação ou plataforma exclusiva) e valor da precificação. */
+function generateProposal(db, user, id, body = {}) {
+  const { d } = load(db, user, id, { write: true });
+  if (d.status !== 'concluido') throw badRequest('Conclua o diagnóstico financeiro para gerar a proposta do planejamento.');
+  return require('./proposals').fromDiagnostic(db, user, d, d.pricing ? JSON.parse(d.pricing) : null, { model: body.model, valor: body.valor });
+}
+
+module.exports = { forContact, start, forTool, saveFromTool, conclude, generateProposal, summarize, cleanResult, TOOL_PATH };

@@ -5,7 +5,7 @@ import { html, render, on, state, can, hasModule, modal, field, toast, toastErro
 import { icon } from '../icons.js';
 import { openR1Model, downloadR1Model } from '../meeting.js';
 import { downloadR1Template } from '../r1.js';
-import { startDiagnostic } from '../leadtabs.js';
+import { openLeadDrawer } from '../drawer.js';
 
 const SIM_URL = 'ferramentas/simulador-consorcio.html';
 
@@ -13,7 +13,7 @@ const SIM_URL = 'ferramentas/simulador-consorcio.html';
 function pickClient() {
   return modal({
     title: 'Diagnóstico financeiro — para qual cliente?',
-    body: html`<p class="hint">O diagnóstico abre numa nova guia com os dados do cliente e fica salvo no CRM (aba Diagnóstico do lead).</p>
+    body: html`<p class="hint">O diagnóstico é gerado pelo lead: escolha o cliente e o painel dele abre na aba Diagnóstico.</p>
       <div class="field full"><label>Buscar cadastro</label><input type="search" name="q" placeholder="Nome, código (C-…), telefone ou e-mail" autocomplete="off"></div>
       <div class="pick-list" role="listbox"></div>`,
     onMount(form, close) {
@@ -49,6 +49,12 @@ const card = (t) => (t.href
 
 export async function show(view, { id } = {}) {
   if (id === 'ia') return knowledgeView(view);
+  if (id === 'diagnostico') {
+    await show(view);
+    const cid = await pickClient();
+    if (cid) openLeadDrawer(cid, { tab: 'diagnostico' });
+    return undefined;
+  }
   const company = state.meta.settings.company_name || 'Vero Consórcios';
   const lead = can.manage();
   const clusters = [
@@ -64,7 +70,7 @@ export async function show(view, { id } = {}) {
     {
       key: 'planejamento', title: 'Planejamento financeiro', ic: 'planejamento', text: 'Diagnóstico, Estrela Vero e plano de ação.',
       tools: [
-        { act: 'diag', ic: 'diagnostico', title: 'Diagnóstico financeiro', text: 'Escolha o cliente: o diagnóstico abre com os dados dele e fica salvo no CRM.' },
+        { act: 'diag', ic: 'diagnostico', title: 'Diagnóstico financeiro', text: 'Gerado pelo lead: escolha o cliente e o painel dele abre na aba Diagnóstico.' },
       ],
     },
     { key: 'seguros', title: 'Seguros', ic: 'seguros', text: 'Proteção da renda, da família e do patrimônio.', tools: [{ soon: true, ic: 'seguros', title: 'Cotação de seguros', text: 'Vida, automóvel/frota, residencial/empresarial e saúde.' }] },
@@ -89,7 +95,7 @@ export async function show(view, { id } = {}) {
   on(view, 'click', '[data-act=r1-template]', () => downloadR1Template());
   on(view, 'click', '[data-act=diag]', async () => {
     const id = await pickClient();
-    if (id) startDiagnostic(id);
+    if (id) openLeadDrawer(id, { tab: 'diagnostico' });
   });
   return undefined;
 }

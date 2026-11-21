@@ -32,6 +32,17 @@ const RULES = {
     hint: 'Registre a tentativa em Atividades: ao salvar, o lead avança para Tentativa de contato.',
     check: (db, o, c) => !!db.prepare(`SELECT 1 FROM activities WHERE contact_id = ? AND type IN (${CONTACT_TYPES.map(() => '?').join(',')}) LIMIT 1`).get(c.id, ...CONTACT_TYPES),
   },
+  triagem_concluida: {
+    label: 'Triagem concluída (interesse, dor, impacto, decisor, faixa de investimento e de renda)',
+    hint: 'Responda as 6 perguntas da Triagem na aba Qualificação do lead.',
+    check: (db, o) => !!o.triaged_at && (() => {
+      try {
+        return JSON.parse(o.triage || '{}').interesse === 'sim';
+      } catch {
+        return false;
+      }
+    })(),
+  },
   qualificacao_concluida: {
     label: 'Qualificação do cliente concluída',
     hint: 'Preencha a qualificação (ao menos um campo) e clique em "Concluir qualificação".',
@@ -106,7 +117,7 @@ const DEFAULT_STAGE_RULES = {
   prospect: [],
   lead: [],
   tentativa: ['tentativa_registrada'],
-  qualificado: ['qualificacao_concluida'],
+  qualificado: ['triagem_concluida'],
   r1: ['r1_agendada'],
   r2: ['r1_realizada', 'r2_agendada'],
   negociacao: ['proposta_gerada'],

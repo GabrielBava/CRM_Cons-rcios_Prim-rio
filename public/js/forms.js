@@ -22,119 +22,80 @@ function dupList(dups) {
   )}</ul></div>`;
 }
 
+/**
+ * Novo lead, em blocos: Dados (nome ou empresa, telefones, WhatsApp e e-mail), Origem (origem, campanha/ação, CPF/CNPJ e
+ * CEP opcionais), Área (área de interesse, responsável = usuário atual, tipo prospect ou lead) e Geral (observações).
+ * Telefone, e-mail ou CPF/CNPJ já existentes na base geram só um alerta: o cadastro é salvo assim mesmo.
+ */
 export function quickCreateContact(defaults = {}) {
-  const kind = defaults.kind || 'PF';
-  const cfg = state.meta.settings.field_config || {};
-  const visible = (k, f) => (cfg[k === 'PJ' ? 'contact_pj' : 'contact_pf']?.[f]?.visible !== false);
+  const me = state.user;
+  const areas = opts('area_negocio');
+  const block = (title, ic, inner) => html`<fieldset class="lead-block"><legend>${icon(ic, 15)} ${title}</legend><div class="grid">${inner}</div></fieldset>`;
   const body = html`
-    ${can.write() ? html`<div class="import-banner">
-      <div><strong>Tem uma base de leads?</strong><small>Importe a planilha (.xlsx ou .csv): o CRM lê as colunas, valida cada linha e remove os duplicados antes de criar os cards.</small></div>
-      <div class="import-banner-actions"><button type="button" class="btn small" data-lead-template>${icon('baixar', 14)}Baixar modelo Excel</button><button type="button" class="btn small primary" data-lead-import>${icon('importar', 14)}Importar base de leads</button></div>
-    </div>` : ''}
-    <div class="seg" role="radiogroup">
-      <label><input type="radio" name="kind" value="PF" ${kind === 'PF' ? raw('checked') : ''}> Pessoa física</label>
-      <label><input type="radio" name="kind" value="PJ" ${kind === 'PJ' ? raw('checked') : ''}> Pessoa jurídica</label>
-    </div>
-    <p class="hint">Só o nome é obrigatório. Campos marcados como <span class="rec">recomendado</span> podem ser completados depois.</p>
-    ${defaults.referral_id ? html`<div class="referral-box"><span class="badge ok">Indicação</span> <span>Indicado por <strong>${defaults.referral_from}</strong>${defaults.recommended_by && defaults.recommended_by !== defaults.referral_from ? html` · recomendado por ${defaults.recommended_by}` : ''}</span>
+    ${defaults.referral_id ? html`<div class="referral-box"><span class="badge ok">Indicação</span> <span>Indicado por <strong>${defaults.referral_from}</strong></span>
       ${field({ name: 'referral_note', label: 'Comentário da indicação', type: 'textarea', rows: 2, full: true, placeholder: `Ex.: ${defaults.referral_from} indicou o cliente; ele quer trocar de carro no próximo ano.` })}</div>` : ''}
-    <div class="grid">
-      ${field({ name: 'name', label: 'Nome completo ou nome de contato', required: true, full: true, value: defaults.name })}
-      <div class="pj-only full grid" ${kind === 'PJ' ? '' : raw('hidden')}>
-        ${field({ name: 'trade_name', label: 'Empresa / nome fantasia', recommended: true })}
-        ${field({ name: 'contact_role', label: 'Cargo do contato' })}
-      </div>
-      ${field({ name: 'phone1', label: 'Telefone principal', type: 'tel', recommended: true, placeholder: '(11) 91234-5678', value: defaults.phone1 })}
+    ${block('Dados', 'leads', html`
+      ${field({ name: 'name', label: 'Nome completo ou empresa', required: true, full: true, value: defaults.name })}
+      ${field({ name: 'phone1', label: 'Telefone principal', type: 'tel', placeholder: '(11) 91234-5678', value: defaults.phone1 })}
       ${field({ name: 'phone2', label: 'Telefone secundário', type: 'tel' })}
       ${field({ name: 'whatsapp', label: 'WhatsApp', type: 'tel', value: defaults.whatsapp, placeholder: 'Se for diferente do telefone' })}
-      ${field({ name: 'email', label: 'E-mail', type: 'email', recommended: true, value: defaults.email })}
-      ${field({ name: 'city', label: 'Cidade' })}
-      ${field({ name: 'state', label: 'UF', maxlength: 2, placeholder: 'SP' })}
-      ${visible(kind, 'doc') ? field({ name: 'doc', label: 'CPF ou CNPJ (opcional)', help: 'Informe apenas se necessário para o cadastro.' }) : ''}
-      ${field({ name: 'origin', label: 'Origem do lead', type: 'select', options: opts('origem'), value: defaults.origin || (defaults.referral_id && opts('origem').some((o) => o.value === 'indicacao') ? 'indicacao' : undefined), recommended: true })}
-      ${field({ name: 'campaign', label: 'Campanha ou ação de origem' })}
-      ${field({ name: 'first_contact_at', label: 'Data do primeiro contato', type: 'datetime' })}
-      ${field({ name: 'relationship', label: 'Tipo', type: 'select', options: [{ value: 'prospect', label: 'Prospect (ainda sem interesse demonstrado)' }, { value: 'lead', label: 'Lead (demonstrou interesse)' }], value: defaults.relationship || 'lead', allowEmpty: false })}
-      ${field({ name: 'owner_id', label: 'Responsável', type: 'select', options: userItems(), value: defaults.owner_id !== undefined ? defaults.owner_id : state.user.id, allowEmpty: can.manage(), placeholder: 'Sem responsável: distribuir pela roleta', disabled: !can.manage() })}
-      ${field({ name: 'product_id', label: 'Produto de interesse', type: 'select', options: productItems() })}
-      ${field({ name: 'initial_notes', label: 'Observações iniciais', type: 'textarea', full: true })}
-      ${field({ name: 'create_opportunity', label: 'Criar negócio no funil (Prospect ou Lead; leads de formulário — Meta, Instagram, Facebook, LinkedIn, landing page — entram em "Tentativa de contato")', type: 'checkbox', value: true, full: true })}
-      <details class="full"><summary>Dados de campanha digital (opcional)</summary>
-        <p class="hint">Preencha somente os dados que a plataforma forneceu. Campos sem informação ficam vazios.</p>
-        <div class="grid">
-          ${field({ name: 'o_platform', label: 'Plataforma', placeholder: 'ex.: meta_ads' })}
-          ${field({ name: 'o_platform_lead_id', label: 'ID do lead na plataforma' })}
-          ${field({ name: 'o_campaign_id', label: 'ID da campanha' })}
-          ${field({ name: 'o_adset_id', label: 'ID do conjunto de anúncios' })}
-          ${field({ name: 'o_ad_id', label: 'ID do anúncio' })}
-          ${field({ name: 'o_received_at', label: 'Data de recebimento', type: 'datetime' })}
-          ${field({ name: 'o_utm_source', label: 'utm_source' })}
-          ${field({ name: 'o_utm_medium', label: 'utm_medium' })}
-          ${field({ name: 'o_utm_campaign', label: 'utm_campaign' })}
-          ${field({ name: 'o_utm_content', label: 'utm_content' })}
-        </div>
-      </details>
-    </div>
-    <div class="dup-live"></div>`;
-  let confirmDup = false;
+      ${field({ name: 'email', label: 'E-mail', type: 'email', value: defaults.email })}`)}
+    ${block('Origem', 'entrada', html`
+      ${field({ name: 'origin', label: 'Origem do lead', type: 'select', options: opts('origem'), value: defaults.origin || (defaults.referral_id && opts('origem').some((o) => o.value === 'indicacao') ? 'indicacao' : undefined) })}
+      ${field({ name: 'campaign', label: 'Campanha / ação' })}
+      ${field({ name: 'doc', label: 'CPF ou CNPJ (opcional)' })}
+      ${field({ name: 'cep', label: 'CEP (opcional)', placeholder: '00000-000', maxlength: 9 })}`)}
+    ${block('Área', 'consorcio', html`
+      ${field({ name: 'business_area', label: 'Área de interesse', type: 'select', options: areas, value: defaults.business_area || 'consorcio', allowEmpty: false })}
+      <div class="field"><label>Responsável</label><input value="${me.name}" readonly disabled title="O lead fica com quem o cadastrou"></div>
+      ${field({ name: 'relationship', label: 'Tipo', type: 'select', options: [{ value: 'prospect', label: 'Prospect' }, { value: 'lead', label: 'Lead' }], value: defaults.relationship || 'lead', allowEmpty: false })}`)}
+    ${block('Geral', 'lista', html`${field({ name: 'initial_notes', label: 'Observações', type: 'textarea', rows: 3, full: true })}`)}
+    <div class="dup-live" aria-live="polite"></div>
+    ${can.write() && !defaults.referral_id ? html`<p class="small muted import-line">Tem uma base de leads? <button type="button" class="link-btn" data-lead-import>Importar planilha</button> · <button type="button" class="link-btn" data-lead-template>baixar o modelo</button></p>` : ''}`;
   return modal({
-    title: 'Novo prospect / lead',
+    title: defaults.referral_id ? 'Novo lead · indicação' : 'Novo lead',
     wide: true,
     body,
     submitLabel: 'Salvar cadastro',
     onMount(form, close) {
-      on(form, 'change', 'input[name=kind]', () => {
-        const pj = form.kind.value === 'PJ';
-        $$('.pj-only', form).forEach((el) => (el.hidden = !pj));
-        form.querySelector('label[for^=f_name]').childNodes[0].textContent = pj ? 'Nome do contato principal ' : 'Nome completo ou nome de contato ';
-      });
       on(form, 'click', '[data-open-dup]', () => close(null));
       on(form, 'click', '[data-lead-template]', () => downloadLeadTemplate());
       on(form, 'click', '[data-lead-import]', () => {
         close(null);
         nav('#/importar');
       });
+      // Alerta de duplicidade (telefone, WhatsApp, e-mail ou CPF/CNPJ já na base): só avisa, não impede o cadastro
       const check = async () => {
-        const d = { phone1: form.phone1.value, phone2: form.phone2.value, email: form.email.value, doc: form.doc?.value };
+        const d = { phone1: form.phone1.value, phone2: form.phone2.value || form.whatsapp.value, email: form.email.value, doc: form.doc.value };
         if (!d.phone1 && !d.phone2 && !d.email && !d.doc) return;
         try {
           const r = await post('/api/cadastros/verificar-duplicidade', d);
-          $('.dup-live', form).innerHTML = r.duplicates.length ? String(dupList(r.duplicates)) : '';
+          $('.dup-live', form).innerHTML = r.duplicates.length ? String(html`${dupList(r.duplicates)}<p class="small muted">É só um alerta: confira se não é o mesmo cliente. O cadastro pode ser salvo.</p>`) : '';
         } catch {}
       };
-      ['phone1', 'phone2', 'email', 'doc'].forEach((n) => form[n]?.addEventListener('blur', check));
+      ['phone1', 'phone2', 'whatsapp', 'email', 'doc'].forEach((n) => form[n]?.addEventListener('blur', check));
+      form.cep.addEventListener('input', () => {
+        const v = form.cep.value.replace(/\D/g, '').slice(0, 8);
+        form.cep.value = v.length > 5 ? `${v.slice(0, 5)}-${v.slice(5)}` : v;
+      });
     },
-    async onSubmit(d, form) {
-      const origin_details = {};
-      for (const [k, v] of Object.entries(d)) if (k.startsWith('o_') && v) origin_details[k.slice(2)] = v;
-      const payload = { ...d, origin_details, confirm_duplicate: confirmDup };
-      for (const k of Object.keys(payload)) if (k.startsWith('o_')) delete payload[k];
-      if (d.kind === 'PJ') {
+    async onSubmit(d) {
+      const docDigits = String(d.doc || '').replace(/\D/g, '');
+      const kind = docDigits.length === 14 ? 'PJ' : 'PF';
+      const payload = { ...d, kind, owner_id: me.id, create_opportunity: true, confirm_duplicate: true };
+      if (kind === 'PJ') {
+        payload.trade_name = d.name;
         payload.contact_name = d.name;
-        payload.name = d.trade_name || d.name;
         payload.contact_phone = d.phone1;
         payload.contact_email = d.email;
       }
-      if (!can.manage()) delete payload.owner_id;
-      if (defaults.referral_id) {
-        payload.referral_id = defaults.referral_id;
-        if (payload.create_opportunity === undefined) payload.create_opportunity = true;
-      }
-      try {
-        const r = await post('/api/cadastros', payload);
-        toast(defaults.referral_id ? `Indicação cadastrada: ${r.code} já está no seu pipeline.` : `Cadastro ${r.code} criado.`);
-        if (defaults.after) defaults.after(r);
-        else if (!defaults.stay) nav(`#/leads/${r.id}`);
-        return r;
-      } catch (e) {
-        if (e.status === 409 && e.details?.duplicates) {
-          $('.dup-live', form).innerHTML = String(html`${dupList(e.details.duplicates)}<p class="warn-text">Abra o cadastro existente ou clique em "Criar mesmo assim" para confirmar um novo cadastro.</p>`);
-          confirmDup = true;
-          form.querySelector('button[type=submit]').textContent = 'Criar mesmo assim';
-          return false;
-        }
-        throw e;
-      }
+      if (defaults.referral_id) payload.referral_id = defaults.referral_id;
+      const r = await post('/api/cadastros', payload);
+      const dupCodes = (r.duplicates_confirmed || []).map((x) => x.code).filter(Boolean);
+      toast(`${defaults.referral_id ? `Indicação cadastrada: ${r.code} já está no seu pipeline.` : `Cadastro ${r.code} criado.`}${dupCodes.length ? ` Atenção: dados parecidos com ${dupCodes.join(', ')}.` : ''}`);
+      if (defaults.after) defaults.after(r);
+      else if (!defaults.stay) nav(`#/leads/${r.id}`);
+      return r;
     },
   });
 }
@@ -444,43 +405,114 @@ export const CONTACT_CHANNELS = [
   { key: 'linkedin', label: 'LinkedIn', icon: 'linkedin', type: 'linkedin_enviado' },
 ];
 
-const INBOUND_OF = { ligacao_realizada: 'ligacao_recebida', mensagem_enviada: 'mensagem_recebida', email_enviado: 'email_recebido', direct_enviado: 'direct_recebido', linkedin_enviado: 'linkedin_recebido' };
+
+// Resultados que indicam que não houve contato: sugerem "Nova tentativa de contato" como próxima ação
+const NO_CONTACT = ['nao_atendida', 'ocupado', 'caixa_postal', 'numero_invalido', 'interrompida', 'sem_resposta', 'visualizou', 'nao_entregue'];
+const tomorrow10 = () => {
+  const d = new Date(Date.now() + 86400000);
+  if (d.getDay() === 6) d.setDate(d.getDate() + 2);
+  if (d.getDay() === 0) d.setDate(d.getDate() + 1);
+  d.setHours(10, 0, 0, 0);
+  return d.toISOString();
+};
+
+/** Campos da atividade: canal, resultado (por canal), observação e a próxima ação em lista (vira a tarefa de aproximação). */
+function contactActivityFields(channel, { blocked = [], nextDefault = '' } = {}) {
+  return html`${blocked.length ? html`<div class="alert danger small">Oposição a contato: ${blocked.includes('todos') ? 'todos os canais' : blocked.map((c) => K('contact_channels', c)).join(', ')}.</div>` : ''}
+    <div class="chan-pick" role="radiogroup" aria-label="Canal">${CONTACT_CHANNELS.map((c) => html`<label class="chan-opt ch-${c.key}"><input type="radio" name="type" value="${c.type}" ${c.key === channel ? raw('checked') : ''}><span>${icon(c.icon, 20)}<strong>${c.label}</strong></span></label>`)}</div>
+    <div class="grid">
+      <div class="field"><label for="f_result">Resultado</label><select name="result" id="f_result" required></select></div>
+      <div class="field"><label for="f_next">Próxima ação</label><select name="next_kind" id="f_next"><option value="">Nenhuma</option>${opts('proxima_acao').map((o) => html`<option value="${o.value}" ${o.value === nextDefault ? raw('selected') : ''}>${o.label}</option>`)}</select></div>
+      ${field({ name: 'notes', label: 'Observação', type: 'textarea', rows: 2, full: true, placeholder: 'Ex.: liguei para apresentar a Vero; não atendeu, deixei mensagem no WhatsApp.' })}
+      <div class="field next-when" hidden>${field({ name: 'return_at', label: 'Quando', type: 'datetime', value: tomorrow10() })}</div>
+    </div>`;
+}
+/** Liga a troca de canal (resultados de ligação ou de mensagem) e a sugestão de nova tentativa quando não houve contato. */
+function bindContactActivity(form) {
+  const fill = () => {
+    const call = form.querySelector('input[name=type]:checked')?.value === 'ligacao_realizada';
+    const list = opts(call ? 'resultado_ligacao' : 'resultado_mensagem').filter((o) => !['nao_informado'].includes(o.value));
+    const cur = form.result.value;
+    form.result.innerHTML = String(html`<option value="">Selecione…</option>${list.map((o) => html`<option value="${o.value}" ${o.value === cur ? raw('selected') : ''}>${o.label}</option>`)}`);
+  };
+  const syncNext = () => ($('.next-when', form).hidden = !form.next_kind.value);
+  on(form, 'change', 'input[name=type]', fill);
+  form.result.addEventListener('change', () => {
+    if (NO_CONTACT.includes(form.result.value) && !form.next_kind.value) form.next_kind.value = 'nova_tentativa';
+    syncNext();
+  });
+  form.next_kind.addEventListener('change', syncNext);
+  fill();
+  syncNext();
+}
+/** Payload da atividade (a ligação sem atendimento vira "tentativa sem atendimento"). */
+function contactActivityPayload(d) {
+  if (!d.type) throw new Error('Escolha o canal.');
+  if (!d.result) throw new Error('Informe o resultado da ação.');
+  const payload = { type: d.type, result: d.result, notes: d.notes, occurred_at: new Date().toISOString() };
+  if (d.type === 'ligacao_realizada' && ['nao_atendida', 'ocupado', 'caixa_postal', 'numero_invalido', 'interrompida'].includes(d.result)) payload.type = 'tentativa_sem_atendimento';
+  if (d.next_kind) {
+    payload.next_action = opts('proxima_acao').find((o) => o.value === d.next_kind)?.label || d.next_kind;
+    payload.return_at = d.return_at || tomorrow10();
+  }
+  return payload;
+}
 
 /**
- * Registro de uma tentativa de contato (Lead → Tentativa): escolhe o canal, o resultado e a observação. Ao salvar, o
- * servidor registra a atividade e leva o lead de Prospect/Lead para "Tentativa de contato".
+ * Registrar atividade (painel do lead) ou tentativa de contato (Lead → Tentativa): canal, resultado do que foi feito,
+ * observação e próxima ação (lista). A próxima ação vira uma tarefa de aproximação, que só pode ser concluída.
  */
 export function attemptDialog(contact, { opportunity_id, channel = 'ligacao', stageName = 'Tentativa de contato', quick = false } = {}) {
-  const blocked = contact.optouts || [];
   return modal({
     title: `${quick ? 'Registrar atividade' : 'Registrar tentativa de contato'} — ${contact.name || ''}`,
     wide: true,
     submitLabel: quick ? 'Registrar' : 'Registrar e avançar',
     body: html`${quick ? '' : html`<p class="hint">Para o lead entrar em <strong>${stageName}</strong> é preciso ao menos uma tentativa de contato registrada. Escolha o canal usado:</p>`}
-      ${blocked.length ? html`<div class="alert danger small">Oposição a contato: ${blocked.includes('todos') ? 'todos os canais' : blocked.map((c) => K('contact_channels', c)).join(', ')}.</div>` : ''}
-      <div class="chan-pick" role="radiogroup" aria-label="Canal">${CONTACT_CHANNELS.map((c) => html`<label class="chan-opt ch-${c.key}"><input type="radio" name="type" value="${c.type}" ${c.key === channel ? raw('checked') : ''}><span>${icon(c.icon, 20)}<strong>${c.label}</strong></span></label>`)}</div>
-      ${quick ? html`<div class="seg-pick" role="radiogroup" aria-label="Sentido"><label><input type="radio" name="direction" value="out" checked><span>Fiz o contato (enviei / liguei)</span></label><label><input type="radio" name="direction" value="in"><span>O cliente fez contato (recebi)</span></label></div>` : ''}
-      <div class="grid">
-        <div class="field call-only"><label>Resultado da ligação</label><select name="result"><option value="">Não informado</option>${opts('resultado_ligacao').map((o) => html`<option value="${o.value}">${o.label}</option>`)}</select></div>
-        ${field({ name: 'notes', label: 'Observação / motivo do contato', type: 'textarea', rows: 2, full: true, placeholder: 'Ex.: liguei para apresentar a Vero; não atendeu, deixei mensagem no WhatsApp.' })}
-        ${field({ name: 'next_action', label: 'Próxima ação', placeholder: 'ex.: Tentar de novo amanhã às 10h' })}
-        ${field({ name: 'return_at', label: 'Data de retorno', type: 'datetime', help: 'Cria a tarefa de retorno.' })}
-      </div>`,
+      ${contactActivityFields(channel, { blocked: contact.optouts || [] })}`,
     onMount(form) {
-      const sync = () => ($('.call-only', form).hidden = form.querySelector('input[name=type]:checked')?.value !== 'ligacao_realizada' || form.querySelector('input[name=direction]:checked')?.value === 'in');
-      form.addEventListener('change', sync);
+      bindContactActivity(form);
+    },
+    async onSubmit(d) {
+      await post('/api/atividades', { ...contactActivityPayload(d), contact_id: contact.id, opportunity_id });
+      toast(d.next_kind ? 'Atividade registrada e próxima ação criada em Tarefas.' : quick ? 'Atividade registrada.' : 'Tentativa registrada: o lead está em Tentativa de contato.');
+      return true;
+    },
+  });
+}
+
+/**
+ * Concluir tarefa do painel do lead: registra o que foi feito (canal, resultado e observação) e, se ainda não houve
+ * contato, já cria a próxima ação — e assim por diante até o contato. Tarefas sem contato com o cliente podem ser
+ * concluídas só com a observação (as de aproximação, não).
+ */
+export function completeTaskWithActivity(task, contact) {
+  const approach = !!task.source_activity_id;
+  const chan = /whats/i.test(task.title) ? 'whatsapp' : /e-?mail/i.test(task.title) ? 'email' : /direct|instagram/i.test(task.title) ? 'direct' : /linkedin/i.test(task.title) ? 'linkedin' : 'ligacao';
+  return modal({
+    title: `Concluir: ${task.title}`,
+    wide: true,
+    submitLabel: 'Concluir tarefa',
+    body: html`${approach ? html`<p class="hint">Tarefa de aproximação: registre o que você fez e o resultado. Sem contato? Escolha a próxima ação: uma nova tarefa é criada até conseguir falar com o cliente.</p>` : html`<label class="check full"><input type="checkbox" name="no_contact" value="1"> Tarefa sem contato com o cliente (concluir só com a observação)</label>`}
+      <div class="act-fields">${contactActivityFields(chan, { blocked: contact.optouts || [] })}</div>`,
+    onMount(form) {
+      bindContactActivity(form);
+      const sync = () => {
+        const off = !!form.no_contact?.checked;
+        $('.act-fields .chan-pick', form).hidden = off;
+        form.result.closest('.field').hidden = off;
+        form.result.required = !off;
+      };
+      form.no_contact?.addEventListener('change', sync);
       sync();
     },
     async onSubmit(d) {
-      if (!d.type) throw new Error('Escolha o canal.');
-      const inbound = d.direction === 'in';
-      delete d.direction;
-      if (d.type !== 'ligacao_realizada' || inbound) delete d.result;
-      const payload = { ...d, contact_id: contact.id, opportunity_id, occurred_at: new Date().toISOString() };
-      if (inbound) payload.type = INBOUND_OF[d.type] || d.type;
-      else if (d.type === 'ligacao_realizada' && ['nao_atendida', 'ocupado', 'caixa_postal', 'numero_invalido', 'interrompida'].includes(d.result)) payload.type = 'tentativa_sem_atendimento';
-      await post('/api/atividades', payload);
-      toast(quick ? 'Atividade registrada.' : 'Tentativa registrada: o lead está em Tentativa de contato.');
+      if (d.no_contact) {
+        await patch(`/api/tarefas/${task.id}`, { action: 'concluir', notes: d.notes });
+        if (d.next_kind) await post('/api/tarefas', { contact_id: contact.id, opportunity_id: task.opportunity_id, title: opts('proxima_acao').find((o) => o.value === d.next_kind)?.label, due_at: d.return_at || tomorrow10(), type: 'retorno' });
+      } else {
+        await patch(`/api/tarefas/${task.id}`, { action: 'concluir', activity: contactActivityPayload(d) });
+      }
+      toast(d.next_kind ? 'Tarefa concluída e próxima ação criada.' : 'Tarefa concluída.');
       return true;
     },
   });
@@ -517,11 +549,11 @@ export async function qualifyDialog(oppId) {
   });
 }
 
-/** Áreas da proposta (a de consórcio usa o plano/administradora; as outras, descrição e valor). */
+/** Áreas da proposta, na ordem do pop-up "Gerar proposta". */
 export const PROPOSAL_AREAS = [
   { value: 'consorcio', label: 'Consórcio', icon: 'consorcio' },
-  { value: 'seguros', label: 'Seguros', icon: 'seguros' },
   { value: 'planejamento', label: 'Planejamento financeiro', icon: 'planejamento' },
+  { value: 'seguros', label: 'Seguros', icon: 'seguros' },
   { value: 'investimentos', label: 'Investimentos', icon: 'investimentos' },
 ];
 
@@ -575,30 +607,41 @@ export function contempladaForm(opp) {
   });
 }
 
-/** Escolha da área e abre o formulário certo (consórcio: simulador ou registro com plano). */
-export async function newProposalFlow(opp, contact, { simulations = [] } = {}) {
+/**
+ * Gerar proposta: Consórcio abre o simulador com o nome e o contato do cliente; Planejamento só com o diagnóstico
+ * financeiro concluído (escolha do modelo); Seguros e Investimentos ainda não estão liberados.
+ */
+export async function newProposalFlow(opp, contact) {
+  const cid = contact?.id || opp.contact_id;
+  let diag = null;
+  try {
+    diag = (await get(`/api/cadastros/${cid}/diagnostico`)).current;
+  } catch {
+    diag = null;
+  }
+  const planOk = diag?.status === 'concluido';
+  const avail = {
+    consorcio: [true, 'Abre o simulador com o nome e o contato do cliente.'],
+    planejamento: [planOk, planOk ? 'Diagnóstico concluído: escolha o modelo.' : 'Liberado depois de concluir o diagnóstico financeiro do lead.'],
+    seguros: [false, 'Em breve.'],
+    investimentos: [false, 'Em breve.'],
+  };
   const area = await modal({
     title: `Gerar proposta — ${opp.contact_name || contact?.name || opp.code}`,
-    body: html`<p class="hint">A proposta aparece em Propostas e libera a etapa Negociação. Escolha a área:</p>
-      <div class="area-pick">${PROPOSAL_AREAS.map((x) => html`<button type="button" class="area-card area-${x.value}" data-area="${x.value}">${icon(x.icon, 22)}<strong>${x.label}</strong></button>`)}</div>`,
+    body: html`<p class="hint">A proposta aparece em Propostas e libera a etapa Negociação.</p>
+      <div class="area-pick">${PROPOSAL_AREAS.map((x) => html`<button type="button" class="area-card area-${x.value}" data-area="${x.value}" ${avail[x.value][0] ? '' : raw('disabled aria-disabled="true"')}>${icon(x.icon, 22)}<strong>${x.label}</strong><small>${avail[x.value][1]}</small></button>`)}</div>
+      <p class="small muted">Carta contemplada? <button type="button" class="link-btn" data-area="contemplada">Registrar carta contemplada</button></p>`,
     onMount(form, close) {
-      on(form, 'click', '[data-area]', (e, b) => close(b.dataset.area));
+      on(form, 'click', '[data-area]:not([disabled])', (e, b) => close(b.dataset.area));
     },
   });
   if (!area) return null;
-  if (area !== 'consorcio') return areaProposalForm(opp, area);
-  const how = await modal({
-    title: 'Proposta de consórcio',
-    body: html`<div class="area-pick"><button type="button" class="area-card" data-how="sim">${icon('simulador', 22)}<strong>Gerar pelo simulador</strong><small>Abre o simulador com o cliente; a proposta volta para o CRM.</small></button>
-      <button type="button" class="area-card" data-how="form">${icon('propostas', 22)}<strong>Registrar proposta</strong><small>Plano, administradora, crédito e condições.</small></button>
-      <button type="button" class="area-card" data-how="contemplada">${icon('confirmar', 22)}<strong>Carta contemplada</strong><small>Crédito disponível, entrada (ágio) e parcelas restantes.</small></button></div>`,
-    onMount(form, close) {
-      on(form, 'click', '[data-how]', (e, b) => close(b.dataset.how));
-    },
-  });
-  if (how === 'sim') return openProposalSimulator(contact || { id: opp.contact_id, name: opp.contact_name }, opp.id);
-  if (how === 'form') return proposalForm(opp, simulations);
-  if (how === 'contemplada') return contempladaForm(opp);
+  if (area === 'consorcio') return openProposalSimulator(contact || { id: opp.contact_id, name: opp.contact_name }, opp.id);
+  if (area === 'contemplada') return contempladaForm(opp);
+  if (area === 'planejamento' && planOk) {
+    const { diagProposalDialog } = await import('./leadtabs.js');
+    return diagProposalDialog(diag);
+  }
   return null;
 }
 
@@ -617,7 +660,7 @@ async function proposalNeededDialog(opp) {
   } catch {
     /* segue com o que tem */
   }
-  return newProposalFlow(full, null, { simulations: full.simulations || [] });
+  return newProposalFlow(full, null);
 }
 
 /* ------------------------- Simulador ------------------------- */

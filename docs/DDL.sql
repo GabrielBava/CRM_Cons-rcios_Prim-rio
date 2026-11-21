@@ -1,7 +1,7 @@
 -- =====================================================================
 -- Vero Consórcios (ERP/CRM) — DDL completo do banco (SQLite)
 -- Gerado por scripts/ddl.js a partir de um banco novo, com todas as migrações aplicadas.
--- 83 tabelas · 230 chaves estrangeiras declaradas · 64 índices
+-- 83 tabelas · 232 chaves estrangeiras declaradas · 64 índices
 --
 -- Observações
 --  - O SQLite verifica as chaves estrangeiras na gravação (PRAGMA foreign_keys = ON), não na criação:
@@ -466,6 +466,9 @@ CREATE TABLE IF NOT EXISTS opportunities (
   updated_by INTEGER REFERENCES users(id),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
+  triage TEXT,
+  triaged_at TEXT,
+  triaged_by INTEGER REFERENCES users(id),
   objective_type TEXT,
   product_type TEXT,
   credit_purpose TEXT,
@@ -574,6 +577,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   updated_at TEXT NOT NULL,
   completed_at TEXT,
   completed_by INTEGER REFERENCES users(id),
+  source_activity_id INTEGER REFERENCES activities(id),
   priority TEXT NOT NULL DEFAULT 'normal',
   proposal_id INTEGER REFERENCES proposals(id),
   cadence_step TEXT,
@@ -810,6 +814,7 @@ CREATE TABLE IF NOT EXISTS proposals (
   remaining_installments INTEGER,
   diagnostic_id INTEGER REFERENCES diagnostics(id),
   pricing TEXT,
+  plan_model TEXT,
   area TEXT NOT NULL DEFAULT 'consorcio',
   description TEXT
 );

@@ -2,10 +2,10 @@
 // Modelo de painel de lead (estreito, uma coluna): cabeçalho com Ganho/Perdido em destaque, contato (copiar o número,
 // WhatsApp da empresa, cadastro completo) e abas em carrossel: IA Vero, Detalhes, Atividades, Qualificação, Agendas
 // (R1/R2), Produtos, Diagnóstico, Tarefas, Notas, Propostas e Histórico. A etapa muda só no pipeline.
-import { get, post, patch } from './api.js';
+import { get, post, patch, put } from './api.js';
 import { html, raw, render, $, $$, on, state, badge, relBadge, optLabel, K, fmtMoney, fmtDate, fmtDateTime, relTime, can, empty, optoutBadge, modal, field, opts, userItems, toast, toastError, formData, avatar, hasModule, fmtMoneyInput, parseMoneyBR } from './ui.js';
-import { activityForm, taskForm, lostDialog, completeTask, cancelTask, opportunityForm, proposalDetail, attemptDialog, qualifyDialog, newProposalFlow, CONTACT_CHANNELS, PROPOSAL_AREAS } from './forms.js';
-import { qualProgress, qualBlocks, tempBadge } from './qualification.js';
+import { activityForm, taskForm, lostDialog, completeTask, cancelTask, completeTaskWithActivity, opportunityForm, proposalDetail, attemptDialog, qualifyDialog, newProposalFlow, CONTACT_CHANNELS, PROPOSAL_AREAS } from './forms.js';
+import { qualProgress, qualBlocks, tempBadge, triageFields, triageOf, triageMissing, triageText } from './qualification.js';
 import { scheduleMeetingDialog, meetingLinks, meetingCard, bindMeetingCards, R1_STAGES, MEETING_LABEL } from './meeting.js';
 import { linkBadge, readTime, optionButtons, bindOptionButtons } from './proposal-actions.js';
 import { renderAiTab, renderProductsTab, renderDiagTab, renderFilesTab, renderReferralsTab, bindLeadTabs, copyText } from './leadtabs.js';
@@ -271,14 +271,21 @@ export async function openLeadDrawer(contactId, { oppId = null, onChange = null,
           <span class="ah-what"><strong>${K('activity_types', a.type)}</strong>${a.result ? html`<small>${optLabel('resultado_ligacao', a.result)}</small>` : ''}</span>
           <span class="ah-when">${fmtDateTime(a.occurred_at)}<small>${a.user_name || 'Sistema'}</small></span></li>`)}</ul>` : empty('Nenhuma atividade neste filtro.')}`);
     } else if (tab === 'qualificacao') {
-      render(box, o ? html`<div class="section-head"><h4>Qualificação</h4>${edit ? html`<span class="inline-actions"><button type="button" class="btn small" data-dact="edit-qual">Editar</button>${o.qualified_at ? '' : html`<button type="button" class="btn small primary" data-dact="conclude-qual">Concluir qualificação</button>`}</span>` : ''}</div>
-        ${o.qualified_at ? html`<div class="alert ok-alert small">Qualificação concluída em ${fmtDateTime(o.qualified_at)}${o.qualified_by_name ? ` por ${o.qualified_by_name}` : ''}.</div>` : html`<p class="hint">Preencha o que levantou com o cliente e clique em <strong>Concluir qualificação</strong>: o lead passa de Tentativa de contato para Qualificação.</p>`}
+      const tri = triageOf(o || {});
+      const miss = triageMissing(tri);
+      render(box, o ? html`<section class="triage-block ${o.triaged_at ? 'done' : ''}">
+          <div class="section-head"><h4>Triagem <small class="muted">obrigatória para agendar a R1</small></h4>${o.triaged_at ? (tri.interesse === 'sim' ? badge('Concluída', 'ok') : badge('Sem interesse', 'danger')) : badge(`${6 - miss.length} de 6`, 'warn')}</div>
+          ${edit ? html`<form class="grid triage-form" data-triage>${triageFields(tri)}<div class="inline-actions full"><button type="submit" class="btn small primary">Salvar triagem</button>${o.triaged_at ? html`<small class="muted">concluída em ${fmtDateTime(o.triaged_at)}</small>` : html`<small class="muted">Com as 6 respostas (e interesse), o lead vai para Qualificação e a R1 é liberada.</small>`}</div></form>`
+            : html`<dl class="triage-view">${triageText(tri).map((x) => html`<dt>${x.label}</dt><dd>${x.value || '—'}</dd>`)}</dl>`}
+        </section>
+        <div class="section-head"><h4>Qualificação <small class="muted">opcional · vai completando ao longo da conversa</small></h4>${edit ? html`<button type="button" class="btn small" data-dact="edit-qual">Editar</button>` : ''}</div>
+        ${o.qualified_at ? html`<div class="alert ok-alert small">Qualificação concluída em ${fmtDateTime(o.qualified_at)}${o.qualified_by_name ? ` por ${o.qualified_by_name}` : ''}.</div>` : ''}
         ${qualProgress(o, c.kind)}${qualBlocks(o, c.kind)}` : empty('Sem negócio para qualificar.'));
     } else if (tab === 'tarefas') {
-      const tasks = c.tasks.filter((t) => t.type !== 'reuniao' || t.status === 'pendente');
+      const tasks = c.tasks.filter((t) => t.type !== 'reuniao' || t.status === 'pendente').sort((x, y) => (x.due_at < y.due_at ? 1 : -1));
       render(box, html`<div class="section-head"><h4>Tarefas</h4>${w ? html`<span class="inline-actions"><button type="button" class="btn small primary" data-dact="task">Nova tarefa</button><a class="btn small ghost" href="#/agenda" data-close>Agenda de tarefas</a></span>` : ''}</div>
-        ${tasks.length ? html`<ul class="feed tasks">${tasks.map((t) => html`<li class="${t.status === 'pendente' && new Date(t.due_at) < new Date() ? 'overdue' : ''} st-${t.status}"><div><strong>${t.title}</strong> <small class="muted">${K('task_types', t.type)} · ${fmtDateTime(t.due_at)}${t.status === 'pendente' ? ` · ${relTime(t.due_at)}` : ''}</small></div>
-          ${t.status === 'pendente' && w && t.type !== 'reuniao' ? html`<div class="inline-actions"><button type="button" class="btn small primary" data-task-done="${t.id}">Concluir</button><button type="button" class="btn small ghost" data-task-cancel="${t.id}">Cancelar</button></div>` : t.status !== 'pendente' ? html`<small>${t.status === 'concluida' ? 'Concluída' : 'Cancelada'}${t.completed_at ? ` em ${fmtDate(t.completed_at)}` : ''}</small>` : html`<small class="muted">Reunião: use a aba Agendas.</small>`}</li>`)}</ul>` : empty('Nenhuma tarefa.')}`);
+        ${tasks.length ? html`<ul class="feed tasks">${tasks.map((t) => html`<li class="${t.status === 'pendente' && new Date(t.due_at) < new Date() ? 'overdue' : ''} st-${t.status}"><div><strong>${t.title}</strong> ${t.source_activity_id ? html`<span class="badge info" title="Criada pela próxima ação de uma atividade: conclua registrando o que foi feito">Aproximação</span>` : ''} <small class="muted">${K('task_types', t.type)} · ${fmtDateTime(t.due_at)}${t.status === 'pendente' ? ` · ${relTime(t.due_at)}` : ''}</small></div>
+          ${t.status === 'pendente' && w && t.type !== 'reuniao' ? html`<div class="inline-actions"><button type="button" class="btn small primary" data-task-done="${t.id}">Concluir</button>${t.source_activity_id ? '' : html`<button type="button" class="btn small ghost" data-task-cancel="${t.id}">Cancelar</button>`}</div>` : t.status !== 'pendente' ? html`<small>${t.status === 'concluida' ? 'Concluída' : 'Cancelada'}${t.completed_at ? ` em ${fmtDate(t.completed_at)}` : ''}</small>` : html`<small class="muted">Reunião: use a aba Agendas.</small>`}</li>`)}</ul>` : empty('Nenhuma tarefa.')}`);
     } else if (tab === 'agendas') {
       const ms = c.tasks.filter((t) => t.type === 'reuniao').sort((x, y) => (x.due_at < y.due_at ? 1 : -1));
       const m = o?.meetings || {};
@@ -300,7 +307,7 @@ export async function openLeadDrawer(contactId, { oppId = null, onChange = null,
       const props = c.proposals;
       const areaL = (a) => PROPOSAL_AREAS.find((x) => x.value === (a || 'consorcio'))?.label || 'Consórcio';
       render(box, html`<div class="section-head"><h4>Propostas do lead</h4>${edit ? html`<button type="button" class="btn small primary" data-dact="prop-new">Gerar proposta</button>` : ''}</div>
-        <p class="hint">Consórcio, seguros, planejamento financeiro ou investimentos. A proposta gerada libera a etapa Negociação.</p>
+        <p class="hint">Consórcio (pelo simulador) e planejamento financeiro (depois do diagnóstico concluído). A proposta gerada libera a etapa Negociação.</p>
         ${props.length ? html`<ul class="feed">${props.map((p) => html`<li><div><a href="#" data-prop="${p.id}"><strong>${p.code}</strong></a> <span class="chip-sm area area-${p.area || 'consorcio'}">${areaL(p.area)}</span> · ${fmtMoney(p.credit_value)}${p.term_months ? ` · ${p.term_months} meses` : ''} ${badge(K('proposal_status', p.status), `st-${p.status}`)}</div>${p.description ? html`<p class="small">${p.description}</p>` : ''}<small class="muted">${fmtDateTime(p.created_at)}${p.product_name ? ` · ${p.product_name}` : ''}${p.consortium_kind === 'contemplada' ? ' · carta contemplada' : ''}${p.refusal_reason ? ` · recusa: ${optLabel('motivo_recusa_proposta', p.refusal_reason)}` : ''}</small>
           ${p.status !== 'substituida' ? html`<div class="prop-feed-link">${linkBadge(p)}${p.link_views ? html`<small class="muted">${p.link_views} acesso(s) · ${readTime(p.link_seconds)}</small>` : ''}${optionButtons(p)}</div>` : ''}</li>`)}</ul>` : empty('Nenhuma proposta gerada para este lead.')}`);
     } else if (tab === 'historico') {
@@ -384,7 +391,20 @@ export async function openLeadDrawer(contactId, { oppId = null, onChange = null,
   });
   on(el, 'click', '[data-task-done]', async (e, b) => {
     const t = current.contact.tasks.find((x) => x.id === Number(b.dataset.taskDone));
-    if (t && (await completeTask(t))) changed();
+    if (t && (await (t.type === 'reuniao' ? completeTask(t) : completeTaskWithActivity(t, current.contact)))) changed();
+  });
+  on(el, 'submit', '[data-triage]', async (e, f) => {
+    e.preventDefault();
+    const { opp } = current;
+    if (!opp) return;
+    const d = formData(f);
+    try {
+      const r = await put(`/api/oportunidades/${opp.id}/triagem`, d);
+      toast(r.done ? (r.moved ? 'Triagem concluída: o lead está em Qualificação e a R1 está liberada.' : r.triage.interesse === 'sim' ? 'Triagem concluída: a R1 está liberada.' : 'Triagem concluída: sem interesse (a R1 não é liberada).') : `Triagem salva. Faltam: ${r.missing.join(', ')}.`);
+      changed();
+    } catch (ex) {
+      toastError(ex);
+    }
   });
   on(el, 'click', '[data-task-cancel]', async (e, b) => {
     const t = current.contact.tasks.find((x) => x.id === Number(b.dataset.taskCancel));
@@ -438,7 +458,7 @@ export async function openLeadDrawer(contactId, { oppId = null, onChange = null,
     else if (act === 'owner') ok = await changeOwnerDialog(c, opp && ['aberta', 'pausada'].includes(opp.status) ? opp : null);
     else if (act === 'edit-qual') ok = await opportunityForm(c, opp);
     else if (act === 'conclude-qual') ok = await qualifyDialog(opp.id);
-    else if (act === 'prop-new') ok = await newProposalFlow({ ...opp, contact_name: c.name }, c, { simulations: opp.simulations || [] });
+    else if (act === 'prop-new') ok = await newProposalFlow({ ...opp, contact_name: c.name }, c);
     if (ok) changed();
   });
   // Edição do bloco "Negócio" no próprio painel

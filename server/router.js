@@ -346,6 +346,7 @@ function createRouter(db) {
   add('POST', '/api/oportunidades/:id/validar-estrategia', ({ user, params }) => (opps.validateStrategy(db, user, params.id), { ok: true }));
   // Qualificação vinda de fora (ex.: transcrição da R1): completa só os campos vazios
   add('POST', '/api/oportunidades/:id/qualificacao', ({ user, params, body }) => opps.fillQualification(db, user, params.id, body));
+  add('PUT', '/api/oportunidades/:id/triagem', ({ user, params, body }) => opps.saveTriage(db, user, params.id, body));
   add('POST', '/api/oportunidades/:id/concluir-qualificacao', ({ user, params, body }) => opps.concludeQualification(db, user, params.id, body));
   add('GET', '/api/funil/perdidos', ({ user, query }) => opps.lostBoard(db, user, query));
 
@@ -365,6 +366,7 @@ function createRouter(db) {
   add('GET', '/api/diagnosticos/:id/dados', ({ user, params }) => diagnostics.forTool(db, user, params.id));
   add('PUT', '/api/diagnosticos/:id/dados', ({ user, params, body }) => diagnostics.saveFromTool(db, user, params.id, body), { bodyLimit: 5e6 });
   add('POST', '/api/diagnosticos/:id/concluir', ({ user, params }) => diagnostics.conclude(db, user, params.id));
+  add('POST', '/api/diagnosticos/:id/proposta', ({ user, params, body }) => diagnostics.generateProposal(db, user, params.id, body));
   add('GET', '/api/ia/status', ({ user }) => assistant.status(db, user));
   add('PUT', '/api/ia/config', ({ user, body }) => assistant.saveConfig(db, user, body));
   add('GET', '/api/ia/leads/:id', ({ user, params }) => assistant.insights(db, user, params.id));

@@ -830,6 +830,7 @@ function proposalSimulatorLink(db, user, contactId, data = {}) {
 }
 
 module.exports = {
+  normalizeCep,
   lookupCep, saveAddress, deleteAddress, savePartner, uploadAttachment, listAttachments, getAttachment, reviewAttachment,
   saleChecklist, createClientLink, revokeClientLinks, activeClientLink, clientLinkHistory, publicForm, publicSubmit, publicUpload, publicCep, publicComplete, insertAttachment,
   publicVerify, resolveVerified,

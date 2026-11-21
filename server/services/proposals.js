@@ -827,6 +827,10 @@ function pagePayload(db, p) {
     },
     strategy: lbl('estrategia', p.strategy), description: p.description || null,
     pricing: p.pricing ? JSON.parse(p.pricing) : null,
+    plan_model: area === 'planejamento' ? (PLAN_MODELS[p.plan_model] ? p.plan_model : 'implementacao') : null,
+    plan_model_label: area === 'planejamento' ? PLAN_MODELS[p.plan_model || 'implementacao']?.label : null,
+    plan_model_resumo: area === 'planejamento' ? PLAN_MODELS[p.plan_model || 'implementacao']?.resumo : null,
+    plan_model_entregas: area === 'planejamento' ? PLAN_MODELS[p.plan_model || 'implementacao']?.entregas : null,
     consultant: u ? { name: u.name, job_title: u.job_title || null, whatsapp: u.whatsapp || u.phone || null, email: u.email || null } : null,
     has_pdf: !!p.pdf_attachment_id,
     advanced_at: p.link_advanced_at || null,
@@ -931,37 +935,67 @@ function cleanPricing(x) {
   return out.valor > 0 ? out : null;
 }
 
+/** Modelos da proposta do planejamento financeiro. */
+const PLAN_MODELS = {
+  implementacao: {
+    label: 'Modelo de implementação',
+    resumo: 'Planejamento financeiro completo com implementação assistida: diagnóstico, plano de ação e a execução das recomendações junto com você.',
+    entregas: ['Diagnóstico financeiro completo (fluxo de caixa, patrimônio, dívidas e proteção)', 'Estrela Vero: a nota da sua saúde financeira em cada pilar', 'Plano de ação estruturado, com prioridades e prazos',
+      'Implementação assistida das recomendações (reserva, proteção, investimentos e crédito)', 'Reuniões de apresentação e de revisão do plano', 'Painel de acompanhamento incluso'],
+  },
+  plataforma: {
+    label: 'Plataforma Exclusiva',
+    resumo: 'Acesso à plataforma exclusiva da Vero: o painel do seu plano, metas e objetivos, acompanhamento contínuo e revisões periódicas com o planejador.',
+    entregas: ['Plataforma exclusiva com o painel do seu plano financeiro', 'Acompanhamento das metas, objetivos e da Estrela Vero', 'Revisões periódicas com o seu planejador',
+      'Atualização do diagnóstico e do plano de ação', 'Alertas e próximos passos no momento certo', 'Atendimento do planejador para as suas decisões'],
+  },
+};
+
 /**
- * Diagnóstico concluído e precificado: a proposta do planejamento aparece em Propostas (gerada, pronta para enviar).
- * Enquanto não for enviada, acompanha a precificação do diagnóstico; depois de enviada, mudanças pedem nova versão.
+ * Proposta do planejamento a partir do diagnóstico concluído (botão "Gerar proposta" da aba Diagnóstico ou o ícone
+ * Planejamento em "Gerar proposta"). O especialista escolhe o modelo; o valor vem da precificação do diagnóstico
+ * (pode ser ajustado). Enquanto não for enviada, gerar de novo atualiza a mesma proposta do modelo.
  */
-function fromDiagnostic(db, user, diag, pricing) {
-  const pr = cleanPricing(pricing);
-  if (!pr) return null;
+function fromDiagnostic(db, user, diag, pricing, opts = {}) {
+  const model = PLAN_MODELS[opts.model] ? opts.model : null;
+  if (!model) throw badRequest('Escolha o modelo da proposta: Modelo de implementação ou Plataforma Exclusiva.');
+  const base = cleanPricing(pricing) || {};
+  const valor = opts.valor !== undefined && opts.valor !== null && opts.valor !== '' ? toNumber(opts.valor) : base.valor;
+  if (!(valor > 0)) throw badRequest('Informe o valor da proposta (o diagnóstico ainda não tem a precificação).');
+  const pr = { ...base, valor };
+  if (base.valor && valor !== base.valor) {
+    // Valor ajustado: à vista e cartão acompanham a proporção da precificação do diagnóstico
+    const f = valor / base.valor;
+    for (const k of ['pix_total', 'cartao_total', 'parcela']) if (pr[k]) pr[k] = Math.round(pr[k] * f * 100) / 100;
+  }
   const opp = (diag.opportunity_id && db.prepare("SELECT * FROM opportunities WHERE id = ? AND status = 'aberta'").get(diag.opportunity_id)) ||
     db.prepare("SELECT * FROM opportunities WHERE contact_id = ? AND status = 'aberta' ORDER BY updated_at DESC LIMIT 1").get(diag.contact_id);
-  if (!opp) return null;
+  if (!opp) throw badRequest('O cliente precisa ter um negócio aberto para receber a proposta.');
+  loadOpp(db, user, opp.id, { write: true });
   const money = (v) => Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   const desc = [
-    'Vero Planejamento: diagnóstico financeiro completo, plano de ação e acompanhamento.',
+    `Vero Planejamento · ${PLAN_MODELS[model].label}: ${PLAN_MODELS[model].resumo}`,
     pr.pix_total ? `À vista (Pix ou boleto): ${money(pr.pix_total)}.` : null,
     pr.cartao_total ? `Cartão: ${pr.parcelas > 1 ? `${pr.parcelas}× ${money(pr.parcela)} (total ${money(pr.cartao_total)})` : money(pr.cartao_total)}.` : null,
   ].filter(Boolean).join(' ');
-  const existing = db.prepare("SELECT * FROM proposals WHERE diagnostic_id = ? AND status <> 'substituida' ORDER BY id DESC LIMIT 1").get(diag.id);
+  const existing = db.prepare("SELECT * FROM proposals WHERE diagnostic_id = ? AND COALESCE(plan_model, 'implementacao') = ? AND status <> 'substituida' ORDER BY id DESC LIMIT 1").get(diag.id, model);
   const now = nowIso();
-  if (existing) {
-    if (existing.status === 'rascunho' && (existing.credit_value !== pr.valor || existing.pricing !== JSON.stringify(pr))) {
+  return tx(db, () => {
+    if (existing && existing.status === 'rascunho') {
       db.prepare('UPDATE proposals SET credit_value = ?, pricing = ?, description = ?, updated_at = ? WHERE id = ?').run(pr.valor, JSON.stringify(pr), desc, now, existing.id);
-      audit(db, user, 'proposal', existing.id, 'precificacao_atualizada', { valor: pr.valor }, existing.contact_id);
+      audit(db, user, 'proposal', existing.id, 'precificacao_atualizada', { valor: pr.valor, modelo: model }, existing.contact_id);
+      return { id: existing.id, code: existing.code, updated: true };
     }
-    return { id: existing.id, code: existing.code, updated: true };
-  }
-  const valid = new Date(Date.now() + (pr.validade_dias || 7) * 86400000).toISOString().slice(0, 10);
-  const res = insertProposal(db, user, { area: 'planejamento', contact_id: opp.contact_id, opportunity_id: opp.id, status: 'rascunho', owner_id: opp.owner_id, credit_value: pr.valor, description: desc, diagnostic_id: diag.id, pricing: JSON.stringify(pr), valid_until: valid, generated_at: now });
-  insertActivity(db, { contact_id: opp.contact_id, opportunity_id: opp.id, type: 'proposta', notes: `Proposta ${res.code} do planejamento financeiro gerada a partir do diagnóstico: ${money(pr.valor)}.`, user_id: user.id, ref_type: 'proposal', ref_id: res.id });
-  audit(db, user, 'proposal', res.id, 'criada', { code: res.code, origem: 'diagnostico' }, opp.contact_id);
-  if (opp.owner_id) require('./notifications').notify(db, opp.owner_id, { kind: 'proposta', title: `Proposta ${res.code} do planejamento pronta`, body: `Diagnóstico concluído e precificado (${money(pr.valor)}). Envie o link da proposta ao cliente.`, link: `#/propostas?id=${res.id}` });
-  return res;
+    if (existing && ACTIVE.includes(existing.status)) throw badRequest(`A proposta ${existing.code} deste modelo já foi enviada ao cliente. Para mudar, crie uma nova versão em Propostas.`);
+    const valid = new Date(Date.now() + (pr.validade_dias || 7) * 86400000).toISOString().slice(0, 10);
+    const res = insertProposal(db, user, { area: 'planejamento', plan_model: model, contact_id: opp.contact_id, opportunity_id: opp.id, status: 'rascunho', owner_id: opp.owner_id, credit_value: pr.valor, description: desc, diagnostic_id: diag.id, pricing: JSON.stringify(pr), valid_until: valid, generated_at: now });
+    insertActivity(db, { contact_id: opp.contact_id, opportunity_id: opp.id, type: 'proposta', notes: `Proposta ${res.code} do planejamento (${PLAN_MODELS[model].label}) gerada a partir do diagnóstico: ${money(pr.valor)}.`, user_id: user.id, ref_type: 'proposal', ref_id: res.id });
+    audit(db, user, 'proposal', res.id, 'criada', { code: res.code, origem: 'diagnostico', modelo: model }, opp.contact_id);
+    // R2 já realizada: a proposta gerada leva o negócio para Negociação (como as demais propostas)
+    const k = db.prepare("SELECT s.key FROM opportunities o JOIN pipeline_stages s ON s.id = o.stage_id WHERE o.id = ? AND o.status = 'aberta'").get(opp.id)?.key;
+    if (k === 'r2') res.moved = require('./opportunities').advanceTo(db, user, opp.id, 'negociacao', ['r2'], `Proposta ${res.code} gerada`) || false;
+    return res;
+  });
 }
 
-module.exports = { ensureLink, linkDetails, publicOpen, publicEvent, publicAdvance, whatsappTemplates, fromDiagnostic, cleanPricing, pagePayload, stepCol, createProposal, updateProposal, changeStatus, newVersion, expireSweep, getProposal, listProposals, registerResponse, startProposal, receiveFromSimulator, panorama, proposalScore, startCadence };
+module.exports = { PLAN_MODELS, ensureLink, linkDetails, publicOpen, publicEvent, publicAdvance, whatsappTemplates, fromDiagnostic, cleanPricing, pagePayload, stepCol, createProposal, updateProposal, changeStatus, newVersion, expireSweep, getProposal, listProposals, registerResponse, startProposal, receiveFromSimulator, panorama, proposalScore, startCadence };

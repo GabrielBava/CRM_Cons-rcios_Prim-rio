@@ -18,7 +18,8 @@ export function hms(s) {
 const pctTxt = (v) => (v == null ? '—' : `${Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%`);
 const money0 = (v) => (v == null ? '—' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }));
 const days = (v) => (v == null ? '—' : `${Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} dia${v === 1 ? '' : 's'}`);
-const stageTime = (s) => (s == null ? '—' : s >= 86400 ? `${(s / 86400).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} d` : `${Math.max(1, Math.round(s / 3600))} h`);
+/** Horas com uma casa decimal (TMA e TME são mostrados em horas). */
+const hours = (s) => (s == null ? '—' : `${(s / 3600).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} h`);
 
 /**
  * Indicadores: [chave, rótulo, formato, menor é melhor?, definição]. formato: n (quantidade), money, pct, hms, days.
@@ -33,15 +34,17 @@ const GROUPS = [
   ]],
   ['Agenda', [
     ['taxa_agendamento', 'Taxa de agendamento', 'pct', false, 'R1 agendadas no período ÷ leads recebidos no período.'],
-    ['taxa_no_show', 'Taxa de no-show', 'pct', true, 'Reuniões (R1 e R2) do período em que o cliente não compareceu ÷ (realizadas + no-show).'],
+    ['taxa_no_show_r1', 'No-show R1', 'pct', true, 'R1 do período em que o cliente não compareceu ÷ (R1 realizadas + no-show).'],
+    ['taxa_no_show_r2', 'No-show R2', 'pct', true, 'R2 do período em que o cliente não compareceu ÷ (R2 realizadas + no-show).'],
     ['taxa_realizacao_r1', 'Taxa de realização R1', 'pct', false, 'R1 realizadas ÷ R1 com horário no período (sem as canceladas).'],
     ['taxa_realizacao_r2', 'Taxa de realização R2', 'pct', false, 'R2 realizadas ÷ R2 com horário no período (sem as canceladas).'],
   ]],
   ['Atendimento', [
     ['tmr', 'TMR · 1º atendimento', 'hms', true, 'Tempo médio entre receber o lead e o primeiro contato.'],
-    ['tma', 'TMA · atendimento', 'hms', true, 'Duração média das ligações e conversas registradas com duração.'],
-    ['tme', 'TME · espera na fila', 'hms', true, 'Tempo médio do lead na fila de distribuição até ser atribuído.'],
+    ['tma', 'TMA · tempo na etapa', 'hours', true, 'Tempo médio que os negócios ficam em cada etapa do funil, em horas (saídas de etapa no período). O tempo de cada etapa está no funil abaixo.'],
+    ['tme', 'TME · sem atividade', 'hours', true, 'Tempo médio que os leads em andamento estão sem nenhuma atividade registrada (desde a última atividade de contato ou, sem atividade, desde a atribuição), no fim do período.'],
     ['ligacoes', 'Ligações realizadas', 'n', false, 'Ligações feitas no período (atendidas e sem atendimento).'],
+    ['duracao_ligacoes', 'Duração média das ligações', 'hms', false, 'Duração média das ligações e conversas registradas com duração.'],
   ]],
   ['Tarefas', [
     ['tarefas_criadas', 'Tarefas criadas', 'n', false, 'Tarefas criadas no período para o time.'],
@@ -49,10 +52,11 @@ const GROUPS = [
     ['tarefas_atraso', 'Tarefas em atraso', 'n', true, 'Tarefas pendentes com prazo vencido agora.', true],
   ]],
   ['Resultado', [
+    ['taxa_conversao', 'Taxa de conversão', 'pct', false, 'Negócios ganhos no período ÷ leads recebidos no período.'],
     ['win_rate', 'Win rate', 'pct', false, 'Negócios ganhos ÷ (ganhos + perdidos) fechados no período.'],
     ['ciclo_dias', 'Ciclo médio de vendas', 'days', true, 'Dias entre a criação e o ganho do negócio (ganhos no período).'],
-    ['receita', 'Receita gerada', 'money', false, 'Crédito vendido no período (vendas não canceladas).'],
-    ['ticket_medio', 'Ticket médio', 'money', false, 'Receita gerada ÷ número de vendas.'],
+    ['receita', 'Receita gerada', 'money', false, 'Crédito vendido no período (vendas não canceladas) + valor de planejamento vendido (propostas de planejamento aceitas no período).'],
+    ['ticket_medio', 'Ticket médio', 'money', false, 'Receita gerada ÷ número de vendas (crédito e planejamento).'],
   ]],
 ];
 
@@ -60,6 +64,7 @@ function fmt(v, f) {
   if (f === 'money') return money0(v);
   if (f === 'pct') return pctTxt(v);
   if (f === 'hms') return hms(v);
+  if (f === 'hours') return hours(v);
   if (f === 'days') return days(v);
   return fmtNum(v ?? 0);
 }
@@ -90,7 +95,7 @@ function kpiGroups(d) {
   const p = d.prev;
   return html`<div class="bi-groups">${GROUPS.map(([title, items], gi) => html`<section class="bi-group g-${gi}"><h3>${title}</h3><div class="bi-tiles">
     ${items.map(([key, label, f, lower, def, snapshot]) => html`<div class="bi-tile" title="${def}"><span class="bi-label">${label}</span><strong class="bi-value">${fmt(k[key], f)}</strong>
-      <span class="bi-sub">${snapshot ? html`<span class="muted">agora</span>` : delta(k[key], p[key], f, lower)}${key === 'ligacoes' ? html` <span class="muted">${fmtNum(k.ligacoes_atendidas)} atendidas</span>` : ''}${key === 'win_rate' ? html` <span class="muted">${k.ganhos} ganhos · ${k.perdidos} perdidos</span>` : ''}${key === 'taxa_realizacao_r1' ? html` <span class="muted">${k.r1_realizadas}/${k.r1_previstas}</span>` : ''}${key === 'taxa_realizacao_r2' ? html` <span class="muted">${k.r2_realizadas}/${k.r2_previstas}</span>` : ''}</span></div>`)}
+      <span class="bi-sub">${snapshot ? html`<span class="muted">agora</span>` : delta(k[key], p[key], f, lower)}${key === 'ligacoes' ? html` <span class="muted">${fmtNum(k.ligacoes_atendidas)} atendidas</span>` : ''}${key === 'win_rate' ? html` <span class="muted">${k.ganhos} ganhos · ${k.perdidos} perdidos</span>` : ''}${key === 'taxa_realizacao_r1' ? html` <span class="muted">${k.r1_realizadas}/${k.r1_previstas}</span>` : ''}${key === 'taxa_realizacao_r2' ? html` <span class="muted">${k.r2_realizadas}/${k.r2_previstas}</span>` : ''}${key === 'taxa_no_show_r1' ? html` <span class="muted">${k.r1_no_show} de ${k.r1_realizadas + k.r1_no_show}</span>` : ''}${key === 'taxa_no_show_r2' ? html` <span class="muted">${k.r2_no_show} de ${k.r2_realizadas + k.r2_no_show}</span>` : ''}${key === 'taxa_conversao' ? html` <span class="muted">${k.ganhos} de ${k.leads_recebidos}</span>` : ''}${key === 'receita' && k.receita_planejamento ? html` <span class="muted">${money0(k.receita_planejamento)} planej.</span>` : ''}</span></div>`)}
   </div></section>`)}</div>`;
 }
 
@@ -120,7 +125,7 @@ function funnelChart(fun) {
     <svg class="bf-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="bfg" x1="0" x2="1" y1="0" y2="0">
       <stop offset="0" stop-color="var(--primary-bright)" stop-opacity=".9"/><stop offset="1" stop-color="var(--primary)" stop-opacity=".55"/></linearGradient></defs>
       <path d="${path}" fill="url(#bfg)"/>${fun.slice(1).map((s, i) => html`<line x1="${(i + 1) * w}" x2="${(i + 1) * w}" y1="0" y2="${H}" class="bf-sep"/>`)}</svg>
-    <div class="bf-cols bf-foot">${fun.map((s) => html`<div class="bf-col"><span>${s.conv_etapa == null ? 'entrada' : html`<b>${pctTxt(s.conv_etapa)}</b> da etapa anterior`}</span><span class="muted">tempo médio ${stageTime(s.tempo_medio)}</span></div>`)}</div>
+    <div class="bf-cols bf-foot">${fun.map((s) => html`<div class="bf-col"><span>${s.conv_etapa == null ? 'entrada' : html`<b>${pctTxt(s.conv_etapa)}</b> da etapa anterior`}</span><span class="muted">TMA ${hours(s.tempo_medio)}</span></div>`)}</div>
   </div>`;
 }
 
@@ -132,15 +137,17 @@ function lostChart(lost) {
 
 function peopleTable(rows) {
   if (!rows.length) return empty('Nenhum colaborador neste filtro.');
-  return html`<div class="table-wrap"><table class="data bi-table"><thead><tr><th>#</th><th>Colaborador</th><th class="num">Leads</th><th class="num">Agend.</th><th class="num">Realiz. R1</th><th class="num">No-show</th><th class="num">TMR</th><th class="num">Ligações</th><th class="num">Atraso</th><th class="num">Propostas</th><th class="num">Win rate</th><th class="num">Receita</th><th class="num">Ticket</th></tr></thead>
+  return html`<div class="table-wrap"><table class="data bi-table"><thead><tr><th>#</th><th>Colaborador</th><th class="num">Leads</th><th class="num">Agend.</th><th class="num">Realiz. R1</th><th class="num">No-show R1</th><th class="num">No-show R2</th><th class="num">TMR</th><th class="num">TME</th><th class="num">Ligações</th><th class="num">Atraso</th><th class="num">Propostas</th><th class="num">Win rate</th><th class="num">Receita</th><th class="num">Ticket</th></tr></thead>
     <tbody>${rows.map((r, i) => html`<tr>
       <td data-label="#"><span class="bi-rank r${i + 1}">${i + 1}</span></td>
       <td data-label="Colaborador"><span class="sq-person">${avatar({ name: r.nome, photo: r.foto }, 28)} <span><strong>${r.nome}</strong>${r.cargo ? html`<br><small class="muted">${r.cargo}</small>` : ''}</span></span></td>
       <td data-label="Leads" class="num">${fmtNum(r.leads_recebidos)}</td>
       <td data-label="Agendamento" class="num">${pctTxt(r.taxa_agendamento)}</td>
       <td data-label="Realização R1" class="num">${pctTxt(r.taxa_realizacao_r1)}</td>
-      <td data-label="No-show" class="num ${r.taxa_no_show > 20 ? 'danger-text' : ''}">${pctTxt(r.taxa_no_show)}</td>
+      <td data-label="No-show R1" class="num ${r.taxa_no_show_r1 > 20 ? 'danger-text' : ''}">${pctTxt(r.taxa_no_show_r1)}</td>
+      <td data-label="No-show R2" class="num ${r.taxa_no_show_r2 > 20 ? 'danger-text' : ''}">${pctTxt(r.taxa_no_show_r2)}</td>
       <td data-label="TMR" class="num">${hms(r.tmr)}</td>
+      <td data-label="TME (sem atividade)" class="num">${hours(r.tme)}</td>
       <td data-label="Ligações" class="num">${fmtNum(r.ligacoes)}</td>
       <td data-label="Tarefas em atraso" class="num ${r.tarefas_atraso ? 'danger-text' : ''}">${fmtNum(r.tarefas_atraso)}</td>
       <td data-label="Propostas" class="num">${fmtNum(r.propostas)}</td>
@@ -164,7 +171,7 @@ const DEFINITIONS = () => html`<details class="card bi-defs"><summary>Como cada 
 export async function show(view, tabs) {
   const admin = state.user.role === 'admin';
   render(view, html`<div class="page wide bi-page">${tabs('bi')}
-    <div class="page-head"><div><h1>BI do time</h1><p class="muted">Performance da squad com os dados do CRM: entrada, agenda, atendimento, tarefas, funil e resultado.</p></div><div class="bi-period" data-bi-period></div></div>
+    <div class="page-head"><div><h1>BI</h1><p class="muted">Performance da squad com os dados do CRM: entrada, agenda, atendimento, tarefas, funil e resultado.</p></div><div class="bi-period" data-bi-period></div></div>
     <form class="bi-filters" data-f>
       <span class="view-toggle bi-seg" role="group" aria-label="Período">${PERIODS.map(([v, l]) => html`<button type="button" data-periodo="${v}" class="${saved.periodo === v ? 'active' : ''}">${l}</button>`)}</span>
       <span class="bi-dates" ${saved.periodo === 'data' ? '' : 'hidden'}><label>De <input type="date" name="de" value="${saved.de || ''}"></label><label>Até <input type="date" name="ate" value="${saved.ate || ''}"></label></span>

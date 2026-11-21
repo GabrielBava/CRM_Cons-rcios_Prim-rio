@@ -250,6 +250,78 @@ function productForm(ctx, area, p = null) {
 
 /* ------------------------- Diagnóstico financeiro ------------------------- */
 
+const STATUS_TONE = { critico: 'danger', atencao: 'warn', ok: 'ok', 'sem-dados': '' };
+const STATUS_TXT = { critico: 'Crítico', atencao: 'Atenção', ok: 'Saudável', 'sem-dados': 'Sem dados' };
+const PRIO_TONE = { Alta: 'danger', Média: 'warn', Baixa: '' };
+
+/** Estrela Vero: radar dos pilares (0–100%) com a Nota Vero no centro. */
+function starChart(est) {
+  const ps = est.pilares;
+  const n = ps.length;
+  if (n < 3) return '';
+  const C = 110;
+  const R = 82;
+  const pt = (i, f) => {
+    const a = ((-90 + (360 / n) * i) * Math.PI) / 180;
+    return [C + Math.cos(a) * R * f, C + Math.sin(a) * R * f];
+  };
+  const ring = (f) => ps.map((_, i) => pt(i, f).join(',')).join(' ');
+  const poly = ps.map((p, i) => pt(i, Math.max(0.04, (p.pct || 0) / 100)).join(',')).join(' ');
+  return html`<svg class="star-svg" viewBox="0 0 220 220" role="img" aria-label="Estrela Vero: ${ps.map((p) => `${p.nome} ${p.pct ?? '—'}%`).join(', ')}">
+    ${[0.25, 0.5, 0.75, 1].map((f) => html`<polygon points="${ring(f)}" class="star-ring"/>`)}
+    ${ps.map((_, i) => html`<line x1="${C}" y1="${C}" x2="${pt(i, 1)[0]}" y2="${pt(i, 1)[1]}" class="star-axis"/>`)}
+    <polygon points="${poly}" class="star-area"/>
+    ${ps.map((p, i) => html`<circle cx="${pt(i, Math.max(0.04, (p.pct || 0) / 100))[0]}" cy="${pt(i, Math.max(0.04, (p.pct || 0) / 100))[1]}" r="3" class="star-dot st-${p.status || 'sem-dados'}"/>`)}
+    <text x="${C}" y="${C + 6}" text-anchor="middle" class="star-nota">${est.nota ?? '—'}</text></svg>`;
+}
+
+/** Resumo do diagnóstico concluído: Nota Vero e Estrela Vero, Bússola financeira e Matriz de oportunidades. */
+function diagResult(res) {
+  if (!res) return html`<div class="alert info small">A Nota Vero, a Estrela Vero, a Matriz de oportunidades e a Bússola aparecem aqui assim que o diagnóstico tiver os dados (renda, despesas, proteção e investimentos) preenchidos na ferramenta.</div>`;
+  const est = res.estrela;
+  const bu = res.bussola;
+  const mat = res.matriz || [];
+  return html`<div class="diag-result">
+    ${est ? html`<section class="dr-card dr-star"><h5>Nota Vero e Estrela Vero</h5>
+      <div class="dr-star-body">${starChart(est)}<ul class="dr-pillars">${est.pilares.map((p) => html`<li><span>${p.nome}</span><span class="dr-bar"><i style="width:${p.pct || 0}%" class="st-${p.status || 'sem-dados'}"></i></span><strong>${p.pct ?? '—'}${p.pct != null ? '%' : ''}</strong></li>`)}</ul></div>
+      <p class="small muted">Nota Vero <strong>${est.nota ?? '—'}</strong> de 100: soma dos ${est.pilares.length} pilares da Estrela Vero.</p></section>` : ''}
+    ${bu ? html`<section class="dr-card dr-compass"><h5>Bússola financeira</h5>
+      <div class="dr-compass-head"><div class="dr-score"><strong>${bu.nota}</strong><small>/ 100 · saúde financeira</small></div>
+        ${bu.norte ? html`<div class="dr-norte"><span class="muted small">A agulha aponta para</span><strong>${bu.norte.nome}</strong>${bu.norte.acao ? html`<small>${icon('avancar', 13)} ${bu.norte.acao}</small>` : ''}</div>` : ''}</div>
+      <ul class="dr-dims">${bu.dimensoes.map((d) => html`<li class="${bu.norte?.id === d.id ? 'norte' : ''}"><div><strong>${d.nome}</strong>${d.resumo ? html`<small class="muted">${d.resumo}</small>` : ''}</div><span>${d.status === 'sem-dados' ? '—' : d.nota}</span>${badge(STATUS_TXT[d.status] || '—', STATUS_TONE[d.status] || '')}</li>`)}</ul></section>` : ''}
+    ${mat.length ? html`<section class="dr-card dr-matrix"><h5>Matriz de oportunidades <small class="muted">${mat.length} por potencial</small></h5>
+      <ol class="dr-ops">${mat.slice(0, 6).map((o) => html`<li><div class="dr-op-top"><strong>${o.titulo}</strong>${o.prioridade ? badge(o.prioridade, PRIO_TONE[o.prioridade] ?? '') : ''}</div>
+        <div class="dr-op-tags">${o.area ? html`<span class="chip-sm">${o.area}</span>` : ''}${o.produto ? html`<span class="chip-sm">${o.produto}</span>` : ''}${o.prazo ? html`<small class="muted">prazo ${String(o.prazo).toLowerCase()}</small>` : ''}</div>
+        ${o.detalhe ? html`<small>${o.detalhe}</small>` : ''}</li>`)}</ol>${mat.length > 6 ? html`<p class="small muted">+${mat.length - 6} na matriz completa do diagnóstico.</p>` : ''}</section>` : ''}
+  </div>`;
+}
+
+const PLAN_MODELS = [
+  ['implementacao', 'Modelo de implementação', 'Diagnóstico, plano de ação e implementação assistida das recomendações junto com o cliente.'],
+  ['plataforma', 'Plataforma Exclusiva', 'Acesso à plataforma exclusiva Vero: painel do plano, metas, acompanhamento contínuo e revisões periódicas.'],
+];
+
+/** Gerar proposta do planejamento a partir do diagnóstico concluído: escolha do modelo e valor (da precificação). */
+export async function diagProposalDialog(diag, onDone) {
+  const pr = diag.pricing || {};
+  const made = new Map((diag.proposals || []).map((p) => [p.plan_model || 'implementacao', p]));
+  const r = await modal({
+    title: 'Gerar proposta do planejamento',
+    wide: true,
+    body: html`<p class="hint">A proposta usa a precificação do diagnóstico${pr.valor ? html` (<strong>${fmtMoney(pr.valor)}</strong>${pr.pix_total ? `, à vista ${fmtMoney(pr.pix_total)}` : ''}${pr.cartao_total ? `, cartão ${pr.parcelas}× ${fmtMoney(pr.parcela)}` : ''})` : ' (ainda sem precificação: informe o valor)'}. Escolha o modelo:</p>
+      <div class="model-pick">${PLAN_MODELS.map(([v, l, t], i) => html`<label class="model-card"><input type="radio" name="model" value="${v}" ${i === 0 ? 'checked' : ''}><span><strong>${l}</strong><small>${t}</small>${made.has(v) ? html`<small class="muted">Já gerada: ${made.get(v).code} (${String(made.get(v).status) === 'rascunho' ? 'gerar de novo atualiza' : 'enviada'})</small>` : ''}</span></label>`)}</div>
+      ${field({ name: 'valor', label: 'Valor da proposta (R$)', type: 'money', value: pr.valor ?? '', help: 'Ajuste se necessário: à vista e cartão acompanham a proporção da precificação.' })}`,
+    submitLabel: 'Gerar proposta',
+    async onSubmit(d) {
+      const res = await post(`/api/diagnosticos/${diag.id}/proposta`, { model: d.model, valor: d.valor });
+      toast(res.updated ? `Proposta ${res.code} atualizada.` : `Proposta ${res.code} gerada: envie o link ao cliente em Propostas.`);
+      return res;
+    },
+  });
+  if (r) onDone?.(r);
+  return r;
+}
+
 export async function renderDiagTab(box, ctx) {
   const { contact: c } = ctx;
   render(box, html`<p class="muted small">Carregando o diagnóstico…</p>`);
@@ -262,33 +334,35 @@ export async function renderDiagTab(box, ctx) {
   }
   if (!box.isConnected) return;
   const d = r.current;
+  ctx.diag = d;
   const s = d?.summary;
   const w = can.write();
+  const done = d?.status === 'concluido';
   render(box, html`
     <section class="diag-head">
       <div class="diag-logo"><img src="img/vero-planejamento-dark.png" alt="Vero Planejamento" class="logo-dark"><img src="img/vero-planejamento-light.png" alt="Vero Planejamento" class="logo-light"></div>
       <div class="grow"><h4>Diagnóstico financeiro</h4>
-        <p class="small">${!d ? 'Ainda não realizado para este lead.' : d.status === 'concluido' ? html`${badge('Concluído', 'ok')} em ${fmtDate(d.completed_at || d.updated_at)} · ${d.created_by_name || ''}` : html`${badge('Em andamento', 'warn')} · atualizado ${relTime(d.updated_at)}`}</p></div>
+        <p class="small">${!d ? 'Ainda não realizado para este lead.' : done ? html`${badge('Concluído', 'ok')} em ${fmtDate(d.completed_at || d.updated_at)} · ${d.created_by_name || ''}` : html`${badge('Em andamento', 'warn')} · atualizado ${relTime(d.updated_at)}`}</p></div>
     </section>
     <div class="inline-actions diag-actions">
       ${!d && w ? html`<button type="button" class="btn primary" data-diag-start>${icon('diagnostico', 15)} Realizar diagnóstico financeiro</button>` : ''}
-      ${d && d.status !== 'concluido' && w ? html`<button type="button" class="btn primary" data-diag-open="${d.id}">${icon('externo', 14)} Continuar diagnóstico</button><button type="button" class="btn" data-diag-done="${d.id}">Marcar como concluído</button>` : ''}
-      ${d && d.status === 'concluido' ? html`<button type="button" class="btn primary" data-diag-open="${d.id}">${icon('externo', 14)} Abrir diagnóstico completo</button>${w ? html`<button type="button" class="btn ghost" data-diag-start="new">Novo diagnóstico</button>` : ''}` : ''}
+      ${d && !done && w ? html`<button type="button" class="btn primary" data-diag-open="${d.id}">${icon('externo', 14)} Continuar diagnóstico</button><button type="button" class="btn" data-diag-done="${d.id}">Marcar como concluído</button>` : ''}
+      ${done ? html`${w && hasModule('propostas') ? html`<button type="button" class="btn primary" data-diag-proposal>${icon('propostas', 15)} Gerar proposta</button>` : ''}<button type="button" class="btn" data-diag-open="${d.id}">${icon('externo', 14)} Abrir diagnóstico completo</button>` : ''}
     </div>
-    <p class="hint">O diagnóstico abre em uma nova guia, já com o nome, e-mail, telefone, nascimento e profissão do cliente. Tudo o que for preenchido volta para o CRM automaticamente (abre de qualquer computador).</p>
+    ${d?.proposals?.length ? html`<p class="small">Propostas do planejamento: ${d.proposals.map((p) => html`<a href="#/propostas?id=${p.id}" class="chip-sm">${p.code} · ${p.plan_model === 'plataforma' ? 'Plataforma Exclusiva' : 'Implementação'} · ${fmtMoney(p.credit_value)}</a> `)}</p>` : ''}
+    ${!d ? html`<p class="hint">O diagnóstico abre em uma nova guia, já com o nome, e-mail, telefone, nascimento e profissão do cliente. Tudo o que for preenchido volta para o CRM automaticamente.</p>` : ''}
+    ${done ? diagResult(s?.resultado) : s?.resultado ? diagResult(s.resultado) : ''}
     ${s ? html`<section class="diag-sum">
       <div class="diag-kpis"><div><strong>${s.objetivos.length}</strong><small>objetivos</small></div><div><strong>${s.plano.length}</strong><small>ações no plano</small></div><div><strong>${s.patrimonio_itens}</strong><small>bens</small></div><div><strong>${s.dividas_itens}</strong><small>dívidas</small></div><div><strong>${s.dependentes}</strong><small>dependentes</small></div></div>
       ${s.objetivos.length ? html`<h5>Objetivos</h5><ul class="small">${s.objetivos.map((x) => html`<li>${x}</li>`)}</ul>` : ''}
       ${s.plano.length ? html`<h5>Plano de ação</h5><ol class="small">${s.plano.map((x) => html`<li>${x.titulo}${x.prazo ? html` <small class="muted">· ${x.prazo}</small>` : ''}</li>`)}</ol>` : ''}
-      <div class="diag-future"><div><strong>Estrela Vero</strong><small>${s.estrela ? Object.entries(s.estrela).map(([k, v]) => `${k}: ${v}`).join(' · ') : 'Notas por pilar: entram aqui quando o diagnóstico enviar a estrela.'}</small></div><div><strong>Matriz de oportunidades</strong><small>Cruza o diagnóstico com Produtos (consórcio, seguros, investimentos, planejamento).</small></div></div>
-    </section>` : ''}
-    ${r.history.length ? html`<h5>Diagnósticos anteriores</h5><ul class="feed">${r.history.map((h) => html`<li><div>${badge(h.status === 'concluido' ? 'Concluído' : 'Em andamento', h.status === 'concluido' ? 'ok' : 'warn')} <small class="muted">${fmtDateTime(h.created_at)} · ${h.created_by_name || ''}</small> <button type="button" class="link-btn" data-diag-open="${h.id}">abrir</button></div></li>`)}</ul>` : ''}`);
+    </section>` : ''}`);
 }
 
 /** Abre a ferramenta do diagnóstico para o cliente (retoma o que está em andamento ou cria um novo). */
-export function startDiagnostic(contactId, { opportunityId = null, fresh = false } = {}) {
+export function startDiagnostic(contactId, { opportunityId = null } = {}) {
   return openInNewTab(async () => {
-    const r = await post('/api/diagnosticos', { contact_id: contactId, opportunity_id: opportunityId, new: fresh });
+    const r = await post('/api/diagnosticos', { contact_id: contactId, opportunity_id: opportunityId });
     return absUrl(r.url);
   });
 }
@@ -366,7 +440,7 @@ function fileForm(ctx, a = null) {
 /* ------------------------- Recomendações (indicações) ------------------------- */
 
 const MIN_REF_ROWS = 5;
-const REF_FIELDS = [['name', 'Nome'], ['phone', 'Telefone'], ['whatsapp', 'WhatsApp'], ['email', 'E-mail'], ['recommended_by', 'Quem recomendou']];
+const REF_FIELDS = [['name', 'Nome'], ['phone', 'Telefone'], ['whatsapp', 'WhatsApp'], ['email', 'E-mail']];
 
 /** Recomendações do lead: 5 linhas (ou mais), salvas automaticamente; "+" cadastra a indicação no pipeline. */
 export async function renderReferralsTab(box, ctx) {
@@ -386,7 +460,7 @@ export async function renderReferralsTab(box, ctx) {
   while (rows.length < MIN_REF_ROWS) rows.push({});
   const filled = r.rows.filter((x) => x.name).length;
   render(box, html`
-    <section class="ref-head"><div><strong>Recomendações deste lead</strong><small>Preencha as indicações com nome, telefone, WhatsApp, e-mail e quem recomendou. Clique em <b>+</b> para cadastrar a indicação no seu pipeline.</small></div>
+    <section class="ref-head"><div><strong>Recomendações deste lead</strong><small>Nome, telefone, WhatsApp e e-mail de quem este lead indicou. O <b>+</b> cadastra a indicação no seu pipeline, já ligada a este lead.</small></div>
       <span class="ref-count"><strong>${filled}</strong> / ${rows.length}</span></section>
     ${r.imported ? html`<div class="alert ok-alert small">${r.imported} indicação(ões) trazida(s) do diagnóstico financeiro.</div>` : ''}
     <form class="ref-list" data-ref-form>${rows.map((x, i) => refRow(x, i, w))}</form>
@@ -584,9 +658,13 @@ export function bindLeadTabs(el, getCtx, { redraw }) {
       toastError(ex);
     }
   });
-  on(el, 'click', '[data-diag-start]', async (e, b) => {
+  on(el, 'click', '[data-diag-start]', async () => {
     const ctx = getCtx();
-    if (await startDiagnostic(ctx.contact.id, { opportunityId: ctx.opp?.id, fresh: b.dataset.diagStart === 'new' })) setTimeout(() => redraw('diagnostico'), 800);
+    if (await startDiagnostic(ctx.contact.id, { opportunityId: ctx.opp?.id })) setTimeout(() => redraw('diagnostico'), 800);
+  });
+  on(el, 'click', '[data-diag-proposal]', async () => {
+    const ctx = getCtx();
+    if (ctx.diag && (await diagProposalDialog(ctx.diag))) redraw('diagnostico');
   });
   on(el, 'click', '[data-diag-open]', (e, b) => openDiagnostic(Number(b.dataset.diagOpen)));
   on(el, 'click', '[data-diag-done]', async (e, b) => {

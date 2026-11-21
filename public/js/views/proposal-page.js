@@ -42,14 +42,15 @@ function values(d) {
   const v = d.values;
   if (d.area === 'planejamento') {
     const pr = d.pricing || {};
-    return html`<section class="card pp-sec" data-sec="investimento"><h2>O investimento no seu planejamento</h2>
+    return html`${d.plan_model_label ? html`<section class="card pp-sec pp-model" data-sec="resumo"><span class="pp-kicker">Modelo</span><h2>${d.plan_model_label}</h2><p>${d.plan_model_resumo}</p></section>` : ''}
+      <section class="card pp-sec" data-sec="investimento"><h2>O investimento no seu planejamento</h2>
       <div class="pp-price">
         ${pr.pix_total ? html`<div class="pp-price-card ${pr.condicao === 'pix' ? 'on' : ''}"><span>Pix ou boleto · à vista</span><strong>${fmtMoney(pr.pix_total)}</strong>${pr.valor > pr.pix_total ? html`<small>economia de ${fmtMoney(pr.valor - pr.pix_total)}</small>` : ''}</div>` : ''}
         ${pr.cartao_total ? html`<div class="pp-price-card ${pr.condicao === 'cartao' ? 'on' : ''}"><span>Cartão de crédito</span><strong>${pr.parcelas > 1 ? `${pr.parcelas}× ${fmtMoney(pr.parcela)}` : fmtMoney(pr.cartao_total)}</strong><small>total ${fmtMoney(pr.cartao_total)}</small></div>` : ''}
         ${!pr.pix_total && !pr.cartao_total ? html`<div class="pp-price-card on"><span>Valor do planejamento</span><strong>${fmtMoney(v.credit_value)}</strong></div>` : ''}
       </div>
       ${pr.observacoes ? html`<p class="muted">${pr.observacoes}</p>` : ''}</section>
-      <section class="card pp-sec" data-sec="entrega"><h2>O que vamos entregar</h2><ul class="pp-list">${DELIVER.map((x) => html`<li>${icon('confirmar', 16)} ${x}</li>`)}</ul></section>`;
+      <section class="card pp-sec" data-sec="entrega"><h2>O que vamos entregar</h2><ul class="pp-list">${(d.plan_model_entregas || DELIVER).map((x) => html`<li>${icon('confirmar', 16)} ${x}</li>`)}</ul></section>`;
   }
   if (d.area !== 'consorcio') {
     return html`<section class="card pp-sec" data-sec="valores"><h2>O que está na proposta</h2>

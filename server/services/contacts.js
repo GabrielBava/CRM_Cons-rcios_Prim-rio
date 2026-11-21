@@ -287,6 +287,8 @@ function createContact(db, user, data, opts = {}) {
   if (!opts.system) assertAssignable(db, user, ownerId);
   input.owner_id = ownerId;
 
+  // CEP opcional do cadastro rápido: vira o endereço principal (só o CEP; o resto é completado depois)
+  const cep = clean(data.cep) ? require('./record').normalizeCep(data.cep) : null;
   const dups = opts.skipDuplicateCheck ? [] : checkDuplicates(db, user, data);
   if (dups.length && !data.confirm_duplicate) {
     throw conflict('Possível duplicidade: já existe cadastro com os mesmos dados de contato.', { duplicates: dups });
@@ -359,11 +361,16 @@ function createContact(db, user, data, opts = {}) {
         contact_id: id,
         owner_id: ownerId,
         stage_id: tentativa?.id,
+        business_area: clean(data.business_area) || undefined,
         product_id: data.product_id,
         credit_category: data.credit_category,
         credit_value: data.credit_value,
         title: data.opportunity_title,
       });
+    }
+    if (cep) {
+      const t = now;
+      db.prepare("INSERT INTO addresses (contact_id, type, cep, is_primary, created_at, updated_at) VALUES (?, 'residencial', ?, 1, ?, ?)").run(id, cep, t, t);
     }
     return { id, code, duplicates_confirmed: dups };
   });

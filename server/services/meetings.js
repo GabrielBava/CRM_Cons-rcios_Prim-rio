@@ -212,7 +212,7 @@ function r1Title(db, contactName, kind = 'r1') {
 function r1Context(db, user, contactId, req, kind = 'r1') {
   kind = kindOf(kind);
   const c = loadContact(db, user, contactId);
-  const opps = db.prepare("SELECT o.id, o.code, o.status, s.name AS stage_name, s.key AS stage_key, s.position AS stage_position, o.business_area, o.objective_type, o.credit_value, o.urgency, o.credit_category, o.qualified_at FROM opportunities o JOIN pipeline_stages s ON s.id = o.stage_id WHERE o.contact_id = ? AND o.status IN ('aberta','pausada') ORDER BY o.id DESC").all(c.id);
+  const opps = db.prepare("SELECT o.id, o.code, o.status, s.name AS stage_name, s.key AS stage_key, s.position AS stage_position, o.business_area, o.objective_type, o.credit_value, o.urgency, o.credit_category, o.qualified_at, o.triage, o.triaged_at, (SELECT 1 FROM tasks t WHERE t.contact_id = o.contact_id AND t.type = 'reuniao' AND COALESCE(t.meeting_kind, 'r1') = 'r1' LIMIT 1) AS had_r1 FROM opportunities o JOIN pipeline_stages s ON s.id = o.stage_id WHERE o.contact_id = ? AND o.status IN ('aberta','pausada') ORDER BY o.id DESC").all(c.id);
   const pending = db.prepare("SELECT id, title, due_at, ends_at, meeting_url FROM tasks WHERE contact_id = ? AND type = 'reuniao' AND status = 'pendente' AND COALESCE(meeting_kind, 'r1') = ? ORDER BY due_at").all(c.id, kind);
   const g = googleStatus(db, user, req);
   const { CONTACT_TYPES } = require('./pipeline');
@@ -257,6 +257,16 @@ async function scheduleR1(db, user, data, req) {
   let oppId = data.opportunity_id ? Number(data.opportunity_id) : null;
   if (oppId && !db.prepare('SELECT 1 FROM opportunities WHERE id = ? AND contact_id = ?').get(oppId, c.id)) throw badRequest('Negócio inválido para este cliente.');
   if (!oppId) oppId = db.prepare("SELECT id FROM opportunities WHERE contact_id = ? AND status = 'aberta' ORDER BY id DESC LIMIT 1").get(c.id)?.id ?? null;
+  // A primeira R1 exige a triagem concluída com interesse (negócios já qualificados ou com R1 anterior seguem como antes)
+  if (kind === 'r1' && oppId) {
+    const o = db.prepare('SELECT triage, triaged_at, qualified_at FROM opportunities WHERE id = ?').get(oppId);
+    const hadR1 = db.prepare("SELECT 1 FROM tasks WHERE contact_id = ? AND type = 'reuniao' AND COALESCE(meeting_kind, 'r1') = 'r1' LIMIT 1").get(c.id);
+    if (!o.qualified_at && !hadR1) {
+      const tri = require('./opportunities').triageOf(o);
+      if (!o.triaged_at) throw badRequest('Faça a triagem do lead (6 perguntas na aba Qualificação) antes de agendar a R1.');
+      if (tri.interesse !== 'sim') throw badRequest('Na triagem, o lead não demonstrou interesse: a R1 não pode ser agendada. Marque como perdido ou nutrição.');
+    }
+  }
   const tasks = require('./tasks');
   const company = getSetting(db, 'company_name') || 'Vero Consórcios';
   const description = [

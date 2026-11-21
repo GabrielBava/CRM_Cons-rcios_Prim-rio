@@ -95,7 +95,7 @@ function squadDashboard(db, user, q = {}) {
   const ph = ids.map(() => '?').join(',');
   const d0 = from.slice(0, 10);
   const d1 = to.slice(0, 10);
-  const blank = () => ({ leads: 0, tentativas: 0, qualificados: 0, r1_agendadas: 0, r1_realizadas: 0, r1_no_show: 0, r1_remarcadas: 0, r2_agendadas: 0, r2_realizadas: 0, propostas: 0, vendas: 0, credito: 0, perdidos: 0, ganhos_r1: 0, abertos: 0, sla_estourado: 0 });
+  const blank = () => ({ leads: 0, tentativas: 0, qualificados: 0, r1_agendadas: 0, r1_realizadas: 0, r1_no_show: 0, r1_remarcadas: 0, r2_agendadas: 0, r2_realizadas: 0, r2_no_show: 0, propostas: 0, vendas: 0, credito: 0, perdidos: 0, ganhos_r1: 0, abertos: 0, sla_estourado: 0 });
   const m = Object.fromEntries(ids.map((id) => [id, blank()]));
   const put = (rows, key, val = 'n') => rows.forEach((r) => m[r.id] && (m[r.id][key] = r[val] || 0));
   put(db.prepare(`SELECT owner_id AS id, COUNT(*) AS n FROM contacts WHERE merged_into_id IS NULL AND COALESCE(assigned_at, created_at) BETWEEN ? AND ? AND owner_id IN (${ph}) GROUP BY owner_id`).all(from, to, ...ids), 'leads');
@@ -109,6 +109,7 @@ function squadDashboard(db, user, q = {}) {
   meet('r1', 'rescheduled_from IS NOT NULL', 'r1_remarcadas');
   meet('r2', 'rescheduled_from IS NULL', 'r2_agendadas');
   meet('r2', "status = 'concluida' AND outcome = 'realizada'", 'r2_realizadas', 'completed_at');
+  meet('r2', "outcome = 'nao_compareceu'", 'r2_no_show', 'completed_at');
   put(db.prepare(`SELECT owner_id AS id, COUNT(*) AS n FROM proposals WHERE version = 1 AND created_at BETWEEN ? AND ? AND owner_id IN (${ph}) GROUP BY owner_id`).all(from, to, ...ids), 'propostas');
   for (const r of db.prepare(`SELECT seller_id AS id, COUNT(*) AS n, SUM(credit_value) AS v FROM sales WHERE status != 'cancelada' AND substr(COALESCE(payment_date, confirmed_at, created_at), 1, 10) BETWEEN ? AND ? AND seller_id IN (${ph}) GROUP BY seller_id`).all(d0, d1, ...ids)) {
     if (m[r.id]) {
@@ -130,6 +131,8 @@ function squadDashboard(db, user, q = {}) {
     ...x,
     tx_lead_r1: pct(x.r1_agendadas, x.leads),
     tx_comparecimento: pct(x.r1_realizadas, x.r1_realizadas + x.r1_no_show),
+    tx_no_show_r1: pct(x.r1_no_show, x.r1_realizadas + x.r1_no_show),
+    tx_no_show_r2: pct(x.r2_no_show, x.r2_realizadas + x.r2_no_show),
     tx_r1_venda: pct(x.vendas, x.r1_realizadas),
   });
   const rows = people.map((u) => rate({ id: u.id, nome: u.name, foto: u.photo, cargo: u.job_title, ...m[u.id] }));

@@ -160,13 +160,25 @@ function buildDiagnostic(src) {
  * e precificado vira a proposta do planejamento em Propostas.
  */
 function exposePricing(code) {
-  if (code.includes('window.__veroPrecificacao')) return code;
-  const m = code.match(/function ([\w$]+)\(e\)\{const t=e\.especificacao\?\?\{\}/);
-  if (!m) {
-    console.warn('  aviso: cálculo da precificação não encontrado (a proposta do planejamento não será gerada sozinha).');
-    return code;
+  let out = code;
+  if (!out.includes('window.__veroPrecificacao')) {
+    const m = out.match(/function ([\w$]+)\(e\)\{const t=e\.especificacao\?\?\{\}/);
+    if (m) out = `${out}\n;window.__veroPrecificacao=${m[1]};`;
+    else console.warn('  aviso: cálculo da precificação não encontrado (a proposta do planejamento não terá o valor do diagnóstico).');
   }
-  return `${code}\n;window.__veroPrecificacao=${m[1]};`;
+  // Resultado do diagnóstico para o painel do lead: Estrela Vero (8 pilares e Nota Vero), Matriz e Bússola
+  if (!out.includes('window.__veroResultado')) {
+    const find = (re, nome) => {
+      const m = out.match(re);
+      if (!m) console.warn(`  aviso: ${nome} não encontrada (não aparece no painel do lead).`);
+      return m ? m[1] : 'null';
+    };
+    const estrela = find(/\{titulo:"Estrela Vero",ok:([\w$]+)\(e\)\.temDados/, 'Estrela Vero');
+    const matriz = find(/o=([\w$]+)\(e\),i=[\w$]+\(o\),l=[\w$]+\(o\),c=[\w$]+\(e\.plano\)/, 'Matriz de oportunidades');
+    const bussola = find(/,a=([\w$]+)\(e\),n=[\w$]+\(e\.plano\),o=[\w$]+=>t\("plano"/, 'Bússola financeira');
+    out = `${out}\n;window.__veroResultado={estrela:${estrela},matriz:${matriz},bussola:${bussola}};`;
+  }
+  return out;
 }
 
 /** Reaplica a ponte e a precificação no diagnóstico já gerado (sem precisar do arquivo original). */
@@ -200,7 +212,38 @@ const BRIDGE = `(function () {
     el.src = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
     document.head.appendChild(el);
   }
-  if (!id || !/^\\d+$/.test(id)) return boot();
+  // Trava: o diagnóstico só é gerado pelo CRM (painel do lead › Diagnóstico); a ferramenta não abre avulsa
+  function locked(text, demo) {
+    var show = function () {
+      var w = document.createElement('div');
+      w.style.cssText = 'position:fixed;inset:0;z-index:2147483001;display:grid;place-items:center;background:#0D1B2A;color:#E0E1DD;font:15px/1.5 Poppins,system-ui,sans-serif;padding:24px';
+      var b = document.createElement('div');
+      b.style.cssText = 'max-width:460px;text-align:center;background:#1B263B;border:1px solid #415A77;border-radius:18px;padding:28px';
+      var h = document.createElement('h1');
+      h.textContent = 'Diagnóstico financeiro';
+      h.style.cssText = 'font-size:20px;margin:0 0 10px';
+      var p = document.createElement('p');
+      p.textContent = text;
+      p.style.margin = '0 0 18px';
+      var a = document.createElement('a');
+      a.href = '/#/funil';
+      a.textContent = 'Ir para o CRM';
+      a.style.cssText = 'display:inline-block;background:#E0E1DD;color:#0D1B2A;border-radius:999px;padding:10px 20px;font-weight:600;text-decoration:none';
+      b.appendChild(h); b.appendChild(p); b.appendChild(a);
+      if (demo) {
+        var d = document.createElement('button');
+        d.type = 'button';
+        d.textContent = 'Ver em modo de demonstração (não salva no CRM)';
+        d.style.cssText = 'display:block;margin:14px auto 0;background:none;border:0;color:#A9B8CB;text-decoration:underline;cursor:pointer;font:inherit;font-size:13px';
+        d.onclick = function () { w.remove(); boot(); };
+        b.appendChild(d);
+      }
+      w.appendChild(b);
+      document.body.appendChild(w);
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', show); else show();
+  }
+  if (!id || !/^\\d+$/.test(id)) return locked('O diagnóstico é gerado pelo CRM: abra o lead e use a aba Diagnóstico. Assim ele fica ligado ao cliente e salvo no CRM.', false);
   var H = { 'X-Requested-With': 'crm' };
   var api = function (url, opt) {
     opt = opt || {};
@@ -251,7 +294,7 @@ const BRIDGE = `(function () {
     }
     if (!cfg.empresa) cfg.empresa = 'Vero Planejamento';
     write(CFG, cfg);
-    if (!location.hash || location.hash === '#/' || location.hash === '#/clientes') location.hash = '#/clientes/' + cid;
+    if (!location.hash || location.hash === '#/' || location.hash === '#/clientes' || location.hash.indexOf('#/clientes/' + cid) !== 0) location.hash = '#/clientes/' + cid;
     // Precificação do plano (valor, à vista e cartão), quando o consultor já passou pela tela de investimento
     function pricing(c) {
       try {
@@ -264,6 +307,38 @@ const BRIDGE = `(function () {
         return { valor: o.valor, pix_total: o.pix && o.pix.total, cartao_total: o.cartao && o.cartao.total, parcelas: o.cartao && o.cartao.parcelas, parcela: o.cartao && o.cartao.parcela, condicao: o.condicao || null, observacoes: o.observacoes || null };
       } catch (e) { return null; }
     }
+    // Resultado do diagnóstico para o painel do lead: Nota Vero e Estrela Vero, Matriz de oportunidades e Bússola
+    function results(c) {
+      try {
+        var R = window.__veroResultado;
+        if (!R || !c) return null;
+        var out = {};
+        var est = typeof R.estrela === 'function' ? R.estrela(c) : null;
+        if (est && est.temDados) out.estrela = { nota: est.maximo ? Math.round((est.total / est.maximo) * 100) : null, pilares: est.pilares.map(function (p) { return { id: p.id, nome: p.curto || p.nome, pct: p.pct, status: p.status }; }) };
+        var mat = typeof R.matriz === 'function' ? R.matriz(c) : null;
+        if (mat && mat.length) out.matriz = mat.slice(0, 12).map(function (o) { return { titulo: o.titulo, area: o.area, produto: o.produto, prioridade: o.prioridade, prazo: o.prazo, potencial: o.potencial, detalhe: String(o.oferta || o.detalhe || '').slice(0, 280) }; });
+        var bu = typeof R.bussola === 'function' ? R.bussola(c) : null;
+        if (bu && bu.temDados) out.bussola = { nota: bu.nota, norte: bu.norte ? { id: bu.norte.id, nome: bu.norte.nome, status: bu.norte.status, resumo: bu.norte.resumo, acao: bu.norte.acoes && bu.norte.acoes[0] ? bu.norte.acoes[0].texto : null } : null, dimensoes: bu.dimensoes.map(function (x) { return { id: x.id, nome: x.nome, nota: x.nota, status: x.status, resumo: x.resumo }; }) };
+        return Object.keys(out).length ? out : null;
+      } catch (e) { return null; }
+    }
+    // Só o cliente do CRM: sem lista de clientes, novo cliente, exemplo, duplicar ou excluir
+    var home = '#/clientes/' + cid;
+    function guard() {
+      var h = location.hash || '';
+      if (h === '' || h === '#/' || h === '#/clientes' || (/^#\\/clientes\\//.test(h) && h.indexOf(home) !== 0)) location.hash = home;
+    }
+    window.addEventListener('hashchange', guard);
+    var HIDE = /^(Novo cliente|Carregar exemplo|Importar|Exportar backup)$/;
+    function hideExtras() {
+      var els = document.querySelectorAll('button, a');
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        var t = (el.textContent || '').trim();
+        if (HIDE.test(t) || /^(Duplicar|Excluir)$/.test(el.getAttribute('title') || '')) el.style.display = 'none';
+      }
+    }
+    new MutationObserver(function () { hideExtras(); }).observe(document.documentElement, { childList: true, subtree: true });
     // Salvamento automático: cada gravação do app é devolvida ao CRM (1,5 s depois da última alteração)
     var timer = null, last = '';
     function push() {
@@ -273,8 +348,8 @@ const BRIDGE = `(function () {
       var json = JSON.stringify(mine);
       if (json === last) return;
       status('Salvando no CRM…');
-      api('/api/diagnosticos/' + id + '/dados', { method: 'PUT', body: { data: mine, precificacao: pricing(mine) } })
-        .then(function (r) { last = json; status(r.proposal ? 'Diagnóstico concluído · proposta ' + r.proposal.code + ' em Propostas' : r.status === 'concluido' ? 'Diagnóstico concluído · salvo no CRM' : 'Salvo no CRM', 'ok'); })
+      api('/api/diagnosticos/' + id + '/dados', { method: 'PUT', body: { data: mine, precificacao: pricing(mine), resultado: results(mine) } })
+        .then(function (r) { last = json; status(r.status === 'concluido' ? 'Diagnóstico concluído · salvo no CRM (gere a proposta pela aba Diagnóstico do lead)' : 'Salvo no CRM', 'ok'); })
         .catch(function (e) { status('Não foi possível salvar no CRM: ' + e.message, 'erro'); });
     }
     Storage.prototype.setItem = function (k, v) {
@@ -286,9 +361,9 @@ const BRIDGE = `(function () {
     document.addEventListener('DOMContentLoaded', function () { status('Cliente ' + (d.contact && d.contact.name || '') + ' · ligado ao CRM', 'ok'); });
     if (document.readyState !== 'loading') status('Cliente ' + (d.contact && d.contact.name || '') + ' · ligado ao CRM', 'ok');
   }).catch(function (e) {
-    boot();
-    var show = function () { status('Sem ligação com o CRM (' + e.message + '). O diagnóstico fica só neste navegador.', 'erro'); };
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', show); else show();
+    // Sem acesso ao diagnóstico (sessão expirada ou fora do escopo): não abre; sem o servidor (versão de teste), modo de demonstração
+    var offline = /Erro (0|404|405)|Failed to fetch|NetworkError|JSON/i.test(e.message || '');
+    locked(offline ? 'Não foi possível falar com o CRM agora. O diagnóstico só é salvo quando aberto pelo lead, com o CRM no ar.' : 'Entre no CRM e abra o diagnóstico pelo lead (aba Diagnóstico). ' + (e.message || ''), offline);
   });
 })();`;
 

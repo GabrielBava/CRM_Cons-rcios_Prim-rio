@@ -10,18 +10,22 @@
  *    valor = maior proposta ativa do negócio ou, sem proposta, o crédito desejado.
  *  - Leads recebidos: leads atribuídos ao colaborador no período (data de atribuição ou de cadastro).
  *  - Leads movimentados: negócios que mudaram de etapa no período.
+ *  - Taxa de conversão: negócios ganhos no período ÷ leads recebidos no período.
  *  - Taxa de agendamento: R1 agendadas no período ÷ leads recebidos no período.
- *  - Taxa de no-show: reuniões (R1 e R2) com horário no período em que o cliente não compareceu ÷ (realizadas + no-show).
+ *  - Taxa de no-show R1 e R2 (separadas): reuniões com horário no período em que o cliente não compareceu ÷ (realizadas + no-show).
  *  - Taxa de realização R1/R2: reuniões realizadas ÷ reuniões com horário no período (já passado), sem as canceladas.
  *  - TMR: tempo médio entre receber o lead e o primeiro contato.
- *  - TMA: duração média das ligações e conversas registradas (com duração).
- *  - TME: tempo médio de espera do lead na fila de distribuição até ser atribuído.
+ *  - TMA: tempo médio que os negócios ficam em cada etapa do funil (saídas de etapa no período), mostrado em horas.
+ *  - TME: tempo médio que os leads em andamento estão sem nenhuma atividade registrada (desde a última atividade de
+ *    contato ou, sem atividade, desde a atribuição), medido no fim do período.
+ *  - Duração média das ligações: ligações e conversas registradas com duração.
  *  - Ligações realizadas: ligações feitas (atendidas e tentativas sem atendimento).
  *  - Tarefas criadas/concluídas no período; em atraso: pendentes vencidas agora.
  *  - Conversão por etapa: dos negócios criados no período, quantos chegaram a cada etapa (% da etapa anterior e % do topo).
  *  - Win rate: negócios ganhos ÷ (ganhos + perdidos) fechados no período.
  *  - Ciclo médio de vendas: dias entre a criação e o ganho do negócio (ganhos no período).
- *  - Receita gerada: crédito vendido (vendas não canceladas no período); ticket médio = receita ÷ vendas.
+ *  - Receita gerada: crédito vendido (vendas não canceladas no período) + valor de planejamento vendido (propostas de
+ *    planejamento aceitas no período); ticket médio = receita ÷ (vendas + planejamentos vendidos).
  *  - Motivos de perda (MP): negócios perdidos no período por motivo.
  */
 const { requireModule } = require('../permissions');
@@ -76,6 +80,25 @@ function periodOf(q = {}, now = Date.now()) {
 const pct = (a, b) => (b ? Math.round((a / b) * 1000) / 10 : null);
 const round = (v) => (v == null ? null : Math.round(v));
 
+/**
+ * Receita gerada entre as datas d0 e d1 (AAAA-MM-DD, inclusive): crédito vendido (vendas não canceladas; as de proposta
+ * de planejamento ficam de fora para não contar duas vezes) + valor de planejamento vendido (propostas aceitas).
+ * ss: escopo das vendas (alias sa); ps: escopo das propostas (alias pr); area: filtro opcional de área do negócio.
+ */
+function revenue(db, ss, ps, d0, d1, area = null) {
+  const one = (sql, ...p) => db.prepare(sql).get(...p) || {};
+  const sales = one(`SELECT COUNT(*) AS n, COALESCE(SUM(sa.credit_value), 0) AS v FROM sales sa LEFT JOIN opportunities o ON o.id = sa.opportunity_id LEFT JOIN proposals pq ON pq.id = sa.proposal_id
+    WHERE sa.status != 'cancelada' AND COALESCE(pq.area, 'consorcio') != 'planejamento' AND substr(COALESCE(sa.payment_date, sa.confirmed_at, sa.created_at), 1, 10) BETWEEN ? AND ?
+      AND ${ss.sql}${area ? ' AND o.business_area = ?' : ''}`, d0, d1, ...ss.params, ...(area ? [area] : []));
+  const plan = !area || area === 'planejamento'
+    ? one(`SELECT COUNT(*) AS n, COALESCE(SUM(pr.credit_value), 0) AS v FROM proposals pr WHERE pr.area = 'planejamento' AND pr.status = 'aprovada'
+      AND substr(pr.accepted_at, 1, 10) BETWEEN ? AND ? AND ${ps.sql}`, d0, d1, ...ps.params)
+    : {};
+  const credito = sales.v || 0;
+  const planejamento = plan.v || 0;
+  return { receita: credito + planejamento, credito, planejamento, vendas: (sales.n || 0) + (plan.n || 0), vendas_credito: sales.n || 0, vendas_planejamento: plan.n || 0 };
+}
+
 /** Indicadores de um grupo de pessoas (ids) no período, com filtro opcional de área. */
 function metrics(db, ids, area, from, to) {
   const ph = ids.map(() => '?').join(',');
@@ -109,19 +132,27 @@ function metrics(db, ids, area, from, to) {
     out[`taxa_realizacao_${k}`] = pct(realizadas, previstas);
   }
   out.taxa_agendamento = pct(out.r1_agendadas, out.leads_recebidos);
-  out.taxa_no_show = pct(out.r1_no_show + out.r2_no_show, out.r1_realizadas + out.r2_realizadas + out.r1_no_show + out.r2_no_show);
+  // No-show separado: R1 e R2
+  out.taxa_no_show_r1 = pct(out.r1_no_show, out.r1_realizadas + out.r1_no_show);
+  out.taxa_no_show_r2 = pct(out.r2_no_show, out.r2_realizadas + out.r2_no_show);
 
   // Tempos (segundos)
   out.tmr = round(one(`SELECT AVG((julianday(c.first_contact_at) - julianday(COALESCE(c.assigned_at, c.created_at))) * 86400) AS s FROM contacts c
     WHERE c.merged_into_id IS NULL AND c.first_contact_at IS NOT NULL AND c.first_contact_at >= COALESCE(c.assigned_at, c.created_at)
       AND COALESCE(c.assigned_at, c.created_at) >= ? AND COALESCE(c.assigned_at, c.created_at) < ? AND c.owner_id IN (${ph})${aCt('c.id')}`, from, to, ...ids, ...A).s);
-  out.tma = round(one(`SELECT AVG(a.duration_seconds) AS s FROM activities a WHERE a.duration_seconds > 0
+  // TMA: tempo médio na etapa (saídas de etapas abertas no período)
+  out.tma = round(one(`SELECT AVG(h.seconds_in_previous) AS s FROM stage_history h JOIN opportunities o ON o.id = h.opportunity_id JOIN pipeline_stages ps ON ps.id = h.from_stage_id
+    WHERE ps.kind = 'aberta' AND h.seconds_in_previous IS NOT NULL AND h.moved_at >= ? AND h.moved_at < ? AND o.owner_id IN (${ph})${aOpp('o')}`, from, to, ...ids, ...A).s);
+  // TME: leads em andamento no fim do período, há quanto tempo sem nenhuma atividade de contato registrada
+  const WT = require('./pipeline').WORK_TYPES;
+  out.tme = round(one(`SELECT AVG(MAX(0, julianday(?) - julianday(MAX(COALESCE(c.assigned_at, c.created_at),
+      COALESCE((SELECT MAX(a.occurred_at) FROM activities a WHERE a.contact_id = o.contact_id AND a.type IN (${WT.map(() => '?').join(',')}) AND a.occurred_at < ?), '')))) * 86400) AS s
+    FROM opportunities o JOIN contacts c ON c.id = o.contact_id
+    WHERE c.merged_into_id IS NULL AND o.created_at < ? AND COALESCE(c.assigned_at, c.created_at) < ?
+      AND (o.status = 'aberta' OR (o.status IN ('ganha','perdida') AND o.closed_at >= ?)) AND o.owner_id IN (${ph})${aOpp('o')}`, upTo, ...WT, upTo, upTo, upTo, upTo, ...ids, ...A).s);
+  out.duracao_ligacoes = round(one(`SELECT AVG(a.duration_seconds) AS s FROM activities a WHERE a.duration_seconds > 0
     AND a.type IN ('ligacao_realizada','ligacao_recebida','conversa_presencial','conversa_video','reuniao_realizada')
     AND a.occurred_at >= ? AND a.occurred_at < ? AND a.user_id IN (${ph})${aCt('a.contact_id')}`, from, to, ...ids, ...A).s);
-  out.tme = round(one(`SELECT AVG((julianday(f.at) - julianday(c.created_at)) * 86400) AS s FROM contacts c
-    JOIN (SELECT contact_id, MIN(created_at) AS at FROM distribution_log WHERE from_user IS NULL GROUP BY contact_id) f ON f.contact_id = c.id
-    JOIN distribution_log d ON d.contact_id = c.id AND d.created_at = f.at
-    WHERE f.at >= c.created_at AND f.at >= ? AND f.at < ? AND d.to_user IN (${ph})${aCt('c.id')}`, from, to, ...ids, ...A).s);
 
   // Ligações e tarefas
   const calls = one(`SELECT COUNT(*) AS n, SUM(a.type = 'ligacao_realizada') AS ok FROM activities a WHERE a.type IN ('ligacao_realizada','tentativa_sem_atendimento')
@@ -138,13 +169,15 @@ function metrics(db, ids, area, from, to) {
   out.ganhos = closed.g || 0;
   out.perdidos = closed.p || 0;
   out.win_rate = pct(out.ganhos, out.ganhos + out.perdidos);
+  out.taxa_conversao = pct(out.ganhos, out.leads_recebidos);
   out.ciclo_dias = closed.ciclo == null ? null : Math.round(closed.ciclo * 10) / 10;
   const d0 = new Date(Date.parse(from) - SP).toISOString().slice(0, 10);
   const d1 = new Date(Date.parse(to) - SP - 1).toISOString().slice(0, 10);
-  const sales = one(`SELECT COUNT(*) AS n, SUM(sa.credit_value) AS v FROM sales sa LEFT JOIN opportunities o ON o.id = sa.opportunity_id
-    WHERE sa.status != 'cancelada' AND substr(COALESCE(sa.payment_date, sa.confirmed_at, sa.created_at), 1, 10) BETWEEN ? AND ? AND sa.seller_id IN (${ph})${aOpp('o')}`, d0, d1, ...ids, ...A);
-  out.vendas = sales.n || 0;
-  out.receita = sales.v || 0;
+  const rev = revenue(db, { sql: `sa.seller_id IN (${ph})`, params: ids }, { sql: `pr.owner_id IN (${ph})`, params: ids }, d0, d1, area);
+  out.vendas = rev.vendas;
+  out.receita = rev.receita;
+  out.receita_credito = rev.credito;
+  out.receita_planejamento = rev.planejamento;
   out.ticket_medio = out.vendas ? Math.round(out.receita / out.vendas) : null;
   out.propostas = one(`SELECT COUNT(*) AS n FROM proposals pr WHERE pr.version = 1 AND pr.created_at >= ? AND pr.created_at < ? AND pr.owner_id IN (${ph})${area ? ' AND COALESCE(pr.area, \'consorcio\') = ?' : ''}`, from, to, ...ids, ...A).n || 0;
   return out;
@@ -207,9 +240,11 @@ function insights(k, p, fun, lost, people, variant = 0) {
     const dd = d('taxa_agendamento');
     out.push({ tone: k.taxa_agendamento >= 30 ? 'ok' : 'warn', area: 'Agendamento', text: `Taxa de agendamento de ${pt(k.taxa_agendamento)}%${dd != null ? ` (${dd >= 0 ? '+' : ''}${pt(dd)} p.p.)` : ''}. ${k.taxa_agendamento < 30 ? 'Reforce o roteiro da primeira ligação e a oferta de dois horários para a R1.' : 'Mantenha a cadência de primeiro contato em até 5 minutos.'}` });
   }
-  if (k.taxa_no_show != null && k.taxa_no_show > 0) {
-    out.push({ tone: k.taxa_no_show > 20 ? 'danger' : 'info', area: 'No-show', text: `No-show de ${pt(k.taxa_no_show)}% nas reuniões. ${k.taxa_no_show > 20 ? 'Confirme a R1 na véspera e 1 hora antes pelo WhatsApp: costuma reduzir o no-show pela metade.' : 'Dentro do esperado; siga confirmando as reuniões na véspera.'}` });
+  if (k.taxa_no_show_r1 || k.taxa_no_show_r2) {
+    const worst = Math.max(k.taxa_no_show_r1 || 0, k.taxa_no_show_r2 || 0);
+    out.push({ tone: worst > 20 ? 'danger' : 'info', area: 'No-show', text: `No-show de ${k.taxa_no_show_r1 == null ? '—' : `${pt(k.taxa_no_show_r1)}%`} na R1 e ${k.taxa_no_show_r2 == null ? '—' : `${pt(k.taxa_no_show_r2)}%`} na R2. ${worst > 20 ? 'Confirme a reunião na véspera e 1 hora antes pelo WhatsApp: costuma reduzir o no-show pela metade.' : 'Dentro do esperado; siga confirmando as reuniões na véspera.'}` });
   }
+  if (k.tme != null && k.tme > 2 * 86400) out.push({ tone: k.tme > 5 * 86400 ? 'danger' : 'warn', area: 'Cadência', text: `Os leads em andamento estão, em média, há ${pt(k.tme / 3600)} h sem nenhuma atividade registrada (TME). Use as tarefas de aproximação para não deixar o lead esfriar.` });
   if (k.tmr != null) out.push({ tone: k.tmr > 3600 ? 'warn' : 'ok', area: 'Velocidade', text: `Primeiro atendimento em ${fmtTime(k.tmr)} em média (TMR). ${k.tmr > 3600 ? 'Leads atendidos depois de 1 hora convertem bem menos: priorize a fila de novos no início de cada bloco de ligações.' : 'Bom tempo de resposta.'}` });
   // Gargalo do funil: menor conversão entre etapas com volume
   const steps = fun.filter((s) => s.conv_etapa != null && fun[fun.indexOf(s) - 1]?.n >= 3);
@@ -224,7 +259,7 @@ function insights(k, p, fun, lost, people, variant = 0) {
     out.push({ tone: 'danger', area: 'Tarefas', text: `${k.tarefas_atraso} tarefas em atraso no time${worst?.tarefas_atraso ? `; ${worst.nome.split(' ')[0]} concentra ${worst.tarefas_atraso}` : ''}. Combine um bloco para zerar os atrasos antes de novos contatos.` });
   }
   if (k.win_rate != null) out.push({ tone: k.win_rate >= 25 ? 'ok' : 'warn', area: 'Fechamento', text: `Win rate de ${pt(k.win_rate)}% (${k.ganhos} ganhos e ${k.perdidos} perdidos)${k.ciclo_dias != null ? `, ciclo médio de ${pt(k.ciclo_dias)} dias` : ''}.` });
-  if (k.receita) out.push({ tone: 'ok', area: 'Receita', text: `${fmtMoney(k.receita)} em crédito vendido em ${k.vendas} venda(s), ticket médio de ${fmtMoney(k.ticket_medio)}${p.receita ? ` (${k.receita >= p.receita ? '+' : ''}${Math.round(((k.receita - p.receita) / p.receita) * 100)}% vs. período anterior)` : ''}.` });
+  if (k.receita) out.push({ tone: 'ok', area: 'Receita', text: `${fmtMoney(k.receita)} de receita gerada (${fmtMoney(k.receita_credito)} em crédito${k.receita_planejamento ? ` + ${fmtMoney(k.receita_planejamento)} em planejamento` : ''}) em ${k.vendas} venda(s), ticket médio de ${fmtMoney(k.ticket_medio)}${p.receita ? ` (${k.receita >= p.receita ? '+' : ''}${Math.round(((k.receita - p.receita) / p.receita) * 100)}% vs. período anterior)` : ''}.` });
   const top = [...people].filter((x) => x.receita || x.r1_realizadas).sort((a, b) => b.receita - a.receita || b.r1_realizadas - a.r1_realizadas)[0];
   if (top) out.push({ tone: 'ok', area: 'Destaque', text: `Destaque do período: ${top.nome} (${top.vendas} venda(s), ${top.r1_realizadas} R1 realizada(s)). Vale compartilhar a abordagem com o time no próximo one-on-one.` });
   if (!out.length) out.push({ tone: 'info', area: 'Período', text: 'Ainda não há movimento suficiente neste período para gerar insights. Amplie o período ou escolha outro colaborador.' });
@@ -264,4 +299,4 @@ function teamDashboard(db, user, q = {}) {
   return { ...base, kpis: k, prev: p, funnel: fun, lost, people: rows, insights: insights(k, p, fun, lost, rows, variant), variant };
 }
 
-module.exports = { teamDashboard, periodOf, metrics, funnel, insights };
+module.exports = { teamDashboard, periodOf, metrics, funnel, insights, revenue };

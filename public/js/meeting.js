@@ -2,7 +2,8 @@
 // do cliente e na Agenda. Cliente obrigatório (o e-mail dele recebe o convite), horário em passos de 15 minutos,
 // título "[R1] Nome do cliente | Vero Consórcios"; com o Google Agenda conectado, o evento sai com Google Meet.
 // Bloco de reuniões do painel: Concluir, Remarcar e Não compareceu (no-show → NS no cartão; remarcação → R).
-import { get, post, patch, download } from './api.js';
+import { get, post, patch, put, download } from './api.js';
+import { triageFields, triageOf, triageMissing } from './qualification.js';
 import { html, raw, $, on, modal, field, opts, state, toast, toastError, fmtDateTime, badge } from './ui.js';
 
 /** Etapas até a R1: o "Ganho" (agendar a R1 e levar o lead para a coluna R1) aparece nelas. */
@@ -140,7 +141,9 @@ export async function scheduleMeetingDialog({ contactId = null, oppId = null, ki
   // (Tentativa) e a qualificação (Qualificação); ao agendar, a atividade é registrada e a qualificação concluída.
   const gate = !!opp && opp.status === 'aberta' && (won || (moveTo && kind === 'r1')) && ['prospect', 'lead', 'tentativa', 'qualificado'].includes(opp.stage_key);
   const needAttempt = gate && !c.contact_attempted;
-  const qual = gate && !opp.qualified_at ? QUAL_FIELDS.filter((f) => !f.consorcio || (opp.business_area || 'consorcio') === 'consorcio') : [];
+  // Triagem obrigatória para a primeira R1 (negócios já qualificados ou com R1 anterior seguem sem)
+  const needTriage = kind === 'r1' && !!opp && !opp.qualified_at && !opp.had_r1 && (!opp.triaged_at || triageOf(opp).interesse !== 'sim');
+  const qual = [];
   const result = await modal({
     title: won ? `Ganho — agendar a R1 de ${c.name}` : `Agendar ${K} — ${c.name}`,
     wide: true,
@@ -159,6 +162,7 @@ export async function scheduleMeetingDialog({ contactId = null, oppId = null, ki
         ${canMove && !won ? field({ name: 'move_to_stage', label: `Mover o negócio ${opp.code} de "${opp.stage_name}" para "${target.name}"`, type: 'checkbox', value: moveTo, full: true }) : ''}
         ${needAttempt ? html`<fieldset class="full qual-inline"><legend>Tentativa de contato</legend><p class="hint">Ainda não há contato registrado com o lead. Informe como foi o contato que gerou o agendamento (fica em Atividades).</p><div class="grid">
           ${field({ name: 'attempt_type', label: 'Canal do contato', type: 'select', options: ATTEMPT_TYPES, required: true, full: true })}</div></fieldset>` : ''}
+        ${needTriage ? html`<fieldset class="full qual-inline"><legend>Triagem</legend><p class="hint">Para agendar a R1, responda as 6 perguntas da triagem (ficam na aba Qualificação).</p><div class="grid">${triageFields(triageOf(opp), { prefix: 'tri_' })}</div></fieldset>` : ''}
         ${qual.length ? html`<fieldset class="full qual-inline"><legend>Concluir a qualificação</legend><p class="hint">Para entrar na R1 o lead precisa da qualificação concluída. Preencha ao menos um campo: ao agendar, a qualificação é concluída.</p><div class="grid">
           ${qual.map((f) => (f.list ? field({ name: f.name, label: f.label, type: 'select', options: opts(f.list), value: opp[f.name] }) : field({ name: f.name, label: f.label, type: f.type, value: opp[f.name] })))}</div></fieldset>` : ''}
         ${field({ name: 'notes', label: 'Observações (vão na descrição do evento)', type: 'textarea', rows: 2, full: true })}
@@ -175,7 +179,14 @@ export async function scheduleMeetingDialog({ contactId = null, oppId = null, ki
       const oppIdSel = Number(d.opportunity_id) || opp?.id;
       const q = Object.fromEntries(qual.map((f) => [f.name, d[f.name]]).filter(([, v]) => v != null && v !== ''));
       if (qual.length && !Object.keys(q).length) throw new Error('Preencha ao menos um campo da qualificação para concluir.');
-      if (needAttempt) await post('/api/atividades', { contact_id: c.id, opportunity_id: oppIdSel, type: d.attempt_type, notes: `Contato que gerou o agendamento da ${K}.`, occurred_at: new Date().toISOString() });
+      if (needTriage) {
+        const t = Object.fromEntries(Object.entries(d).filter(([k]) => k.startsWith('tri_')).map(([k, v]) => [k.slice(4), v]));
+        const miss = triageMissing(t);
+        if (miss.length) throw new Error(`Triagem: responda ${miss.join(', ')}.`);
+        if (t.interesse !== 'sim') throw new Error('Na triagem, o lead não demonstrou interesse: a R1 não pode ser agendada.');
+        if (needAttempt) await post('/api/atividades', { contact_id: c.id, opportunity_id: oppIdSel, type: d.attempt_type, notes: `Contato que gerou o agendamento da ${K}.`, occurred_at: new Date().toISOString() });
+        await put(`/api/oportunidades/${oppIdSel}/triagem`, t);
+      } else if (needAttempt) await post('/api/atividades', { contact_id: c.id, opportunity_id: oppIdSel, type: d.attempt_type, notes: `Contato que gerou o agendamento da ${K}.`, occurred_at: new Date().toISOString() });
       if (qual.length && oppIdSel) await post(`/api/oportunidades/${oppIdSel}/concluir-qualificacao`, { fields: q });
       return post('/api/reunioes/agendar', {
         kind, contact_id: c.id, opportunity_id: oppIdSel, email: d.email, title: d.title, notes: d.notes,
@@ -224,15 +235,14 @@ export function meetingCard(kind, m, { canSchedule = true, write = true } = {}) 
     ${m && m.at ? html`<div class="mt-when">${icon_cal()}<span><strong>${dayLabel(m.at)}</strong> · ${hm(m.at)}${m.ends_at ? ` às ${hm(m.ends_at)}` : ''}</span></div>` : ''}
     ${pending ? html`<div class="mt-how">${m.meeting_url ? html`<a href="${m.meeting_url}" target="_blank" rel="noopener">Google Meet</a>` : html`<span class="muted">Sem link de vídeo</span>`}${m.confirmed ? html` · <span class="ok-text">presença confirmada</span>` : ''}</div>` : ''}
     ${m && (m.no_shows || m.reschedules) ? html`<div class="mt-stats">${m.no_shows ? html`<span class="badge ns" title="Não compareceu">NS ${m.no_shows}</span>` : ''}${m.reschedules ? html`<span class="badge rm" title="Remarcações">R ${m.reschedules}</span>` : ''}</div>` : ''}
-    ${write ? html`<div class="mt-actions">
-      ${pending ? html`<button type="button" class="btn small primary" data-mt="done" data-task="${m.task_id}">Concluir</button>
+    ${write ? html`<div class="mt-actions ${pending ? 'mt-grid' : ''}">
+      ${pending ? html`<button type="button" class="btn small primary mt-done" data-mt="done" data-task="${m.task_id}">Concluir</button>
         <button type="button" class="btn small" data-mt="resched" data-task="${m.task_id}">Remarcar</button>
         <button type="button" class="btn small warn" data-mt="noshow" data-task="${m.task_id}">Não compareceu</button>
-        ${m.confirmed ? '' : html`<button type="button" class="btn small ghost" data-mt="confirm" data-task="${m.task_id}" title="O cliente confirmou que vai participar">Confirmar presença</button>`}`
+        ${m.confirmed ? html`<span class="mt-confirm ok-text">Presença confirmada</span>` : html`<button type="button" class="link-btn mt-confirm" data-mt="confirm" data-task="${m.task_id}" title="O cliente confirmou que vai participar">Confirmar presença</button>`}`
         : m?.state === 'no_show' ? html`<button type="button" class="btn small primary" data-mt="resched" data-task="${m.task_id}">Remarcar ${K}</button>`
           : canSchedule && (!m || m.state === 'cancelada') ? html`<button type="button" class="btn small primary" data-mt="new" data-kind="${kind}">Agendar ${K}</button>`
             : kind === 'r2' && !m ? html`<button type="button" class="btn small" disabled title="A R2 é liberada depois que a R1 for agendada e concluída">Agendar R2</button><small class="muted mt-lock">Liberada após concluir a R1.</small>` : ''}
-      ${m?.task_id ? html`<button type="button" class="btn small ghost" data-r1-model="task_id=${m.task_id}">Modelo da R1</button>` : ''}
     </div>` : ''}
   </section>`;
 }

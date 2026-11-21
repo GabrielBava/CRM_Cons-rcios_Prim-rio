@@ -152,15 +152,54 @@ export async function proposalWhatsapp(p, onChange) {
   if (ok) onChange?.();
 }
 
-/** Botões de opções (Link, PDF e WhatsApp) para listas e cartões. */
+/** Opções da proposta num único botão: o menu traz Link da proposta, Gerar PDF e Mensagem do WhatsApp. */
 export const optionButtons = (p) => html`<span class="prop-opts">
-  <button type="button" class="icon-btn" data-p-link="${p.id}" title="Link da proposta (rastreável)" aria-label="Link da proposta">${icon('link', 16)}</button>
-  <button type="button" class="icon-btn" data-p-pdf="${p.id}" title="Gerar PDF" aria-label="Gerar PDF">${icon('pdf', 16)}</button>
-  <button type="button" class="icon-btn wa" data-p-wa="${p.id}" title="Modelo de mensagem do WhatsApp" aria-label="Mensagem do WhatsApp">${icon('whatsapp', 16)}</button>
+  <button type="button" class="btn small opt-btn" data-p-menu="${p.id}" aria-haspopup="menu" aria-expanded="false" title="Link, PDF e WhatsApp">${icon('menu', 15)} Opções</button>
+  <span class="opt-menu" role="menu" hidden>
+    <button type="button" role="menuitem" data-p-link="${p.id}">${icon('link', 15)} Link da proposta <small>copiar, ver como o cliente e acessos</small></button>
+    <button type="button" role="menuitem" data-p-pdf="${p.id}">${icon('pdf', 15)} Gerar PDF</button>
+    <button type="button" role="menuitem" data-p-wa="${p.id}">${icon('whatsapp', 15)} Mensagem do WhatsApp <small>modelo do passo da régua</small></button>
+  </span>
 </span>`;
+
+const closeMenus = (except) => document.querySelectorAll('.opt-menu:not([hidden])').forEach((m) => {
+  if (m === except) return;
+  m.hidden = true;
+  m.previousElementSibling?.setAttribute('aria-expanded', 'false');
+});
+if (typeof document !== 'undefined') {
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.prop-opts')) closeMenus();
+  });
+  document.addEventListener('keydown', (e) => e.key === 'Escape' && closeMenus());
+  // Rolagem ou redimensionamento fecham o menu (ele fica fixo na tela)
+  document.addEventListener('scroll', (e) => !e.target.closest?.('.opt-menu') && closeMenus(), true);
+  window.addEventListener('resize', () => closeMenus());
+}
 
 /** Liga os botões de opções de uma área da tela. find(id) devolve a proposta da lista atual. */
 export function bindOptionButtons(root, find, onChange) {
+  on(root, 'click', '[data-p-menu]', (e, b) => {
+    e.stopPropagation();
+    const menu = b.nextElementSibling;
+    closeMenus(menu);
+    menu.hidden = !menu.hidden;
+    b.setAttribute('aria-expanded', String(!menu.hidden));
+    if (menu.hidden) return;
+    // Posição fixa na tela (escapa do recorte das colunas do kanban, tabelas e painéis); abre para cima se não couber
+    const r = b.getBoundingClientRect();
+    menu.style.left = '0px';
+    menu.style.top = '0px';
+    // Ancestral com transform/backdrop-filter muda a referência do "fixed": desconta a origem medida
+    const o = menu.getBoundingClientRect();
+    const w = menu.offsetWidth;
+    const h = menu.offsetHeight;
+    const x = Math.max(8, Math.min(r.left, window.innerWidth - w - 8));
+    const y = r.bottom + 6 + h > window.innerHeight - 8 ? Math.max(8, r.top - h - 6) : r.bottom + 6;
+    menu.style.left = `${x - o.left}px`;
+    menu.style.top = `${y - o.top}px`;
+  });
+  on(root, 'click', '.opt-menu [role=menuitem]', () => closeMenus());
   on(root, 'click', '[data-p-link]', (e, b) => {
     e.stopPropagation();
     const p = find(Number(b.dataset.pLink));

@@ -2,6 +2,7 @@
 import { get, post, patch } from '../api.js';
 import { html, raw, render, $, $$, on, state, selectOptions, opts, userItems, table, badge, fmtDateTime, relTime, fmtMoney, optLabel, K, modal, field, toast, toastError, empty, can } from '../ui.js';
 import { quickCreateContact } from '../forms.js';
+import { teamTabs } from './team.js';
 
 let filters = {};
 
@@ -16,8 +17,9 @@ export async function show(view) {
     }
     const r = d.roleta;
     const active = r.participants.filter((p) => p.active);
-    render(view, html`<div class="page">
-      <div class="page-head"><div><h1>Prospects e leads</h1><p class="muted">Entrada de novos contatos por canal e distribuição aos especialistas.</p></div>
+    const team = ['admin', 'gestor'].includes(state.user.role) && (state.user.modules || []).includes('time');
+    render(view, html`<div class="page">${team ? teamTabs('distribuicao') : ''}
+      <div class="page-head"><div><h1>Distribuição de leads</h1><p class="muted">Entrada de novos contatos (prospects e leads) por canal e distribuição aos especialistas.</p></div>
         <div class="actions"><button class="btn" data-act="new">+ Cadastrar lead</button><a class="btn" href="#/importar">Importar planilha</a>${state.user.role === 'admin' ? html`<button class="btn" data-act="roleta">Configurar roleta</button>` : ''}</div></div>
       <div class="kpis small">
         <div class="kpi ${d.rows.length ? 'alert-kpi' : ''}"><div class="kpi-label">Aguardando distribuição</div><div class="kpi-value">${d.rows.length}</div><div class="kpi-sub">${d.oldest_waiting ? `mais antigo ${relTime(d.oldest_waiting)}` : 'fila vazia'}</div></div>

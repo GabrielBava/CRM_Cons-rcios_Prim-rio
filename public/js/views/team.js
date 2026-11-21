@@ -2,7 +2,10 @@
 import { get, post } from '../api.js';
 import { html, render, $, on, avatar, fmtMoney, fmtNum, fmtPct, toast, toastError, subnav, selectOptions, empty, table, modal, field, fmtDateTime, badge, state } from '../ui.js';
 
-const tabs = (active) => subnav([['#/time/organograma', 'Organograma do time', 'organograma'], ['#/time/squad', 'Dashboard squad', 'squad'], ['#/time/bi', 'BI do time', 'bi'], ['#/time/one-on-ones', 'One-on-ones', 'oneonone']], active);
+/** Abas da Gestão do time (as mesmas do menu): Organograma, Dashboard, BI e Distribuição de leads. */
+export const teamTabs = (active) => subnav([['#/time/organograma', 'Organograma', 'organograma'], ['#/time/squad', 'Dashboard', 'squad'], ['#/time/bi', 'BI', 'bi'],
+  ...((state.user?.modules || []).includes('distribuicao') ? [['#/entrada', 'Distribuição de leads', 'distribuicao']] : [])], active);
+const tabs = teamTabs;
 
 export async function show(view, { id }) {
   if (id === 'one-on-ones') return oneOnOnes(view);
@@ -15,9 +18,9 @@ export async function show(view, { id }) {
 const pad = (n) => String(n).padStart(2, '0');
 /** O líder marca o one-on-one com alguém da equipe: aparece no calendário dos dois (Operacional › Calendário). */
 async function oneOnOnes(view) {
-  render(view, html`<div class="page">${tabs('oneonone')}
+  render(view, html`<div class="page">${tabs('organograma')}
     <div class="page-head"><div><h1>One-on-ones</h1><p class="muted">Conversas individuais do líder com cada pessoa do time. O one-on-one marcado aqui aparece no calendário do líder e do liderado.</p></div>
-      <div class="actions"><button class="btn primary" data-act="new">+ Marcar one-on-one</button></div></div>
+      <div class="actions"><a class="btn ghost" href="#/time/organograma">← Organograma</a><button class="btn primary" data-act="new">+ Marcar one-on-one</button></div></div>
     <div id="oo"></div></div>`);
   let org = null;
   const load = async () => {
@@ -82,7 +85,8 @@ async function orgChart(view) {
   }
   render(view, html`<div class="page wide">
     ${tabs('organograma')}
-    <div class="page-head"><div><h1>Organograma do time</h1><p class="muted">Quem lidera quem e os números do mês de cada pessoa (negócios em andamento, R1 agendadas e vendas).</p></div></div>
+    <div class="page-head"><div><h1>Organograma</h1><p class="muted">Quem lidera quem e os números do mês de cada pessoa (negócios em andamento, R1 agendadas e vendas).</p></div>
+      <div class="actions"><a class="btn" href="#/time/one-on-ones">One-on-ones</a></div></div>
     <div class="org">
       ${d.directors.length ? html`<div class="org-level org-top">${d.directors.map((u) => person(u, 'director'))}</div><div class="org-line" aria-hidden="true"></div>` : ''}
       <div class="org-teams">${d.teams.length ? d.teams.map((t) => html`<section class="org-team card">
@@ -108,7 +112,7 @@ function periodRange(p) {
 }
 
 async function squad(view) {
-  render(view, html`<div class="page wide">${tabs('squad')}<div class="page-head"><div><h1>Dashboard squad</h1><p class="muted">Indicadores do time por especialista: da entrada do lead à venda, com R1, no-show, remarcações e SLA.</p></div></div>
+  render(view, html`<div class="page wide">${tabs('squad')}<div class="page-head"><div><h1>Dashboard</h1><p class="muted">Indicadores do time por especialista: da entrada do lead à venda, com R1, no-show, remarcações e SLA.</p></div></div>
     <form class="filters" data-f>
       <label>Período<select name="periodo">${selectOptions(PERIODS.map(([value, label]) => ({ value, label })), saved.periodo, { allowEmpty: false })}</select></label>
       <label data-team-box hidden>Time<select name="time"></select></label>
@@ -140,8 +144,9 @@ async function squad(view) {
         ${kpi('Tentativas', fmtNum(t.tentativas))}
         ${kpi('R1 agendadas', fmtNum(t.r1_agendadas), t.tx_lead_r1 != null ? `${fmtPct(t.tx_lead_r1)} dos leads` : '')}
         ${kpi('R1 realizadas', fmtNum(t.r1_realizadas), t.tx_comparecimento != null ? `comparecimento ${fmtPct(t.tx_comparecimento)}` : '')}
-        ${kpi('No-show (NS)', fmtNum(t.r1_no_show), `${fmtNum(t.r1_remarcadas)} remarcada(s)`)}
+        ${kpi('No-show R1', fmtNum(t.r1_no_show), `${t.tx_no_show_r1 != null ? `${fmtPct(t.tx_no_show_r1)} · ` : ''}${fmtNum(t.r1_remarcadas)} remarcada(s)`)}
         ${kpi('R2 realizadas', fmtNum(t.r2_realizadas), `${fmtNum(t.r2_agendadas)} agendada(s)`)}
+        ${kpi('No-show R2', fmtNum(t.r2_no_show), t.tx_no_show_r2 != null ? fmtPct(t.tx_no_show_r2) : '')}
         ${kpi('Vendas', fmtNum(t.vendas), fmtMoney(t.credito))}
         ${kpi('SLA estourado', fmtNum(t.sla_estourado), `de ${fmtNum(t.abertos)} em andamento`)}
       </div>
@@ -152,9 +157,10 @@ async function squad(view) {
         { label: 'Qualificados', cls: 'num', render: (r) => fmtNum(r.qualificados) },
         { label: 'R1 agend.', cls: 'num', render: (r) => fmtNum(r.r1_agendadas) },
         { label: 'R1 feitas', cls: 'num', render: (r) => fmtNum(r.r1_realizadas) },
-        { label: 'NS', cls: 'num', render: (r) => html`<span class="${r.r1_no_show ? 'warn-text' : ''}">${fmtNum(r.r1_no_show)}</span>` },
+        { label: 'NS R1', cls: 'num', render: (r) => html`<span class="${r.r1_no_show ? 'warn-text' : ''}">${fmtNum(r.r1_no_show)}</span>` },
         { label: 'Remarc.', cls: 'num', render: (r) => fmtNum(r.r1_remarcadas) },
         { label: 'R2 feitas', cls: 'num', render: (r) => fmtNum(r.r2_realizadas) },
+        { label: 'NS R2', cls: 'num', render: (r) => html`<span class="${r.r2_no_show ? 'warn-text' : ''}">${fmtNum(r.r2_no_show)}</span>` },
         { label: 'Propostas', cls: 'num', render: (r) => fmtNum(r.propostas) },
         { label: 'Vendas', cls: 'num', render: (r) => html`${fmtNum(r.vendas)}${r.credito ? html`<br><small>${fmtMoney(r.credito)}</small>` : ''}` },
         { label: 'Perdidos', cls: 'num', render: (r) => fmtNum(r.perdidos) },

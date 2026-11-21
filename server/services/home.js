@@ -185,8 +185,8 @@ function overview360(db, user, q, ctx) {
   const ss = ctx.ss;
   const d0 = spDay(Date.parse(from));
   const d1 = spDay(Date.parse(to) - 1);
-  const sales = one(`SELECT COUNT(*) AS n, COALESCE(SUM(s.credit_value), 0) AS v FROM sales s WHERE ${ss.sql} AND s.status != 'cancelada' AND substr(COALESCE(s.payment_date, s.confirmed_at, s.created_at), 1, 10) BETWEEN ? AND ?`, ...ss.params, d0, d1);
   const ps = ctx.single ? { sql: 'pr.owner_id = ?', params: [ctx.single] } : ctx.ids === null ? { sql: '1=1', params: [] } : { sql: `pr.owner_id IN (${ctx.ids.map(() => '?').join(',')})`, params: ctx.ids };
+  const rev = bi.revenue(db, { sql: ss.sql.replace(/\bs\./g, 'sa.'), params: ss.params }, ps, d0, d1);
   const decided = one(`SELECT SUM(pr.status = 'aprovada') AS a, COUNT(*) AS n FROM proposals pr WHERE ${ps.sql} AND pr.status IN ('aprovada','recusada','expirada')
     AND COALESCE(pr.accepted_at, pr.refused_at, pr.updated_at) >= ? AND COALESCE(pr.accepted_at, pr.refused_at, pr.updated_at) < ?`, ...ps.params, from, to);
   const todayStart = new Date(spMidnight(now)).toISOString();
@@ -198,7 +198,7 @@ function overview360(db, user, q, ctx) {
     taxa_conversao: pct(won, leadsPeriod), ganhos: won,
     tempo_resposta: tmr == null ? null : Math.round(tmr),
     propostas_andamento: ctx.proposals.summary.em_andamento, propostas_valor: ctx.proposals.summary.valor_andamento,
-    vendas_valor: sales.v || 0, vendas_qtd: sales.n || 0,
+    vendas_valor: rev.receita, vendas_qtd: rev.vendas, receita_credito: rev.credito, receita_planejamento: rev.planejamento,
     taxa_conversao_propostas: pct(decided.a || 0, decided.n || 0), propostas_aceitas: decided.a || 0, propostas_decididas: decided.n || 0,
     agendas_hoje: meetingsToday, tarefas_hoje: tasksToday,
   };

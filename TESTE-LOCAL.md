@@ -215,14 +215,34 @@ cliques em `iniciar-windows.bat`. Ao fechar a área restrita, tudo é apagado.
    **Quero avançar** na página do cliente e veja o aviso e a tarefa no CRM.
 4. **Gerar PDF** abre a versão para imprimir/salvar em PDF; **WhatsApp** abre o modelo da mensagem do passo da régua.
 5. **Nova proposta › Consórcio › Carta contemplada:** informe crédito, entrada e parcelas restantes.
-6. **Gestão do time › BI do time** (líder ou administrador): troque período, colaborador e área; abra "Como cada indicador é
+6. **Gestão do time › BI** (líder ou administrador): troque período, colaborador e área; abra "Como cada indicador é
    calculado" no fim da página.
+
+### H7. Diagnóstico pelo lead, cadastro em blocos, triagem e tarefas de aproximação
+
+1. **Novo lead** (botão do topo): veja os blocos Dados, Origem, Área e Geral. Digite um telefone já usado por outro cliente e
+   saia do campo: aparece o alerta, mas o cadastro salva normalmente (com o aviso dos códigos parecidos).
+2. **Painel do lead › Atividades › Registrar:** escolha o canal; o resultado muda conforme o canal. Escolha "Não atendeu" e a
+   próxima ação "Nova tentativa" com data: na aba **Tarefas** aparece a tarefa com a etiqueta **Aproximação**, sem Cancelar.
+   Clique em **Concluir**: o mesmo registro abre (o que foi feito, resultado, próxima ação).
+3. **Qualificação › Triagem:** responda as 6 perguntas com interesse "Sim" e salve: o lead vai para Qualificação. Tente
+   agendar a R1 num lead sem triagem: o agendamento pede as 6 respostas.
+4. **Agendas:** data em destaque, Concluir na linha de cima, Remarcar e Não compareceu abaixo e "Confirmar presença".
+5. **Diagnóstico:** em **Ferramentas › Diagnóstico financeiro**, escolha o cliente: o painel abre na aba Diagnóstico. No lead
+   da demonstração com diagnóstico concluído, veja Nota/Estrela Vero, Bússola e Matriz e clique em **Gerar proposta**
+   (Modelo de implementação ou Plataforma Exclusiva). Abra `ferramentas/diagnostico-financeiro.html` direto: aparece a trava.
+6. **Propostas › Gerar proposta** no painel: Consórcio abre o simulador; Planejamento só com diagnóstico concluído; Seguros e
+   Investimentos desabilitados. Em qualquer proposta, o botão **Opções** abre Link, PDF e WhatsApp.
+7. **Menu:** grupos Ferramentas e Treinamentos; **Gestão do time** com Organograma, Dashboard, BI e Distribuição de leads.
+8. **BI:** No-show R1 e R2 separados, TMA (tempo na etapa) e TME (sem atividade) em horas, taxa de conversão e receita com
+   planejamento. Aceite uma proposta de planejamento e veja a receita subir.
 
 ### H2. Menu lateral e Gestão do time
 
 1. O botão no canto superior esquerdo recolhe o menu (fica só o símbolo da Vero e os ícones); clique de novo para expandir.
-2. Entre como **gestora@demo.local** ou admin: **Gestão do time › Organograma do time** (quem lidera quem, com os números do mês)
-   e **Dashboard squad** (leads, tentativas, R1 agendadas/feitas, no-show, remarcações, R2, vendas, SLA e motivos de perda).
+2. Entre como **gestora@demo.local** ou admin: **Gestão do time › Organograma** (quem lidera quem, com os números do mês;
+   botão One-on-ones) e **Dashboard** (leads, tentativas, R1 agendadas/feitas, no-show R1 e R2, remarcações, R2, vendas, SLA e
+   motivos de perda).
 
 ### I. Planos, proposta e nova versão
 

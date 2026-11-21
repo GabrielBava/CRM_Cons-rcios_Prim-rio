@@ -190,3 +190,35 @@ export function bindQualForm(form) {
   sync();
 }
 
+
+
+/* ------------------------- Triagem (obrigatória para agendar a R1) ------------------------- */
+
+export const TRIAGE_DEF = [
+  { name: 'interesse', label: 'Interesse', options: YES_NO },
+  { name: 'dor', label: 'Existe dor / necessidade?', options: YES_NO },
+  { name: 'impacto', label: 'Impacto (prazo)', list: 'triagem_impacto' },
+  { name: 'decisor', label: 'É o decisor?', list: 'triagem_decisor' },
+  { name: 'faixa_investimento', label: 'Faixa de investimento', list: 'faixa_investimento' },
+  { name: 'faixa_renda', label: 'Faixa de renda', list: 'faixa_renda' },
+];
+export const triageOf = (o) => {
+  if (!o?.triage) return {};
+  if (typeof o.triage === 'object') return o.triage;
+  try {
+    return JSON.parse(o.triage) || {};
+  } catch {
+    return {};
+  }
+};
+/** As 6 perguntas da triagem (com a descrição opcional da dor). */
+export function triageFields(t = {}, { prefix = '' } = {}) {
+  return html`${TRIAGE_DEF.map((f) => field({ name: `${prefix}${f.name}`, label: f.label, type: 'select', options: f.options || opts(f.list), value: t[f.name], placeholder: 'Selecione…' }))}
+    ${field({ name: `${prefix}dor_descricao`, label: 'Qual é a dor / necessidade? (opcional)', value: t.dor_descricao || '', full: true, placeholder: 'Ex.: paga aluguel e quer a casa própria em 2 anos' })}`;
+}
+export const triageMissing = (t = {}) => TRIAGE_DEF.filter((f) => !t[f.name]).map((f) => f.label);
+export const triageText = (t = {}) => TRIAGE_DEF.map((f) => {
+  const v = t[f.name];
+  const lbl = f.options ? f.options.find((o) => o.value === v)?.label : optLabel(f.list, v);
+  return { label: f.label, value: v ? lbl || v : null };
+});

@@ -359,6 +359,60 @@ function concludeQualification(db, user, id, data = {}) {
   return { qualified_at: o.qualified_at || now, filled: filled.length, moved };
 }
 
+/** As 6 perguntas da triagem (obrigatórias para agendar a R1). */
+const TRIAGE_FIELDS = [
+  ['interesse', 'Interesse', ['sim', 'nao']],
+  ['dor', 'Existe dor ou necessidade?', ['sim', 'nao']],
+  ['impacto', 'Impacto (prazo)', 'triagem_impacto'],
+  ['decisor', 'É o decisor?', 'triagem_decisor'],
+  ['faixa_investimento', 'Faixa de investimento', 'faixa_investimento'],
+  ['faixa_renda', 'Faixa de renda', 'faixa_renda'],
+];
+const triageOf = (o) => {
+  try {
+    return JSON.parse(o.triage || '{}') || {};
+  } catch {
+    return {};
+  }
+};
+
+/**
+ * Triagem do lead (aba Qualificação): interesse, dor/necessidade, impacto (prazo), decisor, faixa de investimento e
+ * faixa de renda. Com as 6 respondidas, a triagem fica concluída; com interesse "sim", o lead vai para Qualificação e
+ * a R1 pode ser agendada. A qualificação detalhada continua opcional.
+ */
+function saveTriage(db, user, id, data = {}) {
+  const o = loadOpp(db, user, id, { write: true });
+  const cur = triageOf(o);
+  const next = { ...cur };
+  for (const [k, label, allowed] of TRIAGE_FIELDS) {
+    if (data[k] === undefined) continue;
+    const v = clean(data[k]);
+    if (v) {
+      if (Array.isArray(allowed) ? !allowed.includes(v) : !db.prepare('SELECT 1 FROM options WHERE list = ? AND value = ?').get(allowed, v)) throw badRequest(`${label}: opção inválida.`);
+      next[k] = v;
+    } else delete next[k];
+  }
+  if (data.dor_descricao !== undefined) next.dor_descricao = clean(data.dor_descricao) ? String(clean(data.dor_descricao)).slice(0, 500) : null;
+  const missing = TRIAGE_FIELDS.filter(([k]) => !next[k]).map(([, l]) => l);
+  const done = !missing.length;
+  const now = nowIso();
+  tx(db, () => {
+    db.prepare('UPDATE opportunities SET triage = ?, triaged_at = ?, triaged_by = ?, updated_at = ? WHERE id = ?')
+      .run(JSON.stringify(next), done ? o.triaged_at || now : null, done ? o.triaged_by || user.id : null, now, o.id);
+    // Faixa de renda também vale para o cadastro (quando ainda não informada)
+    if (next.faixa_renda) db.prepare('UPDATE contacts SET income_range = COALESCE(income_range, ?) WHERE id = ?').run(next.faixa_renda, o.contact_id);
+    if (done && !o.triaged_at) {
+      const lbl = (k, list) => (Array.isArray(list) ? (next[k] === 'sim' ? 'sim' : 'não') : optionLabel(db, list, next[k]));
+      insertActivity(db, { contact_id: o.contact_id, opportunity_id: o.id, type: 'observacao', user_id: user.id,
+        notes: `Triagem concluída: interesse ${lbl('interesse', ['sim'])}, dor/necessidade ${lbl('dor', ['sim'])}${next.dor_descricao ? ` (${next.dor_descricao})` : ''}, impacto ${lbl('impacto', 'triagem_impacto')}, decisor: ${lbl('decisor', 'triagem_decisor')}, investimento ${lbl('faixa_investimento', 'faixa_investimento')}, renda ${lbl('faixa_renda', 'faixa_renda')}.` });
+      audit(db, user, 'opportunity', o.id, 'triagem_concluida', next, o.contact_id);
+    } else audit(db, user, 'opportunity', o.id, 'triagem_salva', { faltam: missing }, o.contact_id);
+  });
+  const moved = done && next.interesse === 'sim' ? advanceTo(db, user, o.id, 'qualificado', ['prospect', 'lead', 'tentativa'], 'Triagem concluída') : false;
+  return { triage: next, done, missing, moved, triaged_at: done ? o.triaged_at || now : null };
+}
+
 /**
  * Avanço automático (regra de fluxo): leva o negócio aberto para a etapa `key` quando ele está numa das etapas `from`
  * e cumpre os critérios. Falhas não interrompem a ação que disparou o avanço (atividade, qualificação...).
@@ -891,6 +945,7 @@ function reorderStages(db, user, ids) {
 }
 
 module.exports = {
+  saveTriage, TRIAGE_FIELDS, triageOf,
   concludeQualification,
   advanceTo,
   lostBoard,

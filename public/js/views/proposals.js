@@ -235,7 +235,7 @@ async function newProposal() {
       if (!chosen) throw new Error('Escolha o cliente.');
       if (!d.opportunity_id) throw new Error('O cliente precisa ter um negócio aberto.');
       const opp = await get(`/api/oportunidades/${d.opportunity_id}`);
-      await newProposalFlow({ ...opp, contact_name: chosen.name }, chosen, { simulations: opp.simulations || [] });
+      await newProposalFlow({ ...opp, contact_name: chosen.name }, chosen);
       return true;
     },
   });

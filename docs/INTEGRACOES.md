@@ -241,9 +241,10 @@ Tela: aba **IA Vero** do painel do lead. Configuração: **Configurações › I
 
 ## 12. Diagnóstico financeiro (ferramenta da Vero Planejamento)
 
-- **Abrir:** `POST /api/diagnosticos` `{ contact_id, opportunity_id?, new? }` devolve a URL `ferramentas/diagnostico-financeiro.html?crm=<id>#/clientes/crm-<id>` (retoma o que está em andamento; `new: true` cria outro).
+- **Abrir:** `POST /api/diagnosticos` `{ contact_id, opportunity_id? }` devolve a URL `ferramentas/diagnostico-financeiro.html?crm=<id>#/clientes/crm-<id>` (o lead tem um diagnóstico: a chamada retoma o existente; não há "refazer").
 - **Ponte:** a página busca `GET /api/diagnosticos/:id/dados` (cadastro para preencher, consultor e o diagnóstico salvo) e grava o cliente no armazenamento do navegador que a ferramenta lê; cada alteração volta por `PUT /api/diagnosticos/:id/dados` `{ data }` (até 4 MB; coleta ou recomendações finalizadas concluem). `POST /api/diagnosticos/:id/concluir` conclui manualmente. `GET /api/cadastros/:id/diagnostico` traz o atual (com o resumo) e o histórico.
-- **Sem `?crm`** a ferramenta funciona sozinha, como o arquivo original (os dados ficam só no navegador). A IA da própria ferramenta (chave informada pelo usuário nas configurações dela) chama `api.anthropic.com` direto do navegador.
+- **Resultado:** cada salvamento envia também `resultado` = `{ estrela: { nota, pilares[] }, matriz: [até 12], bussola: { nota, norte, dimensoes[] } }`, calculado pela própria ferramenta; o CRM guarda o último válido no resumo do diagnóstico e mostra no painel do lead.
+- **Trava:** sem `?crm`, a ferramenta mostra "gere pelo painel do lead" (e, quando o CRM não responde — como na versão de teste —, oferece o modo de demonstração, que não salva). Com `?crm`, ficam escondidos Novo cliente, Carregar exemplo, Importar e Exportar backup, e a navegação fica presa ao cliente do CRM. A IA da própria ferramenta (chave informada pelo usuário nas configurações dela) chama `api.anthropic.com` direto do navegador.
 
 ## Exportação para discadora
 
@@ -258,4 +259,4 @@ Tela: aba **IA Vero** do painel do lead. Configuração: **Configurações › I
 
 ## 14. Precificação do planejamento (diagnóstico → proposta)
 
-A ponte da ferramenta de diagnóstico envia, junto com cada salvamento, a precificação calculada pela própria ferramenta (`precificacao`: valor, total à vista, total e parcelas no cartão, condição). Diagnóstico concluído e precificado gera a proposta de **planejamento** (gerada, pronta para enviar); enquanto não for enviada, acompanha a precificação. Para reaplicar a ponte num diagnóstico já gerado: `node scripts/build-tools.js --atualizar-ponte`.
+A ponte da ferramenta de diagnóstico envia, junto com cada salvamento, a precificação calculada pela própria ferramenta (`precificacao`: valor, total à vista, total e parcelas no cartão, condição). Com o diagnóstico concluído, `POST /api/diagnosticos/:id/proposta` `{ model: 'implementacao' | 'plataforma', valor? }` gera a proposta de **planejamento** do modelo escolhido (valor da precificação ou o informado; à vista e cartão proporcionais). Gerar de novo antes do envio atualiza a mesma proposta; depois de enviada, recusa (crie nova versão). Para reaplicar a ponte num diagnóstico já gerado: `node scripts/build-tools.js --atualizar-ponte`.

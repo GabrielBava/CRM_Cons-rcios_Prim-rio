@@ -128,9 +128,11 @@ function createActivity(db, user, data) {
     if (reason) throw conflict(`${reason} A atividade não foi registrada.`);
   }
   const result = clean(data.result);
-  if (def.call && result) {
-    const ok = db.prepare("SELECT 1 FROM options WHERE list = 'resultado_ligacao' AND value = ?").get(result);
-    if (!ok) throw badRequest('Resultado de ligação inválido.');
+  if (result) {
+    // Ligação: resultado da ligação; mensagens (WhatsApp, e-mail, direct, LinkedIn): resultado do contato
+    const list = def.call ? 'resultado_ligacao' : 'resultado_mensagem';
+    const ok = db.prepare('SELECT 1 FROM options WHERE list = ? AND value = ?').get(list, result) || (!def.call && db.prepare("SELECT 1 FROM options WHERE list = 'resultado_ligacao' AND value = ?").get(result));
+    if (!ok) throw badRequest(def.call ? 'Resultado de ligação inválido.' : 'Resultado do contato inválido.');
   }
   const occurred = toIso(data.occurred_at) || nowIso();
   if (new Date(occurred).getTime() > Date.now() + 5 * 60 * 1000) {
@@ -162,10 +164,10 @@ function createActivity(db, user, data) {
       const now = nowIso();
       const tr = db
         .prepare(
-          `INSERT INTO tasks (contact_id, opportunity_id, type, title, notes, due_at, assigned_to, created_by, created_at, updated_at)
-           VALUES (?, ?, 'retorno', ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO tasks (contact_id, opportunity_id, type, title, notes, due_at, assigned_to, created_by, created_at, updated_at, source_activity_id)
+           VALUES (?, ?, 'retorno', ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(contact.id, data.opportunity_id ? Number(data.opportunity_id) : null, nextAction || 'Retorno ao contato', `Criada a partir da atividade #${id}`, due, user.id, user.id, now, now);
+        .run(contact.id, data.opportunity_id ? Number(data.opportunity_id) : null, nextAction || 'Retorno ao contato', `Criada a partir da atividade #${id} (aproximação: conclua registrando o que foi feito)`, due, user.id, user.id, now, now, id);
       if (data.opportunity_id) {
         db.prepare('UPDATE opportunities SET next_action = ?, next_action_at = ?, updated_at = ? WHERE id = ?').run(
           nextAction || 'Retorno ao contato',
