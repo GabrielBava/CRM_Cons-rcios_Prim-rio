@@ -30,21 +30,21 @@ export async function show(view) {
         <div class="kpi"><div class="kpi-label">Falta para a meta</div><div class="kpi-value">${t.missing_credit != null ? fmtMoney(t.missing_credit) : '—'}</div><div class="kpi-sub">${t.daily_needed ? `${fmtMoney(t.daily_needed)} por dia útil (${t.business_days_left} restantes)` : `${t.business_days_left} dia(s) útil(eis) restante(s)`}</div></div>
       </div>
       ${d.teams.length ? html`<section class="card"><h3>Equipes</h3>
-        <table><thead><tr><th>Equipe</th><th>Líder</th><th class="num">Meta de crédito</th><th class="num">Realizado</th><th>Progresso</th><th class="num">Vendas</th></tr></thead><tbody>
+        <div class="table-scroll"><table><thead><tr><th>Equipe</th><th>Líder</th><th class="num">Meta de crédito</th><th class="num">Realizado</th><th>Progresso</th><th class="num">Vendas</th></tr></thead><tbody>
         ${d.teams.map((tm) => html`<tr><td><strong>${tm.name}</strong>${tm.explicit ? '' : html`<br><small class="muted">soma das metas individuais</small>`}</td><td>${tm.leader_name || '—'}</td>
           <td class="num">${edit ? html`<input type="text" inputmode="decimal" data-money data-team-credit="${tm.id}" value="${tm.explicit ? fmtMoneyInput(tm.target_credit) : ''}" placeholder="${fmtMoneyInput(tm.target_credit)}">` : fmtMoney(tm.target_credit)}</td>
           <td class="num">${fmtMoney(tm.realized_credit)}</td><td>${bar(tm.pct_credit)}<small>${tm.pct_credit != null ? `${tm.pct_credit}%` : '—'}</small></td>
           <td class="num">${edit ? html`<input type="number" min="0" data-team-sales="${tm.id}" value="${tm.explicit ? tm.target_sales ?? '' : ''}" placeholder="${tm.target_sales ?? ''}"> ` : ''}${tm.realized_sales}${tm.target_sales ? ` / ${tm.target_sales}` : ''}</td></tr>`)}
-        </tbody></table></section>` : ''}
+        </tbody></table></div></section>` : ''}
       <section class="card"><div class="section-head"><h3>Especialistas</h3>${edit ? html`<button class="btn primary" data-act="save">Salvar metas</button>` : ''}</div>
-        ${d.people.length ? html`<table><thead><tr><th>Especialista</th><th>Equipe</th><th class="num">Meta de crédito (R$)</th><th class="num">Meta de vendas</th><th class="num">Realizado</th><th>Progresso</th><th class="num">Falta</th><th class="num">Ritmo/dia útil</th></tr></thead><tbody>
+        ${d.people.length ? html`<div class="table-scroll"><table><thead><tr><th>Especialista</th><th>Equipe</th><th class="num">Meta de crédito (R$)</th><th class="num">Meta de vendas</th><th class="num">Realizado</th><th>Progresso</th><th class="num">Falta</th><th class="num">Ritmo/dia útil</th></tr></thead><tbody>
           ${d.people.map((p) => html`<tr><td><strong>${p.name}</strong></td><td>${p.team_name || '—'}</td>
             <td class="num">${edit ? html`<input type="text" inputmode="decimal" data-money data-credit="${p.id}" value="${fmtMoneyInput(p.target_credit)}">` : fmtMoney(p.target_credit)}</td>
             <td class="num">${edit ? html`<input type="number" min="0" data-sales="${p.id}" value="${p.target_sales ?? ''}">` : p.target_sales ?? '—'}</td>
             <td class="num">${fmtMoney(p.realized_credit)}<br><small>${p.realized_sales} venda(s)</small></td>
             <td>${bar(p.pct_credit)}<small>${p.pct_credit != null ? `${p.pct_credit}%` : '—'}</small></td>
             <td class="num">${p.missing_credit != null ? fmtMoney(p.missing_credit) : '—'}</td><td class="num">${p.daily_needed ? fmtMoney(p.daily_needed) : '—'}</td></tr>`)}
-          </tbody></table>` : empty('Nenhum especialista ativo.')}
+          </tbody></table></div>` : empty('Nenhum especialista ativo.')}
         ${edit ? html`<p class="hint">A meta da equipe, quando não informada, é a soma das metas dos especialistas. O realizado considera a data de pagamento das vendas confirmadas.</p>` : ''}
       </section>
     </div>`);

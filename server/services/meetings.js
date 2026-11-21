@@ -242,6 +242,11 @@ async function scheduleR1(db, user, data, req) {
   if (Number.isNaN(end.getTime()) || end <= start) throw badRequest('O horário de término precisa ser depois do início.');
   if (end - start > 4 * 3600 * 1000) throw badRequest('A reunião pode ter no máximo 4 horas.');
   if (start.getTime() < Date.now() - 5 * 60 * 1000) throw badRequest(`Escolha um horário futuro para a ${K}.`);
+  // A R2 só é liberada depois da R1 agendada e concluída (realizada)
+  if (kind === 'r2' && !db.prepare("SELECT 1 FROM tasks WHERE contact_id = ? AND type = 'reuniao' AND COALESCE(meeting_kind, 'r1') = 'r1' AND status = 'concluida' AND outcome = 'realizada'").get(c.id)
+    && !db.prepare("SELECT 1 FROM activities WHERE contact_id = ? AND type = 'reuniao_realizada'").get(c.id)) {
+    throw badRequest('A R2 é liberada depois que a R1 for agendada e concluída.');
+  }
   let email = null;
   if (data.email) {
     email = normalizeEmail(data.email);

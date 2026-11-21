@@ -2451,9 +2451,19 @@ test('IA Vero: insights do lead (próximo passo, canal, BANT, objeções), chat 
   assert.match(a2.data.answer, /Canal sugerido/);
   assert.equal((await call('c1', 'POST', `/api/ia/leads/${c.data.id}/conversa`, { message: '' })).status, 400);
   assert.equal((await call('c1', 'POST', '/api/ia/avaliar', { message_id: a1.data.id, rating: 1 })).status, 200);
-  const hist = (await call('c1', 'GET', `/api/ia/leads/${c.data.id}/conversa`)).data;
+  assert.notEqual(a2.data.thread, a1.data.thread, 'pergunta sem conversa aberta inicia outra conversa');
+  const list = (await call('c1', 'GET', `/api/ia/leads/${c.data.id}/conversa`)).data;
+  assert.equal(list.threads.length, 2, 'cada pergunta sem conversa aberta inicia uma conversa');
+  assert.equal(list.messages.length, 0, 'sem conversa escolhida: Nova conversa');
+  const a3 = await call('c1', 'POST', `/api/ia/leads/${c.data.id}/conversa`, { message: 'O que foi combinado com o cliente?', thread: a1.data.thread });
+  assert.match(a3.data.answer, /O que foi combinado/);
+  assert.equal(a3.data.thread, a1.data.thread);
+  const hist = (await call('c1', 'GET', `/api/ia/leads/${c.data.id}/conversa?thread=${a1.data.thread}`)).data.messages;
   assert.equal(hist.length, 4);
   assert.equal(hist.find((m) => m.id === a1.data.id).rating, 1);
+  assert.match((await call('c1', 'POST', `/api/ia/leads/${c.data.id}/conversa`, { message: 'Objeções' })).data.answer, /Objeções mais comuns/);
+  assert.match((await call('c1', 'POST', `/api/ia/leads/${c.data.id}/conversa`, { message: 'Mensagem pronta para o WhatsApp' })).data.answer, /Mensagem pronta/);
+  assert.ok(ins.data.sources.some((x) => x.key === 'atividades'), 'fontes consultadas');
   // Base de conhecimento: só a liderança cadastra; o item aparece nas objeções do lead
   assert.equal((await call('c1', 'POST', '/api/ia/conhecimento', { kind: 'objecao', title: 'x', content: 'y' })).status, 403);
   const kb = await call('gestor', 'POST', '/api/ia/conhecimento', { kind: 'objecao', title: 'Vou falar com meu sócio', content: 'Claro, {nome}! Marcamos com vocês dois?' });
@@ -2491,4 +2501,66 @@ test('IA Vero: insights do lead (próximo passo, canal, BANT, objeções), chat 
     assistant.setClientFactory(null);
     await call('admin', 'PUT', '/api/ia/config', { enabled: false });
   }
+});
+
+test('pipeline: filtros de data de criação (de/até) e de valor (mínimo/máximo)', async () => {
+  const mk = async (name, phone, credit) => {
+    const c = await call('c1', 'POST', '/api/cadastros', { name, phone1: phone, origin: 'site', relationship: 'lead', credit_value: credit });
+    return (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
+  };
+  const a = await mk('Filtro Valor Baixo', '11 93817-5521', 80000);
+  const b = await mk('Filtro Valor Alto', '11 93817-5522', 900000);
+  const cards = async (q) => (await call('c1', 'GET', `/api/funil?${new URLSearchParams(q)}`)).data.stages.flatMap((s) => s.cards).map((x) => x.id);
+  let ids = await cards({ value_min: 500000 });
+  assert.ok(ids.includes(b.id) && !ids.includes(a.id), 'valor mínimo');
+  ids = await cards({ value_max: 100000 });
+  assert.ok(ids.includes(a.id) && !ids.includes(b.id), 'valor máximo');
+  const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+  ids = await cards({ created_from: today, created_to: today });
+  assert.ok(ids.includes(a.id) && ids.includes(b.id), 'criados hoje');
+  ids = await cards({ created_to: '2020-01-01' });
+  assert.ok(!ids.includes(a.id), 'data de criação até');
+  const list = (await call('c1', 'GET', '/api/oportunidades?value_min=500000&limit=200')).data.rows.map((x) => x.id);
+  assert.ok(list.includes(b.id) && !list.includes(a.id), 'a lista usa os mesmos filtros');
+});
+
+test('arquivos do lead: anexa com tipo, descrição, objetivo e observações; edita, baixa e quem anexou remove', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Arquivos', phone1: '11 93817-5531', origin: 'site', relationship: 'lead' });
+  const meta = (await call('c1', 'GET', '/api/meta')).data.options.tipo_documento.map((o) => o.value);
+  assert.ok(['extrato', 'apolice', 'carteira'].every((t) => meta.includes(t)), 'tipos novos de arquivo');
+  const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
+  const up = await call('c1', 'POST', `/api/cadastros/${c.data.id}/anexos`, { filename: 'extrato.pdf', content_base64: Buffer.from('%PDF-1.4 extrato').toString('base64'), doc_type: 'extrato', description: 'Extrato da carteira', purpose: 'Avaliar a migração', notes: 'Banco X', opportunity_ids: [opp.id] });
+  assert.equal(up.status, 200, JSON.stringify(up.data));
+  let rows = (await call('c1', 'GET', `/api/cadastros/${c.data.id}/anexos`)).data;
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].description, 'Extrato da carteira');
+  assert.equal(rows[0].purpose, 'Avaliar a migração');
+  assert.deepEqual(rows[0].opportunity_ids, [opp.id]);
+  assert.equal((await call('c1', 'PATCH', `/api/anexos/${up.data.id}`, { description: 'Extrato de outubro', doc_type: 'carteira' })).status, 200);
+  rows = (await call('c1', 'GET', `/api/cadastros/${c.data.id}/anexos`)).data;
+  assert.equal(rows[0].description, 'Extrato de outubro');
+  assert.equal(rows[0].doc_type, 'carteira');
+  const dl = await fetch(`${base}/api/anexos/${up.data.id}`, { headers: { Cookie: sessions.c1, 'X-Requested-With': 'crm' } });
+  assert.equal(dl.status, 200);
+  assert.equal((await call('c2', 'GET', `/api/cadastros/${c.data.id}/anexos`)).status, 404, 'fora do escopo');
+  assert.equal((await call('c1', 'PATCH', `/api/anexos/${up.data.id}`, { status: 'removido' })).status, 200, 'quem anexou remove');
+  assert.equal((await call('c1', 'GET', `/api/cadastros/${c.data.id}/anexos`)).data.length, 0);
+});
+
+test('agendas: a R2 só é liberada depois da R1 agendada e concluída', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Trava R2', phone1: '11 93817-5541', email: 'trava.r2@exemplo.com', origin: 'site', relationship: 'lead' });
+  const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
+  const at = (days) => {
+    const d = new Date(Date.now() + days * 86400000);
+    d.setUTCHours(15, 0, 0, 0);
+    return { start_at: d.toISOString(), end_at: new Date(d.getTime() + 60 * 60000).toISOString() };
+  };
+  const early = await call('c1', 'POST', '/api/reunioes/agendar', { kind: 'r2', contact_id: c.data.id, opportunity_id: opp.id, ...at(3) });
+  assert.equal(early.status, 400);
+  assert.match(early.data.error, /R2 é liberada depois que a R1/);
+  const r1 = await call('c1', 'POST', '/api/reunioes/agendar', { kind: 'r1', contact_id: c.data.id, opportunity_id: opp.id, ...at(1) });
+  assert.equal(r1.status, 200, JSON.stringify(r1.data));
+  assert.equal((await call('c1', 'POST', '/api/reunioes/agendar', { kind: 'r2', contact_id: c.data.id, opportunity_id: opp.id, ...at(3) })).status, 400, 'R1 agendada mas não concluída');
+  assert.equal((await call('c1', 'POST', `/api/reunioes/${r1.data.task_id}/resultado`, { result: 'realizada' })).status, 200);
+  assert.equal((await call('c1', 'POST', '/api/reunioes/agendar', { kind: 'r2', contact_id: c.data.id, opportunity_id: opp.id, ...at(3) })).status, 200, 'R1 concluída libera a R2');
 });

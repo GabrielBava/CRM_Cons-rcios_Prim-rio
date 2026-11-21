@@ -421,7 +421,7 @@ Colunas acrescentadas por migração (o SQLite não permite incluir chave estran
 
 **`client_links`** — `id` (PK), `token_hash`, `contact_id` (FK), `created_by` (FK), `created_at`, `expires_at`, `last_used_at`, `submissions`, `revoked_at`, `token`, `first_used_at`, `access_count`, `revoked_by`, `revoke_reason`, `verify_hash`, `verify_expires_at`, `verify_fails`, `verify_locked_until`, `verified_at`
 
-**`attachments`** — `id` (PK), `contact_id` (FK), `proposal_id` (FK), `contract_id` (FK), `finance_entry_id`, `doc_type`, `filename`, `mime`, `size`, `content`, `status`, `valid_until`, `notes`, `source`, `uploaded_by` (FK), `reviewed_by` (FK), `reviewed_at`, `created_at`
+**`attachments`** — `id` (PK), `contact_id` (FK), `proposal_id` (FK), `contract_id` (FK), `finance_entry_id`, `doc_type`, `filename`, `mime`, `size`, `content`, `status`, `valid_until`, `notes`, `source`, `uploaded_by` (FK), `reviewed_by` (FK), `reviewed_at`, `created_at`, `description`, `purpose`
 
 **`attachment_opportunities`** — `attachment_id` (PK) (FK), `opportunity_id` (PK) (FK)
 
@@ -531,7 +531,7 @@ Colunas acrescentadas por migração (o SQLite não permite incluir chave estran
 
 **`ai_knowledge`** — `id` (PK), `kind`, `title`, `content`, `stage_key`, `area`, `active`, `likes`, `dislikes`, `created_by` (FK), `created_at`, `updated_at`
 
-**`ai_messages`** — `id` (PK), `contact_id` (FK), `user_id` (FK), `role`, `content`, `engine`, `rating`, `created_at`
+**`ai_messages`** — `id` (PK), `contact_id` (FK), `user_id` (FK), `role`, `content`, `engine`, `rating`, `created_at`, `thread`
 
 ### Comunicação (Inbox, Tickets e WhatsApp)
 

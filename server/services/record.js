@@ -189,12 +189,12 @@ function insertAttachment(db, contactId, data, { userId = null, source = 'equipe
   const now = nowIso();
   const r = db
     .prepare(
-      `INSERT INTO attachments (contact_id, proposal_id, contract_id, finance_entry_id, doc_type, filename, mime, size, content, status, valid_until, notes, source, uploaded_by, reviewed_by, reviewed_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO attachments (contact_id, proposal_id, contract_id, finance_entry_id, doc_type, filename, mime, size, content, status, valid_until, notes, description, purpose, source, uploaded_by, reviewed_by, reviewed_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(contactId, refs.proposal_id ?? null, refs.contract_id ?? null, refs.finance_entry_id ?? null, docType, filename.slice(0, 200),
       MIME_BY_EXT[ext] || clean(data.mime) || 'application/octet-stream', content.length, content, team ? 'aprovado' : 'recebido',
-      toDateOnly(data.valid_until) ?? null, clean(data.notes) ?? null, source, userId, team ? userId : null, team ? now : null, now);
+      toDateOnly(data.valid_until) ?? null, clean(data.notes) ?? null, clean(data.description)?.slice(0, 300) ?? null, clean(data.purpose)?.slice(0, 300) ?? null, source, userId, team ? userId : null, team ? now : null, now);
   const id = Number(r.lastInsertRowid);
   setAttachmentOpps(db, id, opps);
   return id;
@@ -211,7 +211,7 @@ function uploadAttachment(db, user, contactId, data) {
   });
 }
 
-const ATTACH_META = 'id, contact_id, proposal_id, contract_id, finance_entry_id, doc_type, filename, mime, size, status, valid_until, notes, source, uploaded_by, reviewed_by, reviewed_at, created_at';
+const ATTACH_META = 'id, contact_id, proposal_id, contract_id, finance_entry_id, doc_type, filename, mime, size, status, valid_until, notes, description, purpose, source, uploaded_by, reviewed_by, reviewed_at, created_at';
 
 function listAttachments(db, contactId) {
   return db
@@ -238,7 +238,8 @@ function reviewAttachment(db, user, id, data) {
   const upd = {};
   if (data.status !== undefined) {
     if (!['pendente', 'recebido', 'aprovado', 'recusado', 'removido'].includes(data.status)) throw badRequest('Situação inválida.');
-    if (data.status === 'removido' && !isManager(user)) throw badRequest('Apenas líderes de equipe e administradores removem arquivos.');
+    // Remoção: liderança e administrador; quem anexou pode remover o próprio arquivo (aba Arquivos do painel)
+    if (data.status === 'removido' && !isManager(user) && !(a.source === 'equipe' && a.uploaded_by === user.id)) throw badRequest('Apenas quem anexou, líderes de equipe e administradores removem arquivos.');
     upd.status = data.status;
     if (data.status === 'recusado' && !clean(data.notes)) throw badRequest('Informe o motivo da reprovação.');
     if (['aprovado', 'recusado'].includes(data.status)) {
@@ -252,6 +253,8 @@ function reviewAttachment(db, user, id, data) {
   }
   if (data.valid_until !== undefined) upd.valid_until = toDateOnly(data.valid_until);
   if (data.notes !== undefined) upd.notes = clean(data.notes);
+  if (data.description !== undefined) upd.description = clean(data.description)?.slice(0, 300) ?? null;
+  if (data.purpose !== undefined) upd.purpose = clean(data.purpose)?.slice(0, 300) ?? null;
   const opps = data.opportunity_ids !== undefined ? attachmentOpps(db, a.contact_id, data.opportunity_ids) : null;
   const keys = Object.keys(upd);
   if (!keys.length && !opps) return;

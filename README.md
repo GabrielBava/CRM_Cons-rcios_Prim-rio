@@ -193,6 +193,12 @@ docs/
 - **Produtos (cross-sell/up-sell)**, **Diagnóstico financeiro** (ferramenta da Vero Planejamento ligada ao CRM) e **IA Vero** (motor interno + IA generativa opcional): detalhes em `docs/ESPECIFICACAO.md` §20 e `docs/INTEGRACOES.md` §11–12.
 - **Ferramentas por área:** `public/ferramentas/` (simulador de consórcio e diagnóstico financeiro na marca Vero), geradas por `node scripts/build-tools.js --diag <Diagnostico.html> --sim <Simulador.html>`.
 
+## Tela responsiva, filtros e painel do lead v5
+
+- **Responsivo:** fonte base fluida (notebook ≈14,5px, Full HD 16px, 2560px 18px), conteúdo sem largura fixa, menu recolhido automaticamente entre 761 e 1279px, tabelas com rolagem própria e pop-ups ajustados à tela.
+- **Pipeline:** busca, ordenação e botão **Filtros** numa linha (responsável, área, origem, etapa, próxima ação, prioridade, data de criação de/até e valor mínimo/máximo), com etiquetas removíveis.
+- **Painel do lead:** IA Vero em formato de chat (orbe animado, atalhos, histórico de conversas e fontes) com Análise e Resumo; Detalhes em blocos Dados e Negociação; aba **Arquivos**; R2 liberada só depois da R1 concluída. Detalhes em `docs/ESPECIFICACAO.md` §21.
+
 ## Configuração local (senhas e chaves)
 
 Senhas e chaves (Google, SMTP) ficam no arquivo `config.env`, na pasta do sistema, fora do Git (`.gitignore`). Modelo em `config.env.exemplo`. O servidor lê o arquivo ao iniciar (`npm start`, `npm run local` e os atalhos) e o instalador do Ubuntu o leva para `/etc/vero-consorcios.env`.

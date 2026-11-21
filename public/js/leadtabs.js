@@ -1,7 +1,7 @@
 // Abas do painel do lead da rodada 4: IA Vero (assistente comercial), Produtos (cross-sell/up-sell nas quatro áreas)
 // e Diagnóstico financeiro (ferramenta da Vero Planejamento ligada ao CRM).
-import { get, post, patch, del } from './api.js';
-import { html, raw, esc, render, $, on, modal, field, toast, toastError, fmtMoney, fmtDate, fmtDateTime, relTime, badge, empty, can, hasModule } from './ui.js';
+import { get, post, patch, del, download } from './api.js';
+import { html, raw, esc, render, $, $$, on, modal, field, opts, optLabel, state, toast, toastError, fmtMoney, fmtDate, fmtDateTime, relTime, badge, empty, can, hasModule } from './ui.js';
 import { icon } from './icons.js';
 
 const AREA_ICON = { consorcio: 'consorcio', planejamento: 'planejamento', seguros: 'seguros', investimentos: 'investimentos' };
@@ -68,71 +68,109 @@ const absUrl = (u) => new URL(u, document.baseURI).href;
 /* ------------------------- IA Vero ------------------------- */
 
 const CHANNEL_ICON = { ligacao: 'telefone', whatsapp: 'whatsapp', email: 'email', direct: 'direct', linkedin: 'linkedin' };
+const QUICK_ICON = { objecoes: 'seguros', proximo: 'bandeira', combinado: 'lista', mensagem: 'caneta' };
+const SUBTABS = [['chat', 'Chat', 'chat'], ['analise', 'Análise', 'relatorios'], ['resumo', 'Resumo', 'propostas']];
 
+/** Orbe animado da IA Vero (anel de luz girando e "respirando"). */
+const orb = (size = '') => html`<div class="vai-orb ${size}" aria-hidden="true"><span></span><i></i></div>`;
+const emptyChat = () => html`<div class="vai-empty">${orb()}<p class="vai-hello">Converse com a <b>IA Vero</b></p><p class="vai-sub-txt">Sua coach de vendas com IA para analisar esta negociação.</p></div>`;
+
+/**
+ * Aba IA Vero: Chat (conversa com a coach de vendas, com orbe animado, atalhos, histórico de conversas e fontes),
+ * Análise (próximo passo, canal, BANT, SPIN, objeções, mensagens) e Resumo (o que se sabe do lead e do que foi combinado).
+ */
 export async function renderAiTab(box, ctx) {
   const { contact: c } = ctx;
-  render(box, html`<p class="muted small">A IA Vero está analisando o lead…</p>`);
+  ctx.aiSub ||= 'chat';
+  render(box, html`<div class="vai"><div class="vai-loading">${orb('sm')}<span>A IA Vero está analisando o lead…</span></div></div>`);
   let ins;
-  let hist = [];
   let st = null;
+  let hist = { threads: [], messages: [] };
   try {
-    [ins, hist, st] = await Promise.all([get(`/api/ia/leads/${c.id}`), get(`/api/ia/leads/${c.id}/conversa`).catch(() => []), get('/api/ia/status').catch(() => null)]);
+    [ins, st] = await Promise.all([get(`/api/ia/leads/${c.id}`), get('/api/ia/status').catch(() => null)]);
+    if (ctx.aiThread) hist = await get(`/api/ia/leads/${c.id}/conversa`, { thread: ctx.aiThread }).catch(() => hist);
   } catch (e) {
     render(box, html`<div class="alert danger">${e.message}</div>`);
     return;
   }
   if (!box.isConnected) return;
   ctx.ai = ins;
-  const scoreCls = ins.score.value == null ? '' : ins.score.value >= 70 ? 'hi' : ins.score.value >= 40 ? 'mid' : 'lo';
-  const ch = Object.entries(ins.channels || {});
-  render(box, html`
-    <div class="ai-tab">
-      <section class="ai-hero">
-        <div class="ai-hero-head">${icon('ia', 18)}<strong>IA Vero</strong><small class="muted">${st?.generative ? 'IA generativa ligada' : 'motor interno da plataforma'}</small>${ins.score.value != null ? html`<span class="score s-${scoreCls}" title="Score do lead">${ins.score.value}</span>` : ''}</div>
-        <p class="ai-resumo">${ins.resumo}</p>
-        <div class="ai-next"><small>Próximo passo</small><p>${ins.next}</p></div>
-        ${ins.alerts.length ? html`<ul class="ai-alerts">${ins.alerts.map((a) => html`<li class="lv-${a.level}">${a.text}</li>`)}</ul>` : ''}
-      </section>
-
-      <section class="ai-chat" aria-label="Pergunte à IA">
-        <div class="ai-chips">${(st?.suggestions || []).map((q) => html`<button type="button" class="chip" data-ai-ask="${q}">${q}</button>`)}</div>
-        <div class="ai-msgs" data-ai-msgs>${hist.map((m) => aiMsg(m))}</div>
-        <form class="ai-input" data-ai-form><input name="message" placeholder="Pergunte sobre este lead (ex.: como responder 'vou pensar'?)" autocomplete="off" maxlength="2000" required><button class="btn small primary" type="submit">${icon('enviar', 14)} Perguntar</button></form>
-      </section>
-
-      <div class="ai-grid">
-        <section class="ai-card"><h4>${icon(CHANNEL_ICON[ins.canal.channel] || 'chat', 15)} Canal recomendado: ${ins.canal.label || '—'}</h4><p class="small">${ins.canal.reason}</p><p class="small muted">${ins.canal.hour}</p>
-          ${ch.length ? html`<ul class="ai-chan">${ch.map(([k, v]) => html`<li>${icon(CHANNEL_ICON[k] || 'chat', 13)} ${v.label}: <strong>${v.out}</strong> enviada(s) · <strong>${v.in}</strong> resposta(s)${ins.team_rates?.[k] != null ? html` <small class="muted">· equipe ${Math.round(ins.team_rates[k] * 100)}% de resposta</small>` : ''}</li>`)}</ul>` : ''}</section>
-        <section class="ai-card"><h4>Checklist BANT</h4><ul class="ai-bant">${ins.bant.map((b) => html`<li class="${b.ok ? 'ok' : ''}"><span class="bant-k">${b.key}</span><div><strong>${b.label}</strong>${b.ok ? html`<small>${b.value || 'informado'}</small>` : html`<small>Pergunte: “${b.ask}”</small>`}</div></li>`)}</ul></section>
-        <section class="ai-card"><h4>Score potencial</h4><p class="small">${ins.score.value != null ? html`<strong>${ins.score.value}</strong> de 100.` : 'Sem negócio aberto.'} ${ins.score.missing.length ? html`Para subir: ${ins.score.missing.join(', ')}.` : 'Informações principais completas.'}</p>
-          ${ins.open_items.length ? html`<h5>Em aberto</h5><ul class="small">${ins.open_items.map((x) => html`<li>${x}</li>`)}</ul>` : ''}</section>
-        <section class="ai-card"><h4>Oportunidades (cross-sell)</h4><p class="small">Potencial mapeado: <strong>${fmtMoney(ins.products.potential)}</strong></p>${ins.cross_sell.length ? html`<ul class="small">${ins.cross_sell.map((x) => html`<li>${x}</li>`)}</ul>` : html`<p class="small muted">Nenhuma sugestão nova. Registre em Produtos o que identificar.</p>`}</section>
-      </div>
-
-      <section class="ai-card wide"><h4>Perguntas para a próxima conversa (SPIN)</h4><ul class="ai-list">${ins.questions.map((q) => html`<li><span class="badge">${q.kind}</span> ${q.text} <button type="button" class="link-btn" data-copy="${q.text}" title="Copiar">${icon('copiar', 13)}</button></li>`)}</ul></section>
-
-      <section class="ai-card wide"><h4>Objeções no WhatsApp</h4><div class="ai-obj">${ins.objections.map((o) => html`<details><summary>${o.title}</summary><blockquote>${o.response}</blockquote><small class="muted">${o.tip}</small>
-        <div class="inline-actions"><button type="button" class="btn small" data-copy="${o.response}">${icon('copiar', 13)} Copiar</button>${hasModule('whatsapp') ? html`<a class="btn small ghost" href="#/comunicacao/whatsapp?contato=${c.id}&texto=${encodeURIComponent(o.response)}" data-close>${icon('whatsapp', 13)} Enviar pelo WhatsApp da empresa</a>` : ''}${o.kb_id ? html`<button type="button" class="link-btn" data-ai-kb="${o.kb_id}" data-rate="1" title="Ajudou">${icon('curtir', 14)}</button><button type="button" class="link-btn" data-ai-kb="${o.kb_id}" data-rate="-1" title="Não ajudou">${icon('descurtir', 14)}</button>` : ''}</div></details>`)}</div></section>
-
-      <section class="ai-card wide"><h4>Mensagens prontas</h4><ul class="ai-list">${ins.messages.map((m) => html`<li><strong>${m.title}</strong><p class="small">${m.text}</p><button type="button" class="btn small" data-copy="${m.text}">${icon('copiar', 13)} Copiar</button></li>`)}</ul>
-        ${ins.tips.length ? html`<h5>Dicas da equipe</h5><ul class="small">${ins.tips.map((t) => html`<li><strong>${t.title}:</strong> ${t.text}</li>`)}</ul>` : ''}</section>
-      <p class="hint">A IA Vero usa os dados do CRM (etapa, atividades, qualificação, propostas, produtos e diagnóstico) e a base de conhecimento da equipe, que cresce com os 👍/👎 e com o que a liderança cadastra em Ferramentas › Base da IA Vero.</p>
-    </div>`);
-  const msgs = $('[data-ai-msgs]', box);
-  if (msgs) msgs.scrollTop = msgs.scrollHeight;
+  ctx.aiStatus = st;
+  const quick = st?.quick || [];
+  render(box, html`<div class="vai">
+    <nav class="vai-subtabs" role="tablist">${SUBTABS.map(([k, label, ic]) => html`<button type="button" role="tab" class="${ctx.aiSub === k ? 'active' : ''}" aria-selected="${ctx.aiSub === k}" data-vai-sub="${k}">${icon(ic, 14)} ${label}</button>`)}</nav>
+    <section class="vai-chat" data-vai-pane="chat" ${ctx.aiSub === 'chat' ? '' : raw('hidden')}>
+      <header class="vai-head"><span class="vai-title">${icon('ia', 14)} <strong data-vai-title>${hist.messages.length ? 'Conversa' : 'Nova conversa'}</strong></span><span class="grow"></span>
+        <button type="button" class="vai-src" data-vai-sources title="Dados que a IA Vero consultou">${ins.sources.length} fontes</button>
+        <button type="button" class="icon-btn" data-vai-hist title="Conversas anteriores" aria-label="Conversas anteriores">${icon('historico', 16)}</button>
+        <button type="button" class="icon-btn" data-vai-new title="Nova conversa" aria-label="Nova conversa">${icon('editar', 16)}</button>
+      </header>
+      <div class="vai-pop" data-vai-popover hidden></div>
+      <div class="vai-body" data-vai-body>${hist.messages.length ? hist.messages.map((m) => aiMsg(m)) : emptyChat()}</div>
+      <div class="vai-quick">${quick.map((q) => html`<button type="button" class="vai-chip" data-ai-ask="${q.prompt}">${icon(QUICK_ICON[q.key] || 'ia', 13)} ${q.label}</button>`)}</div>
+      <form class="vai-input" data-ai-form><textarea name="message" rows="1" placeholder="Pergunte algo sobre esta negociação…" maxlength="2000" aria-label="Pergunta para a IA Vero"></textarea><button class="vai-send" type="submit" aria-label="Enviar">${icon('enviar', 16)}</button></form>
+      <small class="vai-foot">${st?.generative ? 'IA generativa' : 'IA Vero (motor interno)'} · Enter envia · Shift+Enter quebra linha</small>
+    </section>
+    <section data-vai-pane="analise" ${ctx.aiSub === 'analise' ? '' : raw('hidden')}>${analysisPane(ins, c)}</section>
+    <section data-vai-pane="resumo" ${ctx.aiSub === 'resumo' ? '' : raw('hidden')}>${summaryPane(ins)}</section>
+  </div>`);
+  const body = $('[data-vai-body]', box);
+  if (body) body.scrollTop = body.scrollHeight;
 }
 
-const aiMsg = (m) => html`<div class="ai-msg ${m.role}" data-mid="${m.id || ''}">${m.role === 'assistant' ? html`<div class="ai-msg-body">${md(m.content)}</div>
-  <div class="ai-msg-actions"><small class="muted">${m.engine === 'claude' ? 'IA generativa' : 'IA Vero'}</small><button type="button" class="link-btn" data-copy="${m.content.replace(/\*\*/g, '').replace(/^> /gm, '')}" title="Copiar">${icon('copiar', 13)}</button>${m.id ? html`<button type="button" class="link-btn ${m.rating === 1 ? 'on' : ''}" data-ai-rate="${m.id}" data-rate="1" title="Ajudou">${icon('curtir', 13)}</button><button type="button" class="link-btn ${m.rating === -1 ? 'on' : ''}" data-ai-rate="${m.id}" data-rate="-1" title="Não ajudou">${icon('descurtir', 13)}</button>` : ''}</div>` : html`<p>${m.content}</p>`}</div>`;
+/** Análise: próximo passo, alertas, canal, BANT, score, oportunidades, SPIN, objeções e mensagens. */
+function analysisPane(ins, c) {
+  const scoreCls = ins.score.value == null ? '' : ins.score.value >= 70 ? 'hi' : ins.score.value >= 40 ? 'mid' : 'lo';
+  const ch = Object.entries(ins.channels || {});
+  return html`<div class="ai-tab">
+    <section class="ai-hero"><div class="ai-hero-head">${icon('ia', 16)}<strong>Próximo passo</strong>${ins.score.value != null ? html`<span class="score s-${scoreCls}" title="Score do lead">${ins.score.value}</span>` : ''}</div>
+      <p class="ai-next-txt">${ins.next}</p>
+      ${ins.alerts.length ? html`<ul class="ai-alerts">${ins.alerts.map((a) => html`<li class="lv-${a.level}">${a.text}</li>`)}</ul>` : ''}</section>
+    <div class="ai-grid">
+      <section class="ai-card"><h4>${icon(CHANNEL_ICON[ins.canal.channel] || 'chat', 15)} Canal recomendado: ${ins.canal.label || '—'}</h4><p class="small">${ins.canal.reason}</p><p class="small muted">${ins.canal.hour}</p>
+        ${ch.length ? html`<ul class="ai-chan">${ch.map(([k, v]) => html`<li>${icon(CHANNEL_ICON[k] || 'chat', 13)} ${v.label}: <strong>${v.out}</strong> enviada(s) · <strong>${v.in}</strong> resposta(s)${ins.team_rates?.[k] != null ? html` <small class="muted">· equipe ${Math.round(ins.team_rates[k] * 100)}%</small>` : ''}</li>`)}</ul>` : ''}</section>
+      <section class="ai-card"><h4>Checklist BANT</h4><ul class="ai-bant">${ins.bant.map((b) => html`<li class="${b.ok ? 'ok' : ''}"><span class="bant-k">${b.key}</span><div><strong>${b.label}</strong>${b.ok ? html`<small>${b.value || 'Informado'}</small>` : html`<small>Pergunte: “${b.ask}”</small>`}</div></li>`)}</ul></section>
+      <section class="ai-card"><h4>Score potencial</h4><p class="small">${ins.score.value != null ? html`<strong>${ins.score.value}</strong> de 100.` : 'Sem negócio aberto.'} ${ins.score.missing.length ? html`Para subir: ${ins.score.missing.join(', ')}.` : 'Informações principais completas.'}</p></section>
+      <section class="ai-card"><h4>Oportunidades</h4><p class="small">Potencial mapeado: <strong>${fmtMoney(ins.products.potential)}</strong></p>${ins.cross_sell.length ? html`<ul class="small">${ins.cross_sell.map((x) => html`<li>${x}</li>`)}</ul>` : ''}</section>
+    </div>
+    <section class="ai-card wide"><h4>Perguntas para a próxima conversa (SPIN)</h4><ul class="ai-list">${ins.questions.map((q) => html`<li><span class="badge">${q.kind}</span> ${q.text} <button type="button" class="link-btn" data-copy="${q.text}" title="Copiar">${icon('copiar', 13)}</button></li>`)}</ul></section>
+    <section class="ai-card wide"><h4>Objeções no WhatsApp</h4><div class="ai-obj">${ins.objections.map((o) => html`<details><summary>${o.title}</summary><blockquote>${o.response}</blockquote><small class="muted">${o.tip}</small>
+      <div class="inline-actions"><button type="button" class="btn small" data-copy="${o.response}">${icon('copiar', 13)} Copiar</button>${hasModule('whatsapp') ? html`<a class="btn small ghost" href="#/comunicacao/whatsapp?contato=${c.id}&texto=${encodeURIComponent(o.response)}" data-close>${icon('whatsapp', 13)} Enviar pelo WhatsApp</a>` : ''}${o.kb_id ? html`<button type="button" class="link-btn" data-ai-kb="${o.kb_id}" data-rate="1" title="Ajudou">${icon('curtir', 14)}</button><button type="button" class="link-btn" data-ai-kb="${o.kb_id}" data-rate="-1" title="Não ajudou">${icon('descurtir', 14)}</button>` : ''}</div></details>`)}</div></section>
+    <section class="ai-card wide"><h4>Mensagens prontas</h4><ul class="ai-list">${ins.messages.map((m) => html`<li><strong>${m.title}</strong><p class="small">${m.text}</p><button type="button" class="btn small" data-copy="${m.text}">${icon('copiar', 13)} Copiar</button></li>`)}</ul>
+      ${ins.tips.length ? html`<h5>Dicas da equipe</h5><ul class="small">${ins.tips.map((t) => html`<li><strong>${t.title}:</strong> ${t.text}</li>`)}</ul>` : ''}</section>
+  </div>`;
+}
+
+/** Resumo: quem é o lead, em que pé está, o que foi combinado, o que está em aberto e as oportunidades. */
+function summaryPane(ins) {
+  const bantOk = ins.bant.filter((b) => b.ok).map((b) => b.label.split(' ')[0]);
+  const bantMiss = ins.bant.filter((b) => !b.ok).map((b) => b.label.split(' ')[0]);
+  return html`<div class="vai-resumo">
+    <section><h5>Quem é</h5><p>${ins.resumo}</p></section>
+    <section><h5>Em que pé está</h5><p>${ins.stage ? html`<strong>${ins.stage.name}</strong> há ${ins.stage.days} dia(s). ` : ''}${ins.next}</p>${ins.r1_deadline ? html`<p class="small muted">Prazo da cadência (R1): ${fmtDate(ins.r1_deadline)}</p>` : ''}</section>
+    <section><h5>O que foi combinado</h5>${ins.agreed.length ? html`<ul>${ins.agreed.map((x) => html`<li>${x.text} <small class="muted">${fmtDate(x.at)}</small></li>`)}</ul>` : html`<p class="muted small">Ainda não há anotações de reunião ou de conversa.</p>`}</section>
+    <section><h5>Em aberto</h5>${ins.open_items.length ? html`<ul>${ins.open_items.map((x) => html`<li>${x}</li>`)}</ul>` : html`<p class="muted small">Nada pendente.</p>`}</section>
+    <section><h5>Qualificação (BANT)</h5><p>${bantOk.length ? html`Levantado: ${bantOk.join(', ')}. ` : ''}${bantMiss.length ? html`Falta: ${bantMiss.join(', ')}.` : 'Completa.'}</p></section>
+    <section><h5>Oportunidades</h5><p>Potencial mapeado: <strong>${fmtMoney(ins.products.potential)}</strong>${ins.diagnostic ? html` · Diagnóstico ${ins.diagnostic.status === 'concluido' ? 'concluído' : 'em andamento'}` : ''}</p>${ins.cross_sell.length ? html`<ul>${ins.cross_sell.map((x) => html`<li>${x}</li>`)}</ul>` : ''}</section>
+    <p class="hint">Fontes: ${ins.sources.map((x) => x.label).join(' · ')}.</p>
+  </div>`;
+}
+
+const aiMsg = (m) => html`<div class="ai-msg ${m.role}" data-mid="${m.id || ''}">${m.role === 'assistant' ? html`<span class="ai-msg-ava">${orb('xs')}</span><div class="ai-msg-main"><div class="ai-msg-body">${md(m.content)}</div>
+  <div class="ai-msg-actions"><small class="muted">${m.engine === 'claude' ? 'IA generativa' : 'IA Vero'}</small><button type="button" class="link-btn" data-copy="${m.content.replace(/\*\*/g, '').replace(/^> /gm, '')}" title="Copiar">${icon('copiar', 13)}</button>${m.id ? html`<button type="button" class="link-btn ${m.rating === 1 ? 'on' : ''}" data-ai-rate="${m.id}" data-rate="1" title="Ajudou">${icon('curtir', 13)}</button><button type="button" class="link-btn ${m.rating === -1 ? 'on' : ''}" data-ai-rate="${m.id}" data-rate="-1" title="Não ajudou">${icon('descurtir', 13)}</button>` : ''}</div></div>` : html`<p>${m.content}</p>`}</div>`;
 
 async function ask(el, ctx, question) {
-  const box = $('[data-ai-msgs]', el);
+  const box = $('[data-vai-body]', el);
   if (!box || !question) return;
+  $('.vai-empty', box)?.remove();
   box.insertAdjacentHTML('beforeend', String(aiMsg({ role: 'user', content: question })));
-  box.insertAdjacentHTML('beforeend', '<div class="ai-msg assistant typing"><p>…</p></div>');
+  box.insertAdjacentHTML('beforeend', String(html`<div class="ai-msg assistant typing"><span class="ai-msg-ava">${orb('xs think')}</span><div class="ai-msg-main"><p class="muted">Analisando a negociação…</p></div></div>`));
   box.scrollTop = box.scrollHeight;
+  const title = $('[data-vai-title]', el);
+  if (title) title.textContent = 'Conversa';
   try {
-    const r = await post(`/api/ia/leads/${ctx.contact.id}/conversa`, { message: question });
+    const r = await post(`/api/ia/leads/${ctx.contact.id}/conversa`, { message: question, thread: ctx.aiThread || undefined });
+    ctx.aiThread = r.thread;
     box.querySelector('.typing')?.remove();
     box.insertAdjacentHTML('beforeend', String(aiMsg({ id: r.id, role: 'assistant', content: r.answer, engine: r.engine })));
     if (r.note) toast(r.note);
@@ -141,6 +179,21 @@ async function ask(el, ctx, question) {
     toastError(e);
   }
   box.scrollTop = box.scrollHeight;
+}
+
+async function showHistory(el, ctx) {
+  const pop = $('[data-vai-popover]', el);
+  if (!pop) return;
+  if (!pop.hidden && pop.dataset.kind === 'hist') return (pop.hidden = true);
+  pop.dataset.kind = 'hist';
+  pop.hidden = false;
+  render(pop, html`<p class="muted small">Carregando…</p>`);
+  try {
+    const r = await get(`/api/ia/leads/${ctx.contact.id}/conversa`);
+    render(pop, html`<strong>Conversas anteriores</strong>${r.threads.length ? html`<ul>${r.threads.map((t) => html`<li><button type="button" data-vai-open="${t.thread}"><span>${t.first || 'Conversa'}</span><small>${fmtDateTime(t.last_at)} · ${Math.ceil(t.n / 2)} pergunta(s)</small></button></li>`)}</ul>` : html`<p class="muted small">Nenhuma conversa ainda.</p>`}`);
+  } catch (e) {
+    render(pop, html`<p class="danger-text small">${e.message}</p>`);
+  }
 }
 
 /* ------------------------- Produtos (cross-sell / up-sell) ------------------------- */
@@ -158,12 +211,13 @@ export async function renderProductsTab(box, ctx) {
   if (!box.isConnected) return;
   ctx.products = r;
   const w = can.write();
+  const SHORT = { consorcio: 'Consórcio', planejamento: 'Planejamento', seguros: 'Seguros', investimentos: 'Investimentos' };
   render(box, html`
-    <div class="prod-summary"><div><small>Potencial mapeado (cross-sell e up-sell)</small><strong>${fmtMoney(r.potential)}</strong></div>
-      ${Object.entries(r.areas).map(([k, a]) => html`<div class="prod-kpi area-${k}">${icon(AREA_ICON[k], 16)}<span><strong>${r.totals[k].count}</strong><small>${a.label}</small></span></div>`)}</div>
+    <div class="prod-total"><span>Potencial mapeado</span><strong>${fmtMoney(r.potential)}</strong></div>
+    <div class="prod-kpis">${Object.keys(r.areas).map((k) => html`<div class="prod-kpi area-${k}"><span class="pk-title">${icon(AREA_ICON[k], 14)} ${SHORT[k]}</span><small>Potencial mapeado</small><strong>${fmtMoney(r.totals[k].potential)}</strong></div>`)}</div>
     <div class="prod-areas">${Object.entries(r.areas).map(([k, a]) => {
       const items = r.rows.filter((p) => p.area === k);
-      return html`<section class="prod-area area-${k}"><header>${icon(AREA_ICON[k], 20)}<div class="grow"><h4>${a.label}</h4><small class="muted">${a.hint}</small></div>${w ? html`<button type="button" class="btn small" data-prod-new="${k}">${icon('adicionar', 13)} Adicionar</button>` : ''}</header>
+      return html`<section class="prod-area area-${k}"><header>${icon(AREA_ICON[k], 18)}<h4 class="grow">${a.label}</h4>${w ? html`<button type="button" class="btn small" data-prod-new="${k}">${icon('adicionar', 13)} Adicionar</button>` : ''}</header>
         ${items.length ? html`<ul class="prod-list">${items.map((p) => html`<li class="st-${p.status}"><div class="grow"><strong>${a.subs[p.sub_type] || p.sub_type}</strong> ${badge(r.status[p.status], { potencial: '', em_andamento: 'warn', convertido: 'ok', descartado: 'muted' }[p.status])}
           <small class="muted">${p.value ? fmtMoney(p.value) : ''}${p.value && p.value_range ? ' · ' : ''}${p.value_range ? a.ranges?.[p.value_range] : ''}</small>
           ${p.description ? html`<p class="small">${p.description}</p>` : ''}${p.notes ? html`<p class="small muted">${p.notes}</p>` : ''}</div>
@@ -240,6 +294,75 @@ export function startDiagnostic(contactId, { opportunityId = null, fresh = false
 }
 export const openDiagnostic = (id) => window.open(absUrl(`ferramentas/diagnostico-financeiro.html?crm=${id}#/clientes/crm-${id}`), '_blank', 'noopener');
 
+/* ------------------------- Arquivos do lead ------------------------- */
+
+const EXT_ICON = (name) => (/\.(png|jpe?g|webp|gif|heic)$/i.test(name) ? 'anexo' : /\.(xlsx?|csv|ods)$/i.test(name) ? 'relatorios' : 'propostas');
+const fmtSize = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1).replace('.', ',')} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+function fileToBase64(file) {
+  return new Promise((ok, fail) => {
+    const r = new FileReader();
+    r.onload = () => ok(String(r.result).replace(/^data:[^,]*,/, ''));
+    r.onerror = () => fail(new Error('Não foi possível ler o arquivo.'));
+    r.readAsDataURL(file);
+  });
+}
+
+/** Arquivos do cliente: extratos, apólices, carteiras, contratos... com descrição, objetivo, observações e vínculo ao negócio. */
+export async function renderFilesTab(box, ctx) {
+  const { contact: c } = ctx;
+  render(box, html`<p class="muted small">Carregando os arquivos…</p>`);
+  let rows;
+  try {
+    rows = await get(`/api/cadastros/${c.id}/anexos`);
+  } catch (e) {
+    render(box, html`<div class="alert danger">${e.message}</div>`);
+    return;
+  }
+  if (!box.isConnected) return;
+  ctx.files = rows;
+  const w = can.write();
+  render(box, html`<div class="section-head"><h4>Arquivos do cliente</h4>${w ? html`<button type="button" class="btn small primary" data-file-new>${icon('anexo', 14)} Anexar arquivo</button>` : ''}</div>
+    <p class="hint">Extratos, apólices, carteira de investimentos, contratos de outras instituições e outros documentos do cliente. Formatos: PDF, imagem, Word, Excel ou CSV (até 8 MB).</p>
+    ${rows.length ? html`<ul class="file-list">${rows.map((a) => html`<li><span class="file-ico">${icon(EXT_ICON(a.filename), 18)}</span>
+      <div class="grow"><strong>${a.description || a.filename}</strong> <span class="badge">${optLabel('tipo_documento', a.doc_type) || 'Outro'}</span>${a.source === 'cliente' ? html` <span class="badge info">Enviado pelo cliente</span>` : ''}
+        ${a.purpose ? html`<p class="small"><span class="muted">Objetivo:</span> ${a.purpose}</p>` : ''}${a.notes ? html`<p class="small muted">${a.notes}</p>` : ''}
+        <small class="muted">${a.filename} · ${fmtSize(a.size)} · ${fmtDateTime(a.created_at)} · ${a.uploaded_by_name || 'Cliente'}${a.opportunity_ids.length ? ` · negócio ${a.opportunity_ids.map((id) => (c.opportunities || []).find((o) => o.id === id)?.code || id).join(', ')}` : ''}</small></div>
+      <div class="file-actions"><button type="button" class="link-btn" data-file-dl="${a.id}">Baixar</button>${w ? html`<button type="button" class="link-btn" data-file-edit="${a.id}">Editar</button>` : ''}${w && (can.manage() || (a.source === 'equipe' && a.uploaded_by === state.user.id)) ? html`<button type="button" class="link-btn danger" data-file-del="${a.id}">Remover</button>` : ''}</div></li>`)}</ul>`
+    : html`<div class="empty-files">${icon('anexo', 26)}<p>Nenhum arquivo anexado.</p></div>`}`);
+}
+
+function fileForm(ctx, a = null) {
+  const c = ctx.contact;
+  const opps = (c.opportunities || []).map((o) => ({ value: o.id, label: `${o.code} — ${o.stage_name}` }));
+  return modal({
+    title: a ? 'Editar arquivo' : `Anexar arquivo — ${c.name}`,
+    wide: true,
+    submitLabel: a ? 'Salvar' : 'Anexar',
+    body: html`<div class="grid">
+      ${a ? html`<p class="full small muted">Arquivo: <strong>${a.filename}</strong></p>` : html`<div class="field full"><label>Arquivo <span class="req">*</span></label><input type="file" name="file" required accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.gif,.doc,.docx,.xls,.xlsx,.csv,.txt,.odt,.ods"></div>`}
+      ${field({ name: 'doc_type', label: 'Tipo de arquivo', type: 'select', options: opts('tipo_documento'), value: a?.doc_type || 'extrato', allowEmpty: false })}
+      ${opps.length ? field({ name: 'opportunity_id', label: 'Vincular ao negócio', type: 'select', options: opps, value: a?.opportunity_ids?.[0] || ctx.opp?.id, placeholder: 'Só ao cliente' }) : ''}
+      ${field({ name: 'description', label: 'Descrição do arquivo', value: a?.description, full: true, required: true, placeholder: 'Ex.: Extrato da carteira de investimentos — Banco X, outubro/2026' })}
+      ${field({ name: 'purpose', label: 'Objetivo', value: a?.purpose, full: true, placeholder: 'Ex.: Avaliar a migração da carteira; base para o diagnóstico financeiro' })}
+      ${field({ name: 'notes', label: 'Observações', type: 'textarea', rows: 2, value: a?.notes, full: true })}
+    </div>`,
+    async onSubmit(d, form) {
+      const link = d.opportunity_id ? [Number(d.opportunity_id)] : [];
+      if (a) {
+        await patch(`/api/anexos/${a.id}`, { doc_type: d.doc_type, description: d.description, purpose: d.purpose, notes: d.notes, opportunity_ids: link });
+        toast('Arquivo atualizado.');
+        return true;
+      }
+      const f = form.file.files[0];
+      if (!f) throw new Error('Escolha o arquivo.');
+      if (f.size > 8 * 1024 * 1024) throw new Error('Arquivo maior que 8 MB.');
+      await post(`/api/cadastros/${c.id}/anexos`, { filename: f.name, mime: f.type, content_base64: await fileToBase64(f), doc_type: d.doc_type, description: d.description, purpose: d.purpose, notes: d.notes, opportunity_ids: link });
+      toast('Arquivo anexado.');
+      return true;
+    },
+  });
+}
+
 /* ------------------------- eventos ------------------------- */
 
 /** Liga os eventos das três abas no painel (delegação no elemento do painel). */
@@ -250,7 +373,82 @@ export function bindLeadTabs(el, getCtx, { redraw }) {
     e.preventDefault();
     const q = f.message.value.trim();
     f.message.value = '';
+    f.message.style.height = '';
     ask(el, getCtx(), q);
+  });
+  // Enter envia; Shift+Enter quebra a linha; o campo cresce com o texto
+  on(el, 'keydown', '[data-ai-form] textarea', (e, t) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      t.form.requestSubmit();
+    }
+  });
+  on(el, 'input', '[data-ai-form] textarea', (e, t) => {
+    t.style.height = '';
+    t.style.height = `${Math.min(t.scrollHeight, 140)}px`;
+  });
+  on(el, 'click', '[data-vai-sub]', (e, b) => {
+    const ctx = getCtx();
+    ctx.aiSub = b.dataset.vaiSub;
+    $$('[data-vai-sub]', el).forEach((x) => {
+      x.classList.toggle('active', x === b);
+      x.setAttribute('aria-selected', String(x === b));
+    });
+    $$('[data-vai-pane]', el).forEach((p) => (p.hidden = p.dataset.vaiPane !== ctx.aiSub));
+  });
+  on(el, 'click', '[data-vai-new]', () => {
+    const ctx = getCtx();
+    ctx.aiThread = null;
+    const body = $('[data-vai-body]', el);
+    if (body) render(body, emptyChat());
+    const t = $('[data-vai-title]', el);
+    if (t) t.textContent = 'Nova conversa';
+    const pop = $('[data-vai-popover]', el);
+    if (pop) pop.hidden = true;
+    $('[data-ai-form] textarea', el)?.focus();
+  });
+  on(el, 'click', '[data-vai-hist]', () => showHistory(el, getCtx()));
+  on(el, 'click', '[data-vai-sources]', () => {
+    const ctx = getCtx();
+    const pop = $('[data-vai-popover]', el);
+    if (!pop || !ctx.ai) return;
+    if (!pop.hidden && pop.dataset.kind === 'src') return (pop.hidden = true);
+    pop.dataset.kind = 'src';
+    pop.hidden = false;
+    render(pop, html`<strong>Fontes consultadas</strong><ul>${ctx.ai.sources.map((x) => html`<li class="src-item"><span>${x.label}</span><small>${x.n}</small></li>`)}</ul>`);
+  });
+  on(el, 'click', '[data-vai-open]', async (e, b) => {
+    const ctx = getCtx();
+    try {
+      const r = await get(`/api/ia/leads/${ctx.contact.id}/conversa`, { thread: b.dataset.vaiOpen });
+      ctx.aiThread = b.dataset.vaiOpen === 'anterior' ? null : b.dataset.vaiOpen;
+      const body = $('[data-vai-body]', el);
+      render(body, html`${r.messages.map((m) => aiMsg(m))}`);
+      body.scrollTop = body.scrollHeight;
+      $('[data-vai-title]', el).textContent = 'Conversa';
+      $('[data-vai-popover]', el).hidden = true;
+    } catch (ex) {
+      toastError(ex);
+    }
+  });
+  on(el, 'click', '[data-file-new]', async () => {
+    if (await fileForm(getCtx())) redraw('arquivos');
+  });
+  on(el, 'click', '[data-file-edit]', async (e, b) => {
+    const ctx = getCtx();
+    const a = ctx.files?.find((x) => x.id === Number(b.dataset.fileEdit));
+    if (a && (await fileForm(ctx, a))) redraw('arquivos');
+  });
+  on(el, 'click', '[data-file-dl]', (e, b) => download(`/api/anexos/${b.dataset.fileDl}`).catch(toastError));
+  on(el, 'click', '[data-file-del]', async (e, b) => {
+    if (!window.confirm('Remover este arquivo do cadastro?')) return;
+    try {
+      await patch(`/api/anexos/${b.dataset.fileDel}`, { status: 'removido' });
+      toast('Arquivo removido.');
+      redraw('arquivos');
+    } catch (ex) {
+      toastError(ex);
+    }
   });
   on(el, 'click', '[data-ai-rate]', async (e, b) => {
     try {

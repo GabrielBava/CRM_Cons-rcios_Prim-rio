@@ -371,6 +371,10 @@ function seedDemo(db, password) {
         dependentes: [{ nome: 'Filho' }], imoveis: [], moveis: [{ tipo: 'Carro' }], financiamentos: [], emprestimos: [], cartoes: [{ banco: 'Cartão' }], recomendacoes: [],
       } });
     }
+    // Arquivos do lead (aba Arquivos): extrato da carteira para avaliar a migração
+    if (ids[6]) {
+      record.uploadAttachment(db, prodOwner(ids[6]), ids[6], { filename: 'extrato-carteira-outubro.pdf', content_base64: PDF, doc_type: 'extrato', description: 'Extrato da carteira de investimentos — outubro', purpose: 'Avaliar a migração da carteira para a assessoria', notes: 'Enviado pelo cliente por e-mail.' });
+    }
     // Base da IA Vero: itens cadastrados pela liderança
     const assistant = require('./services/assistant');
     assistant.saveKnowledge(db, gestor, { kind: 'objecao', title: 'Vou falar com meu sócio', content: 'Faz todo sentido, {nome}. Que tal marcarmos 20 minutos com vocês dois? Assim eu explico direto para ele e vocês decidem juntos, sem telefone sem fio.' });
@@ -399,10 +403,6 @@ function seedDemo(db, password) {
       contemplation_credit: r2(kc.credit_value * 1.045), net_to_pay: r2(kc.credit_value * 0.9), client_choice: 'faturamento',
     });
   }
-  // Ingresso no CRM antes do primeiro contato (as atividades do demo são retroativas)
-  for (const c of db.prepare('SELECT id, created_at, first_contact_at FROM contacts WHERE first_contact_at IS NOT NULL AND first_contact_at < created_at').all()) {
-    db.prepare('UPDATE contacts SET created_at = ? WHERE id = ?').run(new Date(Date.parse(c.first_contact_at) - DAY / 3).toISOString(), c.id);
-  }
   seedTreasuryDemo(db, { admin, gestor, c1, PDF });
   seedPeopleDemo(db, { admin, gestor, c1, c2, team, PDF });
   seedDocumentsDemo(db, { admin, PDF });
@@ -410,6 +410,10 @@ function seedDemo(db, password) {
   finance.overdueSweep(db);
   sales.presaleSweep(db);
   sales.commissionSweep(db);
+  // Ingresso no CRM antes do primeiro contato (as atividades do demo são retroativas)
+  for (const c of db.prepare('SELECT id, created_at, first_contact_at FROM contacts WHERE first_contact_at IS NOT NULL AND first_contact_at < created_at').all()) {
+    db.prepare('UPDATE contacts SET created_at = ? WHERE id = ?').run(new Date(Date.parse(c.first_contact_at) - DAY / 3).toISOString(), c.id);
+  }
 }
 
 /**

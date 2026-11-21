@@ -581,6 +581,26 @@ function oppFilters(db, user, q) {
     }
     where.push(`(${or.join(' OR ')})`);
   }
+  // Data de criação do negócio (de/até, dias inteiros) e valor do negócio (mínimo/máximo: maior proposta ativa ou o crédito desejado)
+  const day = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null);
+  if (day(q.created_from)) {
+    where.push('o.created_at >= ?');
+    params.push(new Date(`${day(q.created_from)}T00:00:00-03:00`).toISOString());
+  }
+  if (day(q.created_to)) {
+    where.push('o.created_at < ?');
+    params.push(new Date(Date.parse(`${day(q.created_to)}T00:00:00-03:00`) + 86400000).toISOString());
+  }
+  const DEAL = "COALESCE((SELECT MAX(pr.credit_value) FROM proposals pr WHERE pr.opportunity_id = o.id AND pr.status IN ('rascunho','apresentada','em_analise','aprovada')), o.credit_value, 0)";
+  const num = (v) => (v === undefined || v === null || v === '' || Number.isNaN(Number(v)) ? null : Number(v));
+  if (num(q.value_min) != null) {
+    where.push(`${DEAL} >= ?`);
+    params.push(num(q.value_min));
+  }
+  if (num(q.value_max) != null) {
+    where.push(`${DEAL} <= ?`);
+    params.push(num(q.value_max));
+  }
   if (q.from) {
     where.push('o.created_at >= ?');
     params.push(toIso(q.from));

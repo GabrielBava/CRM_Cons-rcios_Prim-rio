@@ -192,6 +192,18 @@ cliques em `iniciar-windows.bat`. Ao fechar a área restrita, tudo é apagado.
 9. **Pipeline › Perdidos** (gestora ou admin): onde cada lead foi perdido e os motivos (MP) por etapa.
 10. **Ferramentas:** separadas por área; o Simulador de consórcio abre com a senha da equipe (a do arquivo original).
 
+### H5. Tela responsiva, filtros do pipeline e painel do lead v5
+
+1. **Tamanhos de tela:** redimensione a janela (ou abra num notebook e num monitor grande): letras, colunas do pipeline e o
+   painel do lead acompanham a largura; entre 761 e 1279px o menu começa recolhido.
+2. **Pipeline › Filtros:** a busca, a ordenação e o botão Filtros ficam numa linha. Escolha área, etapa, data de criação ou
+   valor mínimo/máximo: os filtros aparecem como etiquetas (o "×" remove).
+3. **Painel do lead:** o ícone ao lado do nome abre o cadastro completo; telefone, WhatsApp, Ganho e Perdido ficam na mesma linha.
+4. **IA Vero › Chat:** clique em "O que foi combinado" ou escreva uma pergunta e tecle Enter. O relógio mostra as conversas
+   anteriores, o lápis inicia uma nova e "N fontes" lista o que a IA consultou. Veja também Análise e Resumo.
+5. **Agendas:** o botão "Agendar R2" fica bloqueado até a R1 ser concluída.
+6. **Arquivos:** "Anexar arquivo" com tipo (extrato, apólice, carteira...), descrição, objetivo e observações.
+
 ### H2. Menu lateral e Gestão do time
 
 1. O botão no canto superior esquerdo recolhe o menu (fica só o símbolo da Vero e os ícones); clique de novo para expandir.

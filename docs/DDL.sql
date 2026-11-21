@@ -359,7 +359,9 @@ CREATE TABLE IF NOT EXISTS attachments (
   uploaded_by INTEGER REFERENCES users(id),
   reviewed_by INTEGER REFERENCES users(id),
   reviewed_at TEXT,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  description TEXT,
+  purpose TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_attach_contact ON attachments(contact_id);
 
@@ -1440,7 +1442,8 @@ CREATE TABLE IF NOT EXISTS ai_messages (
   content TEXT NOT NULL,
   engine TEXT,
   rating INTEGER,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  thread TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_ai_messages ON ai_messages(contact_id, user_id, id);
 

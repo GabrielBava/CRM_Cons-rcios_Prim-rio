@@ -331,12 +331,26 @@ function shell() {
       localStorage.setItem('crm-nav-collapsed', v ? '1' : '0');
     } catch {}
   };
-  let collapsedPref = false;
+  // Sem escolha salva, o menu acompanha a tela: recolhido em telas de 761 a 1279 px (notebooks menores e tablets
+  // na horizontal), aberto nas maiores. Clicar em recolher/expandir salva a escolha e ela passa a valer sempre.
+  let collapsedPref = null;
   try {
-    collapsedPref = localStorage.getItem('crm-nav-collapsed') === '1';
+    const v = localStorage.getItem('crm-nav-collapsed');
+    collapsedPref = v === null ? null : v === '1';
   } catch {}
-  setCollapsed(collapsedPref);
-  on(app, 'click', '[data-act=collapse]', () => setCollapsed(!document.documentElement.classList.contains('nav-collapsed')));
+  const autoCollapse = () => window.innerWidth > 760 && window.innerWidth < 1280;
+  const applyNav = () => {
+    const v = collapsedPref ?? autoCollapse();
+    document.documentElement.classList.toggle('nav-collapsed', v);
+    const b = $('[data-act=collapse]', app);
+    if (b) b.setAttribute('aria-label', v ? 'Expandir o menu' : 'Recolher o menu');
+  };
+  applyNav();
+  window.addEventListener('resize', () => collapsedPref === null && applyNav());
+  on(app, 'click', '[data-act=collapse]', () => {
+    collapsedPref = !document.documentElement.classList.contains('nav-collapsed');
+    setCollapsed(collapsedPref);
+  });
   on(app, 'click', '[data-nav], .brand', () => $('#sidebar').classList.remove('open'));
   on(app, 'click', '[data-act=new-lead]', () => quickCreateContact());
   on(app, 'click', '[data-act=notif-all]', async () => {

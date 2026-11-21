@@ -779,6 +779,11 @@ const DEFAULT_OPTIONS = {
     ['doc_representante', 'Documento do representante legal', { pj: true }],
     ['proposta', 'Proposta'],
     ['comprovante_pagamento', 'Comprovante de pagamento'],
+    ['extrato', 'Extrato (bancário ou de investimentos)'],
+    ['apolice', 'Apólice de seguro'],
+    ['carteira', 'Carteira de investimentos / administrada'],
+    ['declaracao_ir', 'Declaração de imposto de renda'],
+    ['contrato_terceiro', 'Contrato de outra instituição (consórcio, financiamento, previdência)'],
     ['outro', 'Outro'],
   ],
   relacao_socio: [
@@ -1286,6 +1291,17 @@ function seedDefaults(db) {
     }
     db.prepare("INSERT INTO settings (key, value) VALUES ('migr_v12_regras', 'true')").run();
   }
+  // Tipos de arquivo do lead (extrato, apólice, carteira...): bancos que já tinham a lista de tipos de documento
+  if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_v13_arquivos'").get()) {
+    if (db.prepare("SELECT COUNT(*) AS n FROM options WHERE list = 'tipo_documento'").get().n) {
+      const pos = db.prepare("SELECT MAX(position) AS p FROM options WHERE list = 'tipo_documento'").get().p || 0;
+      [['extrato', 'Extrato (bancário ou de investimentos)'], ['apolice', 'Apólice de seguro'], ['carteira', 'Carteira de investimentos / administrada'],
+        ['declaracao_ir', 'Declaração de imposto de renda'], ['contrato_terceiro', 'Contrato de outra instituição (consórcio, financiamento, previdência)']].forEach(([v, l], i) => {
+        if (!db.prepare("SELECT 1 FROM options WHERE list = 'tipo_documento' AND value = ?").get(v)) db.prepare("INSERT INTO options (list, value, label, position, flags) VALUES ('tipo_documento', ?, ?, ?, '{}')").run(v, l, pos + i + 1);
+      });
+    }
+    db.prepare("INSERT INTO settings (key, value) VALUES ('migr_v13_arquivos', 'true')").run();
+  }
   // Central de documentos: pastas padrão (o administrador cria subpastas dentro delas)
   if (db.prepare('SELECT COUNT(*) AS n FROM doc_folders').get().n === 0) {
     const ins = db.prepare('INSERT INTO doc_folders (name, description, position, system, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)');
@@ -1406,6 +1422,10 @@ const ADDED_COLUMNS = {
     // Previsão de fechamento (editável), qualificação concluída (libera a etapa Qualificação) e etapa em que o lead foi perdido
     ['expected_close_date', 'TEXT'], ['qualified_at', 'TEXT'], ['qualified_by', 'INTEGER REFERENCES users(id)'], ['lost_from_stage_id', 'INTEGER REFERENCES pipeline_stages(id)'],
   ],
+  // Arquivos do lead (aba Arquivos do painel): descrição e objetivo do arquivo
+  attachments: [['description', 'TEXT'], ['purpose', 'TEXT']],
+  // IA Vero: cada "Nova conversa" do chat é uma conversa (thread) própria
+  ai_messages: [['thread', 'TEXT']],
   proposals: [
     ['simulator_token_hash', 'TEXT'], ['simulator_token_expires_at', 'TEXT'], ['generated_at', 'TEXT'], ['pdf_attachment_id', 'INTEGER REFERENCES attachments(id)'],
     ['accepted_at', 'TEXT'], ['accepted_channel', 'TEXT'], ['accepted_by', 'INTEGER REFERENCES users(id)'], ['refusal_reason', 'TEXT'],

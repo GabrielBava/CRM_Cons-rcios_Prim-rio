@@ -3,11 +3,11 @@
 // WhatsApp da empresa, cadastro completo) e abas em carrossel: IA Vero, Detalhes, Atividades, Qualificação, Agendas
 // (R1/R2), Produtos, Diagnóstico, Tarefas, Notas, Propostas e Histórico. A etapa muda só no pipeline.
 import { get, post, patch } from './api.js';
-import { html, raw, render, $, $$, on, state, badge, relBadge, optLabel, K, fmtMoney, fmtDate, fmtDateTime, relTime, can, empty, optoutBadge, modal, field, opts, userItems, toast, toastError, formData, avatar, hasModule } from './ui.js';
+import { html, raw, render, $, $$, on, state, badge, relBadge, optLabel, K, fmtMoney, fmtDate, fmtDateTime, relTime, can, empty, optoutBadge, modal, field, opts, userItems, toast, toastError, formData, avatar, hasModule, fmtMoneyInput, parseMoneyBR } from './ui.js';
 import { activityForm, taskForm, lostDialog, completeTask, cancelTask, opportunityForm, proposalDetail, attemptDialog, qualifyDialog, newProposalFlow, CONTACT_CHANNELS, PROPOSAL_AREAS } from './forms.js';
 import { qualProgress, qualBlocks, tempBadge } from './qualification.js';
 import { scheduleMeetingDialog, meetingLinks, meetingCard, bindMeetingCards, R1_STAGES, MEETING_LABEL } from './meeting.js';
-import { renderAiTab, renderProductsTab, renderDiagTab, bindLeadTabs, copyText } from './leadtabs.js';
+import { renderAiTab, renderProductsTab, renderDiagTab, renderFilesTab, bindLeadTabs, copyText } from './leadtabs.js';
 import { icon } from './icons.js';
 
 const YES_NO = [{ value: 'sim', label: 'Sim' }, { value: 'nao', label: 'Não' }, { value: 'nao_sabe', label: 'Não sabe' }];
@@ -74,7 +74,7 @@ function bizForm(o) {
 /** Abas do painel (carrossel). A IA Vero vem antes de Detalhes. */
 const TABS = [
   ['ia', 'IA Vero'], ['detalhes', 'Detalhes'], ['atividades', 'Atividades'], ['qualificacao', 'Qualificação'], ['agendas', 'Agendas'],
-  ['produtos', 'Produtos'], ['diagnostico', 'Diagnóstico'], ['tarefas', 'Tarefas'], ['notas', 'Notas'], ['propostas', 'Propostas'], ['historico', 'Histórico'],
+  ['produtos', 'Produtos'], ['arquivos', 'Arquivos'], ['diagnostico', 'Diagnóstico'], ['tarefas', 'Tarefas'], ['notas', 'Notas'], ['propostas', 'Propostas'], ['historico', 'Histórico'],
 ];
 /** Atividades de contato (enviadas e recebidas) por canal: totais do topo da aba Atividades. */
 const CHANNEL_TYPES = {
@@ -177,23 +177,18 @@ export async function openLeadDrawer(contactId, { oppId = null, onChange = null,
     render($('.drawer-body', el), html`
       <header class="lead-head">
         <div class="lead-id">${avatar({ name: c.name }, 44)}
-          <div class="grow"><h2>${c.name}</h2>
+          <div class="grow"><h2>${c.name} <a href="#/leads/${c.id}" class="rec-link" data-close title="Abrir cadastro completo" aria-label="Abrir cadastro completo">${icon('cadastros', 16)}</a></h2>
             <small class="muted">${c.trade_name ? `${c.trade_name} · ` : ''}<span class="badge pfpj">${c.kind}</span> ID ${c.code}</small>
             <div class="badges">${relBadge(c.relationship)} ${o?.temperature ? tempBadge(o.temperature, o.temperature_info) : c.temperature ? tempBadge(c.temperature) : ''} ${o ? html`<span class="chip-sm area area-${o.business_area || 'consorcio'}">${optLabel('area_negocio', o.business_area || 'consorcio')}</span>` : ''} ${o?.score != null ? html`<span class="score s-${o.score >= 70 ? 'hi' : o.score >= 40 ? 'mid' : 'lo'}" title="Score do lead">${o.score}</span>` : ''} ${o?.sla ? badge(o.sla.text, { ok: 'ok', atencao: 'warn', estourado: 'danger' }[o.sla.level]) : ''} ${optoutBadge(c.optouts)}</div>
           </div>
           <button class="icon" data-close aria-label="Fechar painel">×</button>
         </div>
-        ${o ? html`<div class="lead-stage">
-          <span class="stage-tag kind-${o.stage_kind}" title="A etapa muda no pipeline (arrastando o cartão)">${o.stage_name}${o.status === 'pausada' ? ' (arquivado)' : ''}</span>
-          <span class="muted small">${o.days_in_stage}d na etapa · ${o.owner_name || 'sem responsável'}${o.co_owner_name ? ` + ${o.co_owner_name}` : ''}</span>
-          <span class="grow"></span>
-          ${showWon ? html`<button class="btn won-btn" data-dact="won" title="Ganho = R1 agendada: abre o agendamento e leva o lead para a coluna R1">${icon('confirmar', 15)} Ganho</button>` : ''}
-          ${w && o && ['aberta', 'pausada'].includes(o.status) ? html`<button class="btn lost-btn" data-dact="lost" data-force="${!worked && can.admin() ? '1' : ''}" ${worked || can.admin() ? '' : raw('aria-disabled="true"')} title="${worked ? 'Dar o lead como perdido (motivo MP)' : can.admin() ? 'Sem atividade registrada: como administrador, informe a justificativa' : 'Registre ao menos uma atividade antes de dar o lead como perdido'}">× Perdido</button>` : ''}
-        </div>` : ''}
-        <div class="lead-contact">
+        <div class="lead-actions">
           ${phone ? html`<button type="button" class="contact-chip" data-copy-phone="${phone}" title="Copiar o número">${icon('telefone', 14)} ${phone} ${icon('copiar', 12)}</button>` : html`<span class="muted small">Sem telefone</span>`}
-          ${hasModule('whatsapp') ? html`<a class="contact-chip wa" href="#/comunicacao/whatsapp?contato=${c.id}" data-close title="Conversar pelo WhatsApp oficial da empresa (fica no CRM)">${icon('whatsapp', 14)} WhatsApp da empresa</a>` : ''}
-          <a class="contact-chip ghost" href="#/leads/${c.id}" data-close>Abrir cadastro completo →</a>
+          ${hasModule('whatsapp') ? html`<a class="contact-chip wa" href="#/comunicacao/whatsapp?contato=${c.id}" data-close title="Conversar pelo WhatsApp oficial da empresa (fica no CRM)">${icon('whatsapp', 14)} WhatsApp</a>` : ''}
+          <span class="grow"></span>
+          ${showWon ? html`<button class="btn won-btn" data-dact="won" title="Ganho = R1 agendada: abre o agendamento e leva o lead para a coluna R1">Ganho</button>` : ''}
+          ${w && o && ['aberta', 'pausada'].includes(o.status) ? html`<button class="btn lost-btn" data-dact="lost" data-force="${!worked && can.admin() ? '1' : ''}" ${worked || can.admin() ? '' : raw('aria-disabled="true"')} title="${worked ? 'Dar o lead como perdido (motivo MP)' : can.admin() ? 'Sem atividade registrada: como administrador, informe a justificativa' : 'Registre ao menos uma atividade antes de dar o lead como perdido'}">Perdido</button>` : ''}
         </div>
       </header>
       <nav class="tab-carousel" aria-label="Seções do lead"><button type="button" class="tc-arrow" data-tc="-1" aria-label="Abas anteriores">‹</button>
@@ -208,7 +203,7 @@ export async function openLeadDrawer(contactId, { oppId = null, onChange = null,
   const meetingStats = (tasks) => {
     const ms = tasks.filter((t) => t.type === 'reuniao');
     const n = (f) => ms.filter(f).length;
-    return html`<div class="mt-kpis"><div><strong>${ms.length}</strong><small>agendadas</small></div><div><strong>${n((t) => t.outcome === 'realizada')}</strong><small>realizadas</small></div><div><strong>${n((t) => t.outcome === 'remarcada' || t.rescheduled_from)}</strong><small>remarcadas</small></div><div class="${n((t) => t.outcome === 'nao_compareceu') ? 'ns' : ''}"><strong>${n((t) => t.outcome === 'nao_compareceu')}</strong><small>no-show</small></div></div>`;
+    return html`<div class="mt-kpis"><div><strong>${ms.length}</strong><small>Agendadas</small></div><div><strong>${n((t) => t.outcome === 'realizada')}</strong><small>Realizadas</small></div><div><strong>${n((t) => t.outcome === 'remarcada' || t.rescheduled_from)}</strong><small>Remarcadas</small></div><div class="${n((t) => t.outcome === 'nao_compareceu') ? 'ns' : ''}"><strong>${n((t) => t.outcome === 'nao_compareceu')}</strong><small>No-show</small></div></div>`;
   };
 
   const drawTab = async () => {
@@ -223,44 +218,54 @@ export async function openLeadDrawer(contactId, { oppId = null, onChange = null,
       await renderProductsTab(box, current);
     } else if (tab === 'diagnostico') {
       await renderDiagTab(box, current);
+    } else if (tab === 'arquivos') {
+      await renderFilesTab(box, current);
     } else if (tab === 'detalhes') {
       const dl = r1Deadline(c, o);
+      const row = (label, v, extra = '') => html`<div class="${extra}"><dt>${label}</dt><dd>${v == null || v === '' ? html`<span class="muted">—</span>` : v}</dd></div>`;
+      const lock = (label) => html`${icon('senha', 12)} ${label}`;
       render(box, html`
-        <section class="lead-dates"><h4>Datas do lead</h4><dl class="kv-list dates">
-          <div><dt>${icon('senha', 12)} Ingresso no CRM</dt><dd>${fmtDateTime(c.created_at)}</dd></div>
-          <div><dt>${icon('senha', 12)} Primeiro contato</dt><dd>${c.first_contact_at ? fmtDateTime(c.first_contact_at) : html`<span class="muted">ainda sem contato</span>`}</dd></div>
-          <div><dt>Prazo para agendar a R1 <small class="muted">(3 dias após o 1º contato)</small></dt><dd>${dl ? html`${fmtDate(dl.due.toISOString())} ${badge(dl.text, dl.level)}` : html`<span class="muted">conta a partir do primeiro contato</span>`}</dd></div>
-          <div><dt>Previsão de fechamento</dt><dd>${o && edit ? html`<input type="date" class="inline-date" data-close-date value="${o.expected_close_date || ''}" aria-label="Previsão de fechamento">` : o?.expected_close_date ? fmtDate(o.expected_close_date) : '—'}</dd></div>
-        </dl><p class="hint">Ingresso e primeiro contato são registrados pelo sistema e não podem ser alterados. A previsão de fechamento pode ser ajustada.</p></section>
-        ${o ? html`<section class="biz-info"><div class="section-head"><h4>Negócio ${o.code}</h4>${edit ? html`<button type="button" class="btn small ghost" data-dact="edit-biz">Editar</button>` : ''}</div>
+        <section class="det-block"><h4>Dados</h4><dl class="kv-list">
+          ${row('ID', html`<strong>${c.code}</strong>`)}
+          ${row('Nome completo', c.name)}
+          ${row('Telefone', c.whatsapp || c.phone1 || c.phone2)}
+          ${row('E-mail', c.email)}
+          ${row('Origem / campanha', html`${optLabel('origem', c.origin) || '—'}${o?.campaign || o?.origin_campaign || c.campaign ? html`<br><small class="muted">${o?.campaign || o?.origin_campaign || c.campaign}</small>` : ''}`)}
+          ${row('Responsável', html`<span class="owner-dd">${c.owner_name || '—'}${can.manage() && w ? html`<button type="button" class="gear-btn" data-dact="owner" title="Trocar responsável" aria-label="Trocar responsável">${icon('configuracoes', 15)}</button>` : ''}</span>`)}
+          ${row('Score', o?.score != null ? html`<span class="score s-${o.score >= 70 ? 'hi' : o.score >= 40 ? 'mid' : 'lo'}">${o.score}</span> <small class="muted">de 100</small>` : null)}
+          ${c.kind === 'PJ' ? row('Empresa', c.trade_name ? html`${c.trade_name}<br><small class="muted">${c.name}</small>` : c.name) : ''}
+        </dl></section>
+        ${o ? html`<section class="det-block biz-info"><div class="section-head"><h4>Negociação</h4>${edit ? html`<button type="button" class="btn small ghost" data-dact="edit-biz">Editar</button>` : ''}</div>
           <form class="biz-form" hidden>${bizForm(o)}</form>
           <dl class="kv-list biz-view">
-            <div><dt>Área responsável</dt><dd>${optLabel('area_negocio', o.business_area || 'consorcio')}</dd></div>
-            <div><dt>Valor estimado</dt><dd>${o.deal_value ? html`${fmtMoney(o.deal_value)} <small class="muted">${o.deal_value_source === 'proposta' ? 'proposta' : 'desejado'}</small>` : '—'}</dd></div>
-            <div><dt>Categoria</dt><dd>${optLabel('categoria_credito', o.credit_category) || '—'}</dd></div>
-            <div><dt>Objetivo</dt><dd>${optLabel('objetivo', o.objective_type) || '—'}</dd></div>
-            <div><dt>Prioridade (quando quer)</dt><dd>${optLabel('urgencia', o.urgency) || '—'}</dd></div>
-            <div><dt>Capacidade de parcela</dt><dd>${o.installment_min || o.installment_max ? html`${o.installment_min ? `ideal ${fmtMoney(o.installment_min)}` : ''}${o.installment_min && o.installment_max ? html`<br>` : ''}${o.installment_max ? `máxima ${fmtMoney(o.installment_max)}` : ''}` : '—'}</dd></div>
-            <div><dt>Próxima ação</dt><dd>${o.next_action ? html`${o.next_action}${o.next_action_at ? html`<br><small class="${new Date(o.next_action_at) < new Date() ? 'overdue' : ''}">${fmtDateTime(o.next_action_at)} · ${relTime(o.next_action_at)}</small>` : ''}` : html`<span class="warn-text">sem próxima ação</span>`}</dd></div>
-            <div><dt>Score / SLA</dt><dd>${o.score ?? '—'} pontos${o.sla ? html`<br><small>${o.sla.text}</small>` : ''}</dd></div>
+            ${row('Área', optLabel('area_negocio', o.business_area || 'consorcio'))}
+            ${row('Valor da oportunidade', edit ? html`<span class="money-input inline-money"><span aria-hidden="true">R$</span><input type="text" inputmode="decimal" data-money data-opp-value value="${fmtMoneyInput(o.credit_value)}" aria-label="Valor da oportunidade" placeholder="0,00"></span>${o.deal_value_source === 'proposta' ? html`<br><small class="muted">Maior proposta ativa: ${fmtMoney(o.deal_value)}</small>` : ''}` : fmtMoney(o.credit_value))}
+            ${row('Objetivo', optLabel('objetivo', o.objective_type))}
+            ${row('Categoria', optLabel('categoria_credito', o.credit_category))}
+            ${row('Prioridade', optLabel('urgencia', o.urgency))}
+            ${row('Próxima ação', o.next_action ? html`${o.next_action}${o.next_action_at ? html`<br><small class="${new Date(o.next_action_at) < new Date() ? 'overdue' : 'muted'}">${fmtDateTime(o.next_action_at)} · ${relTime(o.next_action_at)}</small>` : ''}` : html`<span class="warn-text">Sem próxima ação</span>`)}
           </dl>
-          <p><a href="#/oportunidades/${o.id}" data-close>Ver negócio completo →</a></p></section>` : ''}
-        <section><h4>Contato</h4><dl class="kv-list">
-          <div><dt>Telefone</dt><dd>${c.phone1 || '—'}</dd></div>
-          <div><dt>WhatsApp</dt><dd>${c.whatsapp || '—'}</dd></div>
-          <div><dt>E-mail</dt><dd>${c.email || '—'}</dd></div>
-          <div><dt>Cidade</dt><dd>${c.city ? `${c.city}${c.state ? `/${c.state}` : ''}` : '—'}</dd></div>
-          <div><dt>Origem e campanha</dt><dd>${optLabel('origem', c.origin) || '—'}${o?.campaign || c.campaign ? html`<br><small>${o?.campaign || c.campaign}</small>` : ''}</dd></div>
-          <div><dt>Responsável</dt><dd class="owner-dd">${c.owner_name || '—'}${can.manage() && w ? html`<button type="button" class="gear-btn" data-dact="owner" title="Trocar responsável" aria-label="Trocar responsável">${icon('configuracoes', 15)}</button>` : ''}</dd></div>
-        </dl></section>
-        ${c.contracts.length ? html`<section><h4>Produtos contratados</h4><p>${c.contracts.length} carta(s) · ${fmtMoney(c.contracts.reduce((t, k) => t + (k.credit_value || 0), 0))}</p></section>` : ''}`);
+          <dl class="kv-list dates">
+            ${row(lock('Data de cadastro'), fmtDateTime(c.created_at))}
+            ${row(lock('Data do primeiro contato'), c.first_contact_at ? fmtDateTime(c.first_contact_at) : html`<span class="muted">Ainda sem contato</span>`)}
+            ${row(lock('Prazo da cadência'), dl ? html`${fmtDate(dl.due.toISOString())} ${badge(dl.text.charAt(0).toUpperCase() + dl.text.slice(1), dl.level)}<br><small class="muted">R1 em até 3 dias após o 1º contato</small>` : html`<span class="muted">Conta a partir do primeiro contato</span>`)}
+            ${row('Previsão de fechamento', edit ? html`<input type="date" class="inline-date" data-close-date value="${o.expected_close_date || ''}" aria-label="Previsão de fechamento">` : o.expected_close_date ? fmtDate(o.expected_close_date) : null)}
+          </dl>
+          <p class="small"><a href="#/oportunidades/${o.id}" data-close>Ver negócio completo →</a></p></section>` : ''}
+        ${c.contracts.length ? html`<section class="det-block"><h4>Produtos contratados</h4><p>${c.contracts.length} carta(s) · ${fmtMoney(c.contracts.reduce((t, k) => t + (k.credit_value || 0), 0))}</p></section>` : ''}`);
     } else if (tab === 'atividades') {
       const work = acts.filter((a) => a.type !== 'observacao' && !state.meta.constants.activity_types[a.type]?.system);
       const list = work.filter((a) => !current.chan || chanOf(a) === current.chan);
+      const chIcon = (a) => CONTACT_CHANNELS.find((x) => x.key === chanOf(a))?.icon || 'chat';
+      const chLabel = (a) => CONTACT_CHANNELS.find((x) => x.key === chanOf(a))?.label || optLabel('canal', chanOf(a)) || 'Outro';
       render(box, html`
-        ${w ? html`<section class="reg-block"><h4>Registrar atividade</h4><div class="reg-btns">${CONTACT_CHANNELS.map((ch) => html`<button type="button" class="reg-btn ch-${ch.key}" data-reg="${ch.key}" title="Registrar ${ch.label}">${icon(ch.icon, 20)}<span>${ch.label}</span></button>`)}<button type="button" class="reg-btn ch-outro" data-quick="" title="Outro contato (presencial, vídeo, recebido…)">${icon('chat', 20)}<span>Contato</span></button></div></section>` : ''}
+        ${w ? html`<section class="reg-block"><h4>Registrar atividade</h4><div class="reg-btns">${CONTACT_CHANNELS.map((ch) => html`<button type="button" class="reg-btn ch-${ch.key}" data-reg="${ch.key}" title="Registrar ${ch.label}">${icon(ch.icon, 20)}<span>${ch.label}</span></button>`)}</div></section>` : ''}
         <div class="act-totals" role="group" aria-label="Totais por canal (clique para filtrar)"><button type="button" class="act-total ${!current.chan ? 'active' : ''}" data-chan=""><strong>${work.length}</strong><small>Todas</small></button>${CONTACT_CHANNELS.map((ch) => html`<button type="button" class="act-total ch-${ch.key} ${current.chan === ch.key ? 'active' : ''}" data-chan="${ch.key}">${icon(ch.icon, 14)}<strong>${work.filter((a) => chanOf(a) === ch.key).length}</strong><small>${ch.label}</small></button>`)}</div>
-        ${list.length ? html`<ul class="feed">${list.map((a) => html`<li class="ch-${chanOf(a) || 'outro'}"><div><strong>${K('activity_types', a.type)}</strong>${a.result ? html` · ${optLabel('resultado_ligacao', a.result)}` : ''} <small class="muted">${fmtDateTime(a.occurred_at)} · ${a.user_name || 'Sistema'}</small></div>${a.notes ? html`<p>${a.notes}</p>` : ''}</li>`)}</ul>` : empty('Nenhuma atividade neste filtro.')}`);
+        <h4 class="act-hist-title">Histórico de atividades</h4>
+        ${list.length ? html`<ul class="act-hist">${list.map((a) => html`<li class="ch-${chanOf(a) || 'outro'}" title="${a.notes || ''}">
+          <span class="ah-ch">${icon(chIcon(a), 15)}<span>${chLabel(a)}</span></span>
+          <span class="ah-what"><strong>${K('activity_types', a.type)}</strong>${a.result ? html`<small>${optLabel('resultado_ligacao', a.result)}</small>` : ''}</span>
+          <span class="ah-when">${fmtDateTime(a.occurred_at)}<small>${a.user_name || 'Sistema'}</small></span></li>`)}</ul>` : empty('Nenhuma atividade neste filtro.')}`);
     } else if (tab === 'qualificacao') {
       render(box, o ? html`<div class="section-head"><h4>Qualificação</h4>${edit ? html`<span class="inline-actions"><button type="button" class="btn small" data-dact="edit-qual">Editar</button>${o.qualified_at ? '' : html`<button type="button" class="btn small primary" data-dact="conclude-qual">Concluir qualificação</button>`}</span>` : ''}</div>
         ${o.qualified_at ? html`<div class="alert ok-alert small">Qualificação concluída em ${fmtDateTime(o.qualified_at)}${o.qualified_by_name ? ` por ${o.qualified_by_name}` : ''}.</div>` : html`<p class="hint">Preencha o que levantou com o cliente e clique em <strong>Concluir qualificação</strong>: o lead passa de Tentativa de contato para Qualificação.</p>`}
@@ -274,10 +279,12 @@ export async function openLeadDrawer(contactId, { oppId = null, onChange = null,
       const ms = c.tasks.filter((t) => t.type === 'reuniao').sort((x, y) => (x.due_at < y.due_at ? 1 : -1));
       const m = o?.meetings || {};
       const kindL = (t) => MEETING_LABEL[t.meeting_kind] || (String(t.title).startsWith('[R2]') ? 'R2' : 'R1');
-      const out = (t) => (t.status === 'pendente' ? badge(new Date(t.due_at) < new Date() ? 'Aguardando resultado' : 'Agendada', 'warn') : t.outcome === 'realizada' ? badge('Realizada', 'ok') : t.outcome === 'nao_compareceu' ? html`<span class="badge ns">Não compareceu (NS)</span>` : t.outcome === 'remarcada' ? html`<span class="badge rm">Remarcada</span>` : badge(K('meeting_outcomes', t.outcome) || 'Cancelada', 'muted'));
+      const out = (t) => (t.status === 'pendente' ? badge(new Date(t.due_at) < new Date() ? 'Aguardando resultado' : 'Agendada', 'warn') : t.outcome === 'realizada' ? badge('Concluída', 'ok') : t.outcome === 'nao_compareceu' ? html`<span class="badge ns">Não participou (NS)</span>` : t.outcome === 'remarcada' ? html`<span class="badge rm">Remarcada</span>` : badge(K('meeting_outcomes', t.outcome) || 'Cancelada', 'muted'));
       const mw = w && o && ['aberta', 'pausada'].includes(o.status);
+      // A R2 só é liberada depois da R1 agendada e concluída
+      const r1Done = m.r1?.state === 'realizada' || c.tasks.some((t) => t.type === 'reuniao' && (t.meeting_kind || 'r1') === 'r1' && t.outcome === 'realizada');
       render(box, html`${meetingStats(c.tasks)}
-        ${o ? html`<div class="mt-cards">${meetingCard('r1', m.r1, { write: mw, canSchedule: o.status === 'aberta' })}${meetingCard('r2', m.r2, { write: mw, canSchedule: o.status === 'aberta' && (m.r1?.state === 'realizada' || o.stage_key === 'r2') })}</div>` : html`<p class="muted small">Sem negócio aberto. <a href="#/leads/${c.id}" data-close>Abrir o cadastro</a> para criar.</p>`}
+        ${o ? html`<div class="mt-cards">${meetingCard('r1', m.r1, { write: mw, canSchedule: o.status === 'aberta' })}${meetingCard('r2', m.r2, { write: mw, canSchedule: o.status === 'aberta' && r1Done })}</div>` : html`<p class="muted small">Sem negócio aberto. <a href="#/leads/${c.id}" data-close>Abrir o cadastro</a> para criar.</p>`}
         <div class="section-head"><h4>Histórico de agendas</h4></div>
         ${ms.length ? html`<ul class="feed meetings">${ms.map((t) => html`<li><div><span class="badge kind-meet">${kindL(t)}</span> <strong>${fmtDateTime(t.due_at)}</strong>${t.ends_at ? html` <small>às ${new Date(t.ends_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</small>` : ''} ${out(t)} ${t.confirmed_at ? badge('presença confirmada', 'ok') : ''}${t.rescheduled_from ? html` <small class="muted">(remarcação)</small>` : ''}</div>
           <small class="muted">${t.title} · ${t.assigned_name || '—'}</small>${t.notes ? html`<p class="small">${t.notes}</p>` : ''}${t.status === 'pendente' ? html`<div>${meetingLinks(t)}</div>` : ''}</li>`)}</ul>` : empty('Nenhuma reunião agendada para este lead.')}`);
@@ -344,6 +351,19 @@ export async function openLeadDrawer(contactId, { oppId = null, onChange = null,
     try {
       await patch(`/api/oportunidades/${opp.id}`, { expected_close_date: inp.value || null });
       toast(inp.value ? 'Previsão de fechamento salva.' : 'Previsão de fechamento removida.');
+      onChange?.();
+    } catch (ex) {
+      toastError(ex);
+    }
+  });
+  on(el, 'change', '[data-opp-value]', async (e, inp) => {
+    const { opp } = current || {};
+    if (!opp) return;
+    const n = parseMoneyBR(inp.value);
+    if (Number.isNaN(n)) return toastError(new Error('Valor inválido.'));
+    try {
+      await patch(`/api/oportunidades/${opp.id}`, { credit_value: n === '' ? null : n });
+      toast('Valor da oportunidade salvo.');
       onChange?.();
     } catch (ex) {
       toastError(ex);

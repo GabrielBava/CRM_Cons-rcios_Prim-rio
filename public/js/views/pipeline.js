@@ -1,7 +1,7 @@
 import { get, post, download } from '../api.js';
 import {
   html, raw, render, $, $$, on, state, selectOptions, opts, toItems, userItems, stageItems, fmtMoney, fmtDateTime, fmtDate, relTime,
-  badge, optoutBadge, optLabel, K, can, toast, toastError, table, empty, fresh, crmTabs, modal, field, fixPlurals,
+  badge, optoutBadge, optLabel, K, can, toast, toastError, table, empty, fresh, crmTabs, modal, field, fixPlurals, parseMoneyBR, fmtMoneyInput,
 } from '../ui.js';
 import { bindDrawerLinks } from '../drawer.js';
 import { icon } from '../icons.js';
@@ -50,23 +50,31 @@ export async function show(view, { key, id, params }) {
         <div class="seg small"><button class="btn small ${!['lista', 'perdidos'].includes(s.mode) ? 'active' : ''}" data-mode="kanban">Comercial</button><button class="btn small ${s.mode === 'lista' ? 'active' : ''}" data-mode="lista">Lista</button>${manager ? html`<button class="btn small ${s.mode === 'perdidos' ? 'active' : ''}" data-mode="perdidos" title="Funil de perdidos: onde cada lead foi perdido e o motivo (MP)">Perdidos</button>` : ''}</div>
         ${can.admin() ? html`<button class="btn" data-act="export">Exportar CSV</button>` : ''}
       </div></div>
-    <form class="filters" data-f>
-      <label class="grow">Buscar<input type="search" name="q" value="${s.q || ''}" placeholder="Nome, código (C-…, OP-…), telefone ou e-mail"></label>
-      ${manager ? html`<label>Funil de<select name="owner_id">${selectOptions(userItems(), s.owner_id, { placeholder: 'Todos os usuários' })}</select></label>` : ''}
-      <label>Área<select name="area">${selectOptions(opts('area_negocio'), s.area, { placeholder: 'Todas as áreas' })}</select></label>
-      <label>Origem<select name="origin">${selectOptions(opts('origem'), s.origin, { placeholder: 'Todas' })}</select></label>
-      <label>Categoria<select name="category">${selectOptions(opts('categoria_credito'), s.category, { placeholder: 'Todas' })}</select></label>
-      <label>Etapa<select name="stage_id">${selectOptions(stageItems(), s.stage_id, { placeholder: 'Todas' })}</select></label>
-      <label>Prioridade<select name="priority">${selectOptions(toItems(state.meta.constants.priorities), s.priority, { placeholder: 'Todas' })}</select></label>
-      <label>Próxima ação<select name="next_action">${selectOptions([{ value: 'atrasada', label: 'Atrasada' }, { value: 'hoje', label: 'Para hoje' }, { value: 'sem', label: 'Sem próxima ação' }], s.next_action, { placeholder: 'Qualquer' })}</select></label>
-      <label>Fechadas nos últimos<select name="closed_days">${selectOptions([{ value: '30', label: '30 dias' }, { value: '60', label: '60 dias' }, { value: '180', label: '180 dias' }, { value: '3650', label: 'Todas' }], s.closed_days || '60', { allowEmpty: false })}</select></label>
+    <form class="pipe-bar" data-f>
+      <div class="pb-line">
+        <label class="pb-search"><span class="sr-only">Buscar</span>${icon('buscar', 16)}<input type="search" name="q" value="${s.q || ''}" placeholder="Buscar por nome, código, telefone ou e-mail"></label>
+        <span class="kanban-only pb-sort"><label><span class="sr-only">Ordenar por</span><select data-sort aria-label="Ordenar por">${selectOptions(SORTS, sortBy, { allowEmpty: false })}</select></label>
+          <button type="button" class="btn small sort-dir" data-sortdir aria-label="Inverter a ordem" title="Inverter a ordem">${sortDir === 'asc' ? '↑' : '↓'}</button></span>
+        <button type="button" class="btn pb-filter-btn" data-filters aria-expanded="false" aria-controls="pipe-filters">${icon('filtro', 15)} Filtros <span class="count" data-fcount hidden>0</span></button>
+        <label class="check archived-toggle kanban-only"><input type="checkbox" data-archived ${s.archived ? raw('checked') : ''}> Arquivados</label>
+        ${can.write() ? html`<button type="button" class="btn kanban-only" data-act="bulk" aria-pressed="false">${icon('selecionar', 15)} Mover em massa</button>` : ''}
+      </div>
+      <div class="pb-chips" data-fchips></div>
+      <div class="filter-panel" id="pipe-filters" hidden>
+        <div class="fp-grid">
+          ${manager ? html`<label>Responsável<select name="owner_id">${selectOptions(userItems(), s.owner_id, { placeholder: 'Todos' })}</select></label>` : ''}
+          <label>Área<select name="area">${selectOptions(opts('area_negocio'), s.area, { placeholder: 'Todas' })}</select></label>
+          <label>Origem<select name="origin">${selectOptions(opts('origem'), s.origin, { placeholder: 'Todas' })}</select></label>
+          <label>Etapa<select name="stage_id">${selectOptions(stageItems(), s.stage_id, { placeholder: 'Todas' })}</select></label>
+          <label>Próxima ação<select name="next_action">${selectOptions([{ value: 'atrasada', label: 'Atrasada' }, { value: 'hoje', label: 'Para hoje' }, { value: 'sem', label: 'Sem próxima ação' }], s.next_action, { placeholder: 'Qualquer' })}</select></label>
+          <label>Prioridade<select name="priority">${selectOptions(toItems(state.meta.constants.priorities), s.priority, { placeholder: 'Todas' })}</select></label>
+          <fieldset class="fp-range"><legend>Data de criação</legend><label><span>De</span><input type="date" name="created_from" value="${s.created_from || ''}"></label><label><span>Até</span><input type="date" name="created_to" value="${s.created_to || ''}"></label></fieldset>
+          <fieldset class="fp-range"><legend>Valor</legend><label><span>Mínimo</span><span class="money-input"><span aria-hidden="true">R$</span><input type="text" inputmode="decimal" data-money name="value_min" value="${s.value_min ? fmtMoneyInput(s.value_min) : ''}" placeholder="0,00"></span></label><label><span>Máximo</span><span class="money-input"><span aria-hidden="true">R$</span><input type="text" inputmode="decimal" data-money name="value_max" value="${s.value_max ? fmtMoneyInput(s.value_max) : ''}" placeholder="0,00"></span></label></fieldset>
+          <label>Fechadas nos últimos<select name="closed_days">${selectOptions([{ value: '30', label: '30 dias' }, { value: '60', label: '60 dias' }, { value: '180', label: '180 dias' }, { value: '3650', label: 'Todas' }], s.closed_days || '60', { allowEmpty: false })}</select></label>
+        </div>
+        <div class="fp-actions"><button type="button" class="btn small ghost" data-fclear>Limpar filtros</button><button type="button" class="btn small primary" data-fclose>Ver resultados</button></div>
+      </div>
     </form>
-    <div class="board-tools">
-      <div class="sort-box"><label>Ordenar por<select data-sort>${selectOptions(SORTS, sortBy, { allowEmpty: false })}</select></label>
-        <button type="button" class="btn small sort-dir" data-sortdir aria-label="Inverter a ordem">${sortDir === 'asc' ? '↑ Crescente' : '↓ Decrescente'}</button></div>
-      <label class="check archived-toggle"><input type="checkbox" data-archived ${s.archived ? raw('checked') : ''}> Mostrar arquivados (Nutrição futura e Perdido)</label>
-      ${can.write() ? html`<button type="button" class="btn" data-act="bulk" aria-pressed="false">${icon('selecionar', 16)}Mover em massa</button>` : ''}
-    </div>
     <div id="board"></div>
     <div class="drop-bar" hidden aria-hidden="true">${state.meta.stages.filter((x) => ['nutricao', 'perdido'].includes(x.kind)).map((x) => html`<div class="drop-zone kind-${x.kind}" data-stage="${x.id}"><strong>${x.name}</strong><small>Solte aqui para arquivar</small></div>`)}</div>
     <div class="bulk-bar" hidden><strong data-bulk-count>0 selecionado(s)</strong>
@@ -82,7 +90,33 @@ export async function show(view, { key, id, params }) {
   let data = null;
   let bulk = false;
   const selected = new Set();
-  const query = () => Object.fromEntries(new FormData(form).entries());
+  // Filtros: os valores em R$ vão como número; vazios não são enviados
+  const query = () => {
+    const q = Object.fromEntries(new FormData(form).entries());
+    for (const k of ['value_min', 'value_max']) {
+      const n = parseMoneyBR(q[k]);
+      if (n === '' || Number.isNaN(n)) delete q[k];
+      else q[k] = String(n);
+    }
+    for (const k of Object.keys(q)) if (q[k] === '') delete q[k];
+    return q;
+  };
+  const FILTER_LABEL = { owner_id: 'Responsável', area: 'Área', origin: 'Origem', stage_id: 'Etapa', next_action: 'Próxima ação', priority: 'Prioridade', created_from: 'Criado de', created_to: 'Criado até', value_min: 'Valor mínimo', value_max: 'Valor máximo' };
+  /** Botão "Filtros" com o número de filtros ativos e as etiquetas removíveis abaixo da barra. */
+  const syncFilters = () => {
+    const q = query();
+    const active = Object.keys(FILTER_LABEL).filter((k) => q[k] != null);
+    const cnt = $('[data-fcount]', view);
+    cnt.hidden = !active.length;
+    cnt.textContent = active.length;
+    const show = (k) => {
+      const el = form.elements[k];
+      if (k.startsWith('value_')) return fmtMoney(Number(q[k]));
+      if (k.startsWith('created_')) return fmtDate(q[k]);
+      return el?.selectedOptions?.[0]?.textContent || q[k];
+    };
+    render($('[data-fchips]', view), html`${active.map((k) => html`<span class="fchip">${FILTER_LABEL[k]}: <strong>${show(k)}</strong><button type="button" data-fdel="${k}" aria-label="Remover filtro ${FILTER_LABEL[k]}">×</button></span>`)}`);
+  };
   const allCards = () => data?.stages.flatMap((st) => st.cards) || [];
   const syncBulk = () => {
     const bar = $('.bulk-bar', view);
@@ -99,6 +133,7 @@ export async function show(view, { key, id, params }) {
   };
   const load = async () => {
     saved = { ...query(), mode, archived };
+    syncFilters();
     const box = $('#board', view);
     box.classList.add('loading');
     try {
@@ -129,10 +164,30 @@ export async function show(view, { key, id, params }) {
   });
   form.addEventListener('change', (e) => e.target.name !== 'q' && load());
   form.addEventListener('submit', (e) => e.preventDefault());
+  const panel = $('#pipe-filters', view);
+  const togglePanel = (open = panel.hidden) => {
+    panel.hidden = !open;
+    $('[data-filters]', view).setAttribute('aria-expanded', String(open));
+    $('[data-filters]', view).classList.toggle('active', open);
+  };
+  on(view, 'click', '[data-filters]', () => togglePanel());
+  on(view, 'click', '[data-fclose]', () => togglePanel(false));
+  on(view, 'click', '[data-fclear]', () => {
+    for (const k of Object.keys(FILTER_LABEL)) if (form.elements[k]) form.elements[k].value = '';
+    load();
+  });
+  on(view, 'click', '[data-fdel]', (e, b) => {
+    if (form.elements[b.dataset.fdel]) form.elements[b.dataset.fdel].value = '';
+    load();
+  });
+  // Fecha o painel de filtros ao clicar fora dele
+  view.addEventListener('click', (e) => {
+    if (!panel.hidden && !e.target.closest('#pipe-filters, [data-filters]')) togglePanel(false);
+  });
   on(view, 'click', '[data-mode]', (e, b) => {
     mode = b.dataset.mode;
     $$('[data-mode]', view).forEach((x) => x.classList.toggle('active', x === b));
-    $('.board-tools', view).hidden = mode !== 'kanban';
+    $$('.kanban-only', view).forEach((x) => (x.hidden = mode !== 'kanban'));
     $('.page-head h1', view).textContent = mode === 'perdidos' ? 'Pipeline de perdidos' : 'Pipeline';
     if (mode !== 'kanban') {
       bulk = false;
@@ -148,7 +203,7 @@ export async function show(view, { key, id, params }) {
   });
   on(view, 'click', '[data-sortdir]', (e, b) => {
     sortDir = sortDir === 'asc' ? 'desc' : 'asc';
-    b.textContent = sortDir === 'asc' ? '↑ Crescente' : '↓ Decrescente';
+    b.textContent = sortDir === 'asc' ? '↑' : '↓';
     draw();
   });
   on(view, 'click', '[data-act=export]', () => download('/api/exportar/oportunidades', query()).catch(toastError));
@@ -264,7 +319,7 @@ export async function show(view, { key, id, params }) {
     const oppId = e.dataTransfer.getData('text/plain');
     if (oppId) doMove(oppId, col.dataset.stage);
   });
-  if (mode !== 'kanban') $('.board-tools', view).hidden = true;
+  if (mode !== 'kanban') $$('.kanban-only', view).forEach((x) => (x.hidden = true));
   await load();
 }
 

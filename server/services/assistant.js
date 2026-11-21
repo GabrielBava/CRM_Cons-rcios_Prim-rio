@@ -95,7 +95,8 @@ function leadData(db, user, contactId) {
   const proposals = db.prepare("SELECT code, status, credit_value, area, created_at, last_response FROM proposals WHERE contact_id = ? AND status <> 'substituida' ORDER BY created_at DESC").all(c.id);
   const products = require('./leadproducts').listProducts(db, user, c.id);
   const diag = db.prepare('SELECT status, summary, updated_at FROM diagnostics WHERE contact_id = ? ORDER BY id DESC LIMIT 1').get(c.id);
-  return { c, o, acts, tasks, proposals, products, diag };
+  const meetings = db.prepare("SELECT title, meeting_kind, outcome, notes, completed_at, due_at FROM tasks WHERE contact_id = ? AND type = 'reuniao' AND status = 'concluida' ORDER BY COALESCE(completed_at, due_at) DESC LIMIT 10").all(c.id);
+  return { c, o, acts, tasks, proposals, products, diag, meetings };
 }
 
 /** Estatística por canal deste lead e taxa de resposta da equipe nos últimos 90 dias (aprendizado com o uso). */
@@ -169,7 +170,7 @@ function bestHour(acts) {
 /* ------------------------- Insights ------------------------- */
 
 function insights(db, user, contactId) {
-  const { c, o, acts, tasks, proposals, products, diag } = leadData(db, user, contactId);
+  const { c, o, acts, tasks, proposals, products, diag, meetings } = leadData(db, user, contactId);
   const stats = channelStats(db, acts);
   const canal = suggestChannel(c, stats);
   const name = first(c.name);
@@ -239,6 +240,26 @@ function insights(db, user, contactId) {
     ...tasks.map((t) => `${t.type === 'reuniao' ? (t.meeting_kind || 'r1').toUpperCase() : 'Tarefa'}: ${t.title} (${fmtDate(t.due_at)})`),
     ...proposals.filter((p) => ['rascunho', 'apresentada', 'em_analise'].includes(p.status)).map((p) => `Proposta ${p.code} (${p.status}) ${money(p.credit_value)}`),
   ];
+  // O que foi combinado: anotações das reuniões concluídas e das conversas/atividades com observação (mais recentes primeiro)
+  const OUTCOME = { realizada: 'realizada', nao_compareceu: 'não compareceu', remarcada: 'remarcada', cancelada: 'cancelada' };
+  const agreed = [
+    ...meetings.filter((t) => t.notes).map((t) => ({ at: t.completed_at || t.due_at, text: `${(t.meeting_kind || 'r1').toUpperCase()} ${OUTCOME[t.outcome] || ''}: ${String(t.notes).replace(/\s*Link da reunião: \S+/g, '').trim()}` })),
+    ...acts.filter((a) => a.notes && !ACTIVITY_TYPES[a.type]?.system && !/^Contato que gerou o agendamento/.test(a.notes)).map((a) => ({ at: a.occurred_at, text: `${ACTIVITY_TYPES[a.type]?.label || a.type}: ${a.notes}` })),
+  ].filter((x) => x.text && !/: $/.test(x.text)).sort((x, y) => (x.at < y.at ? 1 : -1)).slice(0, 8);
+  // Fontes que a IA consultou para este lead
+  const qualFilled = o ? ['objective_type', 'credit_purpose_type', 'credit_category', 'credit_value', 'urgency', 'installment_min', 'installment_max', 'financial_moment', 'has_bid_resources', 'decision_maker', 'had_consortium'].filter((f) => o[f] != null && o[f] !== '').length : 0;
+  const kbCount = db.prepare('SELECT COUNT(*) AS n FROM ai_knowledge WHERE active = 1').get().n;
+  const sources = [
+    { key: 'cadastro', label: 'Cadastro do lead', n: 1 },
+    { key: 'negocio', label: 'Negócio e etapa do funil', n: o ? 1 : 0 },
+    { key: 'atividades', label: 'Atividades', n: contactActs.length },
+    { key: 'qualificacao', label: 'Qualificação', n: qualFilled },
+    { key: 'reunioes', label: 'Reuniões (R1/R2)', n: meetings.length + tasks.filter((t) => t.type === 'reuniao').length },
+    { key: 'propostas', label: 'Propostas', n: proposals.length },
+    { key: 'produtos', label: 'Produtos mapeados', n: products.rows.length },
+    { key: 'diagnostico', label: 'Diagnóstico financeiro', n: diag ? 1 : 0 },
+    { key: 'base', label: 'Base da IA Vero', n: kbCount },
+  ].filter((x) => x.n > 0);
   const resumo = `${c.name} (${c.kind}, ${c.code}) · ${o ? `${o.stage_name}, ${o.days_in_stage} dia(s) na etapa` : 'sem negócio aberto'} · origem ${c.origin || '—'} · ${contactActs.length} atividade(s), ${attempts} tentativa(s) · temperatura ${o?.temperature || c.temperature || '—'} · score ${o?.score ?? '—'}.`;
   return {
     contact: { id: c.id, name: c.name, first_name: name },
@@ -251,11 +272,19 @@ function insights(db, user, contactId) {
     products: { potential: products.potential, totals: products.totals },
     diagnostic: diag ? { status: diag.status, updated_at: diag.updated_at } : null,
     r1_deadline: r1Deadline,
+    agreed, sources,
   };
 }
 
 /* ------------------------- Chat ------------------------- */
 
+/** Atalhos do chat (botões abaixo do orbe). */
+const QUICK = [
+  { key: 'objecoes', label: 'Objeções', icon: 'escudo', prompt: 'Objeções' },
+  { key: 'proximo', label: 'Próximo passo', icon: 'bandeira', prompt: 'Qual o próximo passo?' },
+  { key: 'combinado', label: 'O que foi combinado', icon: 'lista', prompt: 'O que foi combinado com o cliente?' },
+  { key: 'mensagem', label: 'Mensagem pronta', icon: 'caneta', prompt: 'Mensagem pronta para o WhatsApp' },
+];
 const SUGGESTIONS = [
   'Como seguir o próximo follow-up?', 'Em que etapa está e o que falta para avançar?', 'O que ele tem em aberto?', 'Quais oportunidades de cross-sell?',
   'Qual canal e horário tentar?', 'Perguntas SPIN para a próxima conversa', 'Checklist BANT', 'Objeção: está caro', 'Objeção: vou pensar', 'Como subir o score?',
@@ -265,8 +294,23 @@ const SUGGESTIONS = [
 function internalAnswer(ins, question) {
   const q = String(question || '').toLowerCase();
   const lines = [];
-  const objection = OBJECTIONS.find((x) => x.match.test(q)) || (/obje/.test(q) ? OBJECTIONS[0] : null);
-  if (/obje|caro|pensar|c[ôo]njuge|esposa|marido|confi|demora|contempla|financiamento|momento|manda/.test(q) && objection) {
+  const objection = OBJECTIONS.find((x) => x.match.test(q));
+  if (/combinad|acordad|ficou (de|certo)|o que (ele|ela|o cliente) (disse|falou)/.test(q)) {
+    lines.push('**O que foi combinado**');
+    if (ins.agreed.length) lines.push(...ins.agreed.map((x) => `- ${x.text}`));
+    else lines.push('- Ainda não há anotações de reunião ou de conversa com o cliente. Registre o que foi combinado ao concluir a R1/R2 ou em Atividades.');
+    if (ins.open_items.length) lines.push('', 'Em aberto:', ...ins.open_items.map((x) => `- ${x}`));
+  } else if (/mensagem|texto pronto|whats.*pront|o que (mando|escrevo)/.test(q) && !objection) {
+    const st = ins.stage?.key;
+    const pick = ['negociacao', 'r2'].includes(st) ? 2 : ['qualificado', 'tentativa'].includes(st) ? 1 : 0;
+    const msgs = [ins.messages[pick], ...ins.messages.filter((m, i) => i !== pick)].filter(Boolean).slice(0, 3);
+    lines.push('**Mensagem pronta (WhatsApp)**', '', `> ${msgs[0].text}`);
+    if (msgs.length > 1) lines.push('', 'Outras opções:', ...msgs.slice(1).map((m) => `- ${m.title}: ${m.text}`));
+  } else if (/obje/.test(q) && !objection) {
+    lines.push('**Objeções mais comuns e como responder**');
+    for (const o of ins.objections.slice(0, 5)) lines.push(`- **${o.title}** — ${o.response}`);
+    lines.push('', 'Pergunte por uma específica (ex.: "Objeção: vou pensar") para ver a dica de condução.');
+  } else if (/obje|caro|pensar|c[ôo]njuge|esposa|marido|confi|demora|contempla|financiamento|momento|manda/.test(q) && objection) {
     const o = ins.objections.find((x) => x.key === objection.key) || objection;
     lines.push(`**Objeção: ${o.title}**`, '', `Resposta sugerida (WhatsApp):`, `> ${o.response}`, '', `Dica: ${o.tip}`);
   } else if (/canal|hor[áa]rio|ligar|whats|contato|tentar/.test(q)) {
@@ -323,7 +367,7 @@ Fluxo do pipeline: Prospect → Lead → Tentativa de contato (exige atividade) 
 
 async function llmAnswer(db, cfg, ins, history, question) {
   const client = clientFactory ? clientFactory(cfg) : new cfg.Anthropic({ apiKey: cfg.key });
-  const context = JSON.stringify({ resumo: ins.resumo, etapa: ins.stage, proximo_passo: ins.next, alertas: ins.alerts.map((a) => a.text), canal: ins.canal, bant: ins.bant.map((b) => ({ item: b.label, ok: b.ok, valor: b.value })), em_aberto: ins.open_items, oportunidades: ins.cross_sell, score: ins.score, prazo_r1: ins.r1_deadline });
+  const context = JSON.stringify({ resumo: ins.resumo, etapa: ins.stage, proximo_passo: ins.next, alertas: ins.alerts.map((a) => a.text), canal: ins.canal, bant: ins.bant.map((b) => ({ item: b.label, ok: b.ok, valor: b.value })), em_aberto: ins.open_items, combinado: ins.agreed.map((x) => x.text), oportunidades: ins.cross_sell, score: ins.score, prazo_r1: ins.r1_deadline });
   const response = await client.beta.messages.create({
     model: cfg.model,
     max_tokens: 4000,
@@ -338,19 +382,22 @@ async function llmAnswer(db, cfg, ins, history, question) {
   return text || null;
 }
 
+const threadId = (t) => (/^[a-z0-9-]{4,40}$/i.test(String(t || '')) ? String(t) : null);
+
 async function chat(db, user, contactId, data = {}) {
   const question = clean(data.message);
   if (!question) throw badRequest('Escreva a pergunta.');
   if (question.length > 2000) throw badRequest('Pergunta muito longa.');
   const ins = insights(db, user, contactId);
   const now = nowIso();
-  db.prepare("INSERT INTO ai_messages (contact_id, user_id, role, content, created_at) VALUES (?, ?, 'user', ?, ?)").run(ins.contact.id, user.id, question, now);
+  const thread = threadId(data.thread) || `t-${Date.now().toString(36)}`;
+  db.prepare("INSERT INTO ai_messages (contact_id, user_id, role, content, thread, created_at) VALUES (?, ?, 'user', ?, ?, ?)").run(ins.contact.id, user.id, question, thread, now);
   const cfg = llmConfig(db);
   let answer = null;
   let engine = 'interna';
   let note = null;
   if (cfg.enabled && cfg.key && cfg.sdk) {
-    const history = db.prepare('SELECT role, content FROM ai_messages WHERE contact_id = ? AND user_id = ? ORDER BY id DESC LIMIT 11').all(ins.contact.id, user.id).reverse().slice(0, -1);
+    const history = db.prepare('SELECT role, content FROM ai_messages WHERE contact_id = ? AND user_id = ? AND thread = ? ORDER BY id DESC LIMIT 11').all(ins.contact.id, user.id, thread).reverse().slice(0, -1);
     try {
       answer = await llmAnswer(db, cfg, ins, history, question);
       if (answer) engine = 'claude';
@@ -362,13 +409,22 @@ async function chat(db, user, contactId, data = {}) {
     }
   }
   if (!answer) answer = internalAnswer(ins, question);
-  const id = Number(db.prepare('INSERT INTO ai_messages (contact_id, user_id, role, content, engine, created_at) VALUES (?, ?, \'assistant\', ?, ?, ?)').run(ins.contact.id, user.id, answer, engine, nowIso()).lastInsertRowid);
-  return { id, answer, engine, note };
+  const id = Number(db.prepare('INSERT INTO ai_messages (contact_id, user_id, role, content, engine, thread, created_at) VALUES (?, ?, \'assistant\', ?, ?, ?, ?)').run(ins.contact.id, user.id, answer, engine, thread, nowIso()).lastInsertRowid);
+  return { id, answer, engine, note, thread };
 }
 
-function history(db, user, contactId) {
+/**
+ * Conversas do usuário com a IA sobre o lead: a lista (primeira pergunta e data de cada conversa) e as mensagens da
+ * conversa pedida (q.thread). Sem q.thread, só a lista: o chat abre numa "Nova conversa".
+ */
+function history(db, user, contactId, q = {}) {
   const c = loadContact(db, user, contactId);
-  return db.prepare('SELECT id, role, content, engine, rating, created_at FROM ai_messages WHERE contact_id = ? AND user_id = ? ORDER BY id DESC LIMIT 40').all(c.id, user.id).reverse();
+  const threads = db.prepare(`SELECT COALESCE(thread, 'anterior') AS thread, MIN(created_at) AS started_at, MAX(created_at) AS last_at, COUNT(*) AS n,
+      (SELECT content FROM ai_messages m2 WHERE m2.contact_id = m.contact_id AND m2.user_id = m.user_id AND COALESCE(m2.thread, 'anterior') = COALESCE(m.thread, 'anterior') AND m2.role = 'user' ORDER BY m2.id LIMIT 1) AS first
+    FROM ai_messages m WHERE contact_id = ? AND user_id = ? GROUP BY COALESCE(thread, 'anterior') ORDER BY last_at DESC LIMIT 30`).all(c.id, user.id);
+  const t = q.thread ? String(q.thread) : null;
+  const messages = t ? db.prepare("SELECT id, role, content, engine, rating, thread, created_at FROM ai_messages WHERE contact_id = ? AND user_id = ? AND COALESCE(thread, 'anterior') = ? ORDER BY id LIMIT 200").all(c.id, user.id, t) : [];
+  return { threads, messages };
 }
 
 /** 👍/👎 numa resposta (e, se a sugestão veio da base de conhecimento, no item da base). */
@@ -412,7 +468,7 @@ function saveKnowledge(db, user, data = {}) {
 
 function status(db, user) {
   const cfg = llmConfig(db);
-  return { enabled: cfg.enabled, sdk_installed: cfg.sdk, has_key: !!cfg.key, from_env: !!process.env.ANTHROPIC_API_KEY, model: cfg.model, generative: cfg.enabled && !!cfg.key && cfg.sdk, suggestions: SUGGESTIONS, can_configure: user.role === 'admin' };
+  return { enabled: cfg.enabled, sdk_installed: cfg.sdk, has_key: !!cfg.key, from_env: !!process.env.ANTHROPIC_API_KEY, model: cfg.model, generative: cfg.enabled && !!cfg.key && cfg.sdk, suggestions: SUGGESTIONS, quick: QUICK, can_configure: user.role === 'admin' };
 }
 function saveConfig(db, user, data = {}) {
   if (user.role !== 'admin') throw forbidden('Apenas o administrador configura a IA.');

@@ -209,7 +209,7 @@ function bindTimes(form, start) {
 
 const hm = (iso) => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 const dayLabel = (iso) => new Date(iso).toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' });
-const STATE_LABEL = { agendada: 'Agendada', remarcada: 'Remarcada', realizada: 'Realizada', no_show: 'Não compareceu (NS)', cancelada: 'Cancelada' };
+const STATE_LABEL = { agendada: 'Agendada', remarcada: 'Remarcada', realizada: 'Concluída', no_show: 'Não participou (NS)', cancelada: 'Cancelada' };
 const STATE_TONE = { agendada: 'info', remarcada: 'rm', realizada: 'ok', no_show: 'ns', cancelada: 'muted' };
 
 /**
@@ -220,7 +220,7 @@ export function meetingCard(kind, m, { canSchedule = true, write = true } = {}) 
   const K = MEETING_LABEL[kind];
   const pending = m && ['agendada', 'remarcada'].includes(m.state);
   return html`<section class="mt-card ${m ? `st-${m.state}` : 'st-none'}" data-meeting="${kind}">
-    <header><strong>${K}</strong>${m ? html`<span class="badge ${STATE_TONE[m.state] || ''}">${STATE_LABEL[m.state] || m.state}</span>` : html`<span class="muted small">${kind === 'r2' ? 'R2 não agendada' : 'Não agendada'}</span>`}</header>
+    <header><strong>${K}</strong>${m ? html`<span class="badge ${STATE_TONE[m.state] || ''}">${STATE_LABEL[m.state] || m.state}</span>` : html`<span class="badge muted">${kind === 'r2' && !canSchedule ? 'Bloqueada' : 'Não agendada'}</span>`}</header>
     ${m && m.at ? html`<div class="mt-when">${icon_cal()}<span><strong>${dayLabel(m.at)}</strong> · ${hm(m.at)}${m.ends_at ? ` às ${hm(m.ends_at)}` : ''}</span></div>` : ''}
     ${pending ? html`<div class="mt-how">${m.meeting_url ? html`<a href="${m.meeting_url}" target="_blank" rel="noopener">Google Meet</a>` : html`<span class="muted">Sem link de vídeo</span>`}${m.confirmed ? html` · <span class="ok-text">presença confirmada</span>` : ''}</div>` : ''}
     ${m && (m.no_shows || m.reschedules) ? html`<div class="mt-stats">${m.no_shows ? html`<span class="badge ns" title="Não compareceu">NS ${m.no_shows}</span>` : ''}${m.reschedules ? html`<span class="badge rm" title="Remarcações">R ${m.reschedules}</span>` : ''}</div>` : ''}
@@ -230,7 +230,8 @@ export function meetingCard(kind, m, { canSchedule = true, write = true } = {}) 
         <button type="button" class="btn small warn" data-mt="noshow" data-task="${m.task_id}">Não compareceu</button>
         ${m.confirmed ? '' : html`<button type="button" class="btn small ghost" data-mt="confirm" data-task="${m.task_id}" title="O cliente confirmou que vai participar">Confirmar presença</button>`}`
         : m?.state === 'no_show' ? html`<button type="button" class="btn small primary" data-mt="resched" data-task="${m.task_id}">Remarcar ${K}</button>`
-          : canSchedule && (!m || m.state === 'cancelada') ? html`<button type="button" class="btn small ${kind === 'r1' ? 'primary' : ''}" data-mt="new" data-kind="${kind}">Agendar ${K}</button>` : ''}
+          : canSchedule && (!m || m.state === 'cancelada') ? html`<button type="button" class="btn small primary" data-mt="new" data-kind="${kind}">Agendar ${K}</button>`
+            : kind === 'r2' && !m ? html`<button type="button" class="btn small" disabled title="A R2 é liberada depois que a R1 for agendada e concluída">Agendar R2</button><small class="muted mt-lock">Liberada após concluir a R1.</small>` : ''}
       ${m?.task_id ? html`<button type="button" class="btn small ghost" data-r1-model="task_id=${m.task_id}">Modelo da R1</button>` : ''}
     </div>` : ''}
   </section>`;

@@ -20,7 +20,8 @@
   --on-primary: #0D1B2A;
   --btn-primary: #E0E1DD;
   font-family: var(--font);
-  font-size: 16px;
+  /* Fonte base fluida (ver brand.css › Base e tipografia) */
+  font-size: clamp(14.5px, calc(0.3125vw + 10px), 18px);
 }
 :root[data-theme="light"] { --on-primary: #FFFFFF; --btn-primary: #0D1B2A; }
 @media (prefers-color-scheme: light) { :root:not([data-theme]) { --on-primary: #FFFFFF; --btn-primary: #0D1B2A; } }

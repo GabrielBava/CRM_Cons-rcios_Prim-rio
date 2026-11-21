@@ -249,6 +249,7 @@ function createRouter(db) {
   add('POST', '/api/enderecos/:id/remover', ({ user, params }) => (record.deleteAddress(db, user, params.id), { ok: true }));
   add('POST', '/api/cadastros/:id/socios', ({ user, params, body }) => ({ id: record.savePartner(db, user, params.id, body) }));
   add('POST', '/api/cadastros/:id/anexos', ({ user, params, body }) => ({ id: record.uploadAttachment(db, user, params.id, body) }), { bodyLimit: 12e6 });
+  add('GET', '/api/cadastros/:id/anexos', ({ user, params }) => record.listAttachments(db, core.loadContact(db, user, params.id).id));
   add('GET', '/api/anexos/:id', ({ user, params, res }) => {
     const a = record.getAttachment(db, user, params.id);
     return sendBinary(res, a.filename, a.mime, a.content);
@@ -351,7 +352,7 @@ function createRouter(db) {
   add('GET', '/api/ia/status', ({ user }) => assistant.status(db, user));
   add('PUT', '/api/ia/config', ({ user, body }) => assistant.saveConfig(db, user, body));
   add('GET', '/api/ia/leads/:id', ({ user, params }) => assistant.insights(db, user, params.id));
-  add('GET', '/api/ia/leads/:id/conversa', ({ user, params }) => assistant.history(db, user, params.id));
+  add('GET', '/api/ia/leads/:id/conversa', ({ user, params, query }) => assistant.history(db, user, params.id, query));
   add('POST', '/api/ia/leads/:id/conversa', ({ user, params, body }) => assistant.chat(db, user, params.id, body));
   add('POST', '/api/ia/avaliar', ({ user, body }) => assistant.rate(db, user, body));
   add('GET', '/api/ia/conhecimento', () => assistant.listKnowledge(db));
