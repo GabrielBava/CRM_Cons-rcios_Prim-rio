@@ -1,6 +1,6 @@
 // Abas do painel do lead da rodada 4: IA Vero (assistente comercial), Produtos (cross-sell/up-sell nas quatro áreas)
 // e Diagnóstico financeiro (ferramenta da Vero Planejamento ligada ao CRM).
-import { get, post, patch, del, download } from './api.js';
+import { get, post, patch, put, del, download } from './api.js';
 import { html, raw, esc, render, $, $$, on, modal, field, opts, optLabel, state, toast, toastError, fmtMoney, fmtDate, fmtDateTime, relTime, badge, empty, can, hasModule } from './ui.js';
 import { icon } from './icons.js';
 
@@ -363,6 +363,71 @@ function fileForm(ctx, a = null) {
   });
 }
 
+/* ------------------------- Recomendações (indicações) ------------------------- */
+
+const MIN_REF_ROWS = 5;
+const REF_FIELDS = [['name', 'Nome'], ['phone', 'Telefone'], ['whatsapp', 'WhatsApp'], ['email', 'E-mail'], ['recommended_by', 'Quem recomendou']];
+
+/** Recomendações do lead: 5 linhas (ou mais), salvas automaticamente; "+" cadastra a indicação no pipeline. */
+export async function renderReferralsTab(box, ctx) {
+  const { contact: c } = ctx;
+  render(box, html`<p class="muted small">Carregando as recomendações…</p>`);
+  let r;
+  try {
+    r = await get(`/api/cadastros/${c.id}/recomendacoes`);
+  } catch (e) {
+    render(box, html`<div class="alert danger">${e.message}</div>`);
+    return;
+  }
+  if (!box.isConnected) return;
+  ctx.referrals = r.rows;
+  const w = can.write();
+  const rows = [...r.rows];
+  while (rows.length < MIN_REF_ROWS) rows.push({});
+  const filled = r.rows.filter((x) => x.name).length;
+  render(box, html`
+    <section class="ref-head"><div><strong>Recomendações deste lead</strong><small>Preencha as indicações com nome, telefone, WhatsApp, e-mail e quem recomendou. Clique em <b>+</b> para cadastrar a indicação no seu pipeline.</small></div>
+      <span class="ref-count"><strong>${filled}</strong> / ${rows.length}</span></section>
+    ${r.imported ? html`<div class="alert ok-alert small">${r.imported} indicação(ões) trazida(s) do diagnóstico financeiro.</div>` : ''}
+    <form class="ref-list" data-ref-form>${rows.map((x, i) => refRow(x, i, w))}</form>
+    ${w ? html`<div class="inline-actions"><button type="button" class="btn small" data-ref-add>${icon('adicionar', 13)} Adicionar recomendação</button><small class="muted" data-ref-status></small></div>` : ''}`);
+}
+
+function refRow(x, i, w) {
+  const done = !!x.lead_contact_id;
+  return html`<fieldset class="ref-row ${done ? 'done' : ''}" data-ref-row="${i}" ${x.id ? raw(`data-id="${x.id}"`) : ''}>
+    <legend><span class="ref-n">${i + 1}</span> Recomendação ${i + 1}${x.source === 'diagnostico' ? html` <span class="badge info">do diagnóstico</span>` : ''}
+      ${done ? html`<a class="badge ok ref-ok" href="#/leads/${x.lead_contact_id}" data-drawer="${x.lead_contact_id}">✓ Cadastrado no CRM · ${x.lead_code}</a>` : ''}</legend>
+    <div class="ref-fields">${REF_FIELDS.map(([k, label]) => html`<input name="${k}" value="${x[k] || ''}" placeholder="${label}" aria-label="${label} da recomendação ${i + 1}" ${!w || done ? raw('readonly') : ''} ${k === 'phone' || k === 'whatsapp' ? raw('inputmode="tel"') : k === 'email' ? raw('type="email"') : ''}>`)}
+      ${w && !done ? html`<button type="button" class="ref-plus" data-ref-register="${i}" title="Cadastrar esta indicação no pipeline" aria-label="Cadastrar a recomendação ${i + 1} no pipeline">${icon('adicionar', 16)}</button>` : html`<span class="ref-plus-placeholder"></span>`}</div>
+  </fieldset>`;
+}
+
+const readRefRows = (el) => $$('[data-ref-row]', el).map((f) => ({
+  id: f.dataset.id ? Number(f.dataset.id) : undefined,
+  ...Object.fromEntries(REF_FIELDS.map(([k]) => [k, f.querySelector(`[name=${k}]`).value.trim()])),
+}));
+
+async function saveRefs(el, ctx) {
+  const st = $('[data-ref-status]', el);
+  if (st) st.textContent = 'Salvando…';
+  try {
+    const r = await put(`/api/cadastros/${ctx.contact.id}/recomendacoes`, { rows: readRefRows(el) });
+    ctx.referrals = r.rows;
+    // Liga as linhas novas aos ids criados (mesma ordem das linhas preenchidas)
+    const filledRows = $$('[data-ref-row]', el).filter((f) => f.querySelector('[name=name]').value.trim() || f.querySelector('[name=phone]').value.trim() || f.querySelector('[name=whatsapp]').value.trim() || f.querySelector('[name=email]').value.trim());
+    filledRows.forEach((f, i) => r.rows[i] && (f.dataset.id = r.rows[i].id));
+    const cnt = $('.ref-count strong', el);
+    if (cnt) cnt.textContent = r.rows.filter((x) => x.name).length;
+    if (st) st.textContent = 'Salvo';
+    return r;
+  } catch (e) {
+    if (st) st.textContent = '';
+    toastError(e);
+    return null;
+  }
+}
+
 /* ------------------------- eventos ------------------------- */
 
 /** Liga os eventos das três abas no painel (delegação no elemento do painel). */
@@ -430,6 +495,40 @@ export function bindLeadTabs(el, getCtx, { redraw }) {
     } catch (ex) {
       toastError(ex);
     }
+  });
+  // Recomendações: salvamento automático ao sair do campo; "+" cadastra a indicação no pipeline
+  let refTimer;
+  on(el, 'change', '[data-ref-form] input', () => {
+    clearTimeout(refTimer);
+    refTimer = setTimeout(() => saveRefs(el, getCtx()), 300);
+  });
+  on(el, 'click', '[data-ref-add]', () => {
+    const list = $('[data-ref-form]', el);
+    const n = $$('[data-ref-row]', el).length;
+    if (n >= 30) return toast('Até 30 recomendações por lead.');
+    list.insertAdjacentHTML('beforeend', String(refRow({}, n, true)));
+    list.lastElementChild.querySelector('input')?.focus();
+  });
+  on(el, 'click', '[data-ref-register]', async (e, b) => {
+    const ctx = getCtx();
+    const row = b.closest('[data-ref-row]');
+    const val = (k) => row.querySelector(`[name=${k}]`).value.trim();
+    if (!val('name')) return toastError(new Error('Informe o nome da recomendação antes de cadastrar.'));
+    clearTimeout(refTimer);
+    const saved = await saveRefs(el, ctx);
+    if (!saved) return;
+    const ref = saved.rows.find((x) => x.id === Number(row.dataset.id)) || saved.rows.find((x) => x.name === val('name'));
+    if (!ref) return toastError(new Error('Não foi possível salvar a recomendação.'));
+    const { quickCreateContact } = await import('./forms.js');
+    await quickCreateContact({
+      name: ref.name, phone1: ref.phone || ref.whatsapp, whatsapp: ref.whatsapp && ref.whatsapp !== ref.phone ? ref.whatsapp : '', email: ref.email,
+      referral_id: ref.id, referral_from: ctx.contact.name, recommended_by: ref.recommended_by, relationship: 'lead',
+      after: () => {
+        // Cadastrou: vai para o kanban do pipeline (o cartão traz a etiqueta "Indicação")
+        document.querySelector('.drawer-wrap [data-close]')?.click();
+        location.hash = '#/funil';
+      },
+    });
   });
   on(el, 'click', '[data-file-new]', async () => {
     if (await fileForm(getCtx())) redraw('arquivos');

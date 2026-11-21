@@ -35,6 +35,8 @@ export function quickCreateContact(defaults = {}) {
       <label><input type="radio" name="kind" value="PJ" ${kind === 'PJ' ? raw('checked') : ''}> Pessoa jurídica</label>
     </div>
     <p class="hint">Só o nome é obrigatório. Campos marcados como <span class="rec">recomendado</span> podem ser completados depois.</p>
+    ${defaults.referral_id ? html`<div class="referral-box"><span class="badge ok">Indicação</span> <span>Indicado por <strong>${defaults.referral_from}</strong>${defaults.recommended_by && defaults.recommended_by !== defaults.referral_from ? html` · recomendado por ${defaults.recommended_by}` : ''}</span>
+      ${field({ name: 'referral_note', label: 'Comentário da indicação', type: 'textarea', rows: 2, full: true, placeholder: `Ex.: ${defaults.referral_from} indicou o cliente; ele quer trocar de carro no próximo ano.` })}</div>` : ''}
     <div class="grid">
       ${field({ name: 'name', label: 'Nome completo ou nome de contato', required: true, full: true, value: defaults.name })}
       <div class="pj-only full grid" ${kind === 'PJ' ? '' : raw('hidden')}>
@@ -43,11 +45,12 @@ export function quickCreateContact(defaults = {}) {
       </div>
       ${field({ name: 'phone1', label: 'Telefone principal', type: 'tel', recommended: true, placeholder: '(11) 91234-5678', value: defaults.phone1 })}
       ${field({ name: 'phone2', label: 'Telefone secundário', type: 'tel' })}
-      ${field({ name: 'email', label: 'E-mail', type: 'email', recommended: true })}
+      ${field({ name: 'whatsapp', label: 'WhatsApp', type: 'tel', value: defaults.whatsapp, placeholder: 'Se for diferente do telefone' })}
+      ${field({ name: 'email', label: 'E-mail', type: 'email', recommended: true, value: defaults.email })}
       ${field({ name: 'city', label: 'Cidade' })}
       ${field({ name: 'state', label: 'UF', maxlength: 2, placeholder: 'SP' })}
       ${visible(kind, 'doc') ? field({ name: 'doc', label: 'CPF ou CNPJ (opcional)', help: 'Informe apenas se necessário para o cadastro.' }) : ''}
-      ${field({ name: 'origin', label: 'Origem do lead', type: 'select', options: opts('origem'), value: defaults.origin, recommended: true })}
+      ${field({ name: 'origin', label: 'Origem do lead', type: 'select', options: opts('origem'), value: defaults.origin || (defaults.referral_id && opts('origem').some((o) => o.value === 'indicacao') ? 'indicacao' : undefined), recommended: true })}
       ${field({ name: 'campaign', label: 'Campanha ou ação de origem' })}
       ${field({ name: 'first_contact_at', label: 'Data do primeiro contato', type: 'datetime' })}
       ${field({ name: 'relationship', label: 'Tipo', type: 'select', options: [{ value: 'prospect', label: 'Prospect (ainda sem interesse demonstrado)' }, { value: 'lead', label: 'Lead (demonstrou interesse)' }], value: defaults.relationship || 'lead', allowEmpty: false })}
@@ -112,10 +115,15 @@ export function quickCreateContact(defaults = {}) {
         payload.contact_email = d.email;
       }
       if (!can.manage()) delete payload.owner_id;
+      if (defaults.referral_id) {
+        payload.referral_id = defaults.referral_id;
+        if (payload.create_opportunity === undefined) payload.create_opportunity = true;
+      }
       try {
         const r = await post('/api/cadastros', payload);
-        toast(`Cadastro ${r.code} criado.`);
-        if (!defaults.stay) nav(`#/leads/${r.id}`);
+        toast(defaults.referral_id ? `Indicação cadastrada: ${r.code} já está no seu pipeline.` : `Cadastro ${r.code} criado.`);
+        if (defaults.after) defaults.after(r);
+        else if (!defaults.stay) nav(`#/leads/${r.id}`);
         return r;
       } catch (e) {
         if (e.status === 409 && e.details?.duplicates) {

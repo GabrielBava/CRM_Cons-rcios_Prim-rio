@@ -7,7 +7,7 @@ import { html, raw, render, $, $$, on, state, badge, relBadge, optLabel, K, fmtM
 import { activityForm, taskForm, lostDialog, completeTask, cancelTask, opportunityForm, proposalDetail, attemptDialog, qualifyDialog, newProposalFlow, CONTACT_CHANNELS, PROPOSAL_AREAS } from './forms.js';
 import { qualProgress, qualBlocks, tempBadge } from './qualification.js';
 import { scheduleMeetingDialog, meetingLinks, meetingCard, bindMeetingCards, R1_STAGES, MEETING_LABEL } from './meeting.js';
-import { renderAiTab, renderProductsTab, renderDiagTab, renderFilesTab, bindLeadTabs, copyText } from './leadtabs.js';
+import { renderAiTab, renderProductsTab, renderDiagTab, renderFilesTab, renderReferralsTab, bindLeadTabs, copyText } from './leadtabs.js';
 import { icon } from './icons.js';
 
 const YES_NO = [{ value: 'sim', label: 'Sim' }, { value: 'nao', label: 'Não' }, { value: 'nao_sabe', label: 'Não sabe' }];
@@ -73,8 +73,9 @@ function bizForm(o) {
 
 /** Abas do painel (carrossel). A IA Vero vem antes de Detalhes. */
 const TABS = [
-  ['ia', 'IA Vero'], ['detalhes', 'Detalhes'], ['atividades', 'Atividades'], ['qualificacao', 'Qualificação'], ['agendas', 'Agendas'],
-  ['produtos', 'Produtos'], ['arquivos', 'Arquivos'], ['diagnostico', 'Diagnóstico'], ['tarefas', 'Tarefas'], ['notas', 'Notas'], ['propostas', 'Propostas'], ['historico', 'Histórico'],
+  ['ia', 'IA Vero'], ['detalhes', 'Detalhes'], ['atividades', 'Atividades'], ['tarefas', 'Tarefas'], ['qualificacao', 'Qualificação'],
+  ['diagnostico', 'Diagnóstico'], ['agendas', 'Agendas'], ['produtos', 'Produtos'], ['propostas', 'Propostas'], ['notas', 'Notas'],
+  ['arquivos', 'Arquivos'], ['recomendacoes', 'Recomendações'], ['historico', 'Histórico'],
 ];
 /** Atividades de contato (enviadas e recebidas) por canal: totais do topo da aba Atividades. */
 const CHANNEL_TYPES = {
@@ -220,6 +221,8 @@ export async function openLeadDrawer(contactId, { oppId = null, onChange = null,
       await renderDiagTab(box, current);
     } else if (tab === 'arquivos') {
       await renderFilesTab(box, current);
+    } else if (tab === 'recomendacoes') {
+      await renderReferralsTab(box, current);
     } else if (tab === 'detalhes') {
       const dl = r1Deadline(c, o);
       const row = (label, v, extra = '') => html`<div class="${extra}"><dt>${label}</dt><dd>${v == null || v === '' ? html`<span class="muted">—</span>` : v}</dd></div>`;

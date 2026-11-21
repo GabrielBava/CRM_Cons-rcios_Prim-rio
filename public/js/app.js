@@ -74,10 +74,11 @@ const NAV_GROUPS = () => [
   ['Comunicação', true, [['comunicacao/inbox', 'Inbox', 'chat', 'inbox'], ['comunicacao/tickets', 'Tickets', 'ticket', 'tickets'], ['comunicacao/whatsapp', 'WhatsApp', 'whatsapp', 'whatsapp']]],
   ['', true, [['ferramentas', 'Ferramentas', 'ferramentas', null]]],
   ['Gestão de vendas', true, [['clientes', 'Clientes', 'clientes', 'clientes'], ['vendas', 'Vendas', 'vendas', 'vendas'], ['posvenda', 'Pós-venda', 'posvenda', 'posvenda'], ['metas', 'Metas', 'metas', 'metas'], ['comissoes', 'Comissões e cancelamentos', 'comissoes', 'comissoes'], ['relatorios', 'Relatórios', 'relatorios', 'relatorios']]],
-  ['Gestão do time', ['admin', 'gestor'].includes(state.user?.role), [['time/organograma', 'Organograma do time', 'organograma', 'time'], ['time/squad', 'Dashboard squad', 'painel', 'time'], ['time/one-on-ones', 'One-on-ones', 'agenda', 'time'], ['entrada', 'Distribuição de leads', 'leads', 'distribuicao']]],
+  ['Gestão do time', ['admin', 'gestor'].includes(state.user?.role), [['time/organograma', 'Organograma do time', 'organograma', 'time'], ['time/squad', 'Dashboard squad', 'painel', 'time'], ['time/bi', 'BI do time', 'relatorios', 'time'], ['time/one-on-ones', 'One-on-ones', 'agenda', 'time'], ['entrada', 'Distribuição de leads', 'leads', 'distribuicao']]],
   ['', true, [['treinamentos', 'Treinamentos', 'treinamentos', 'treinamentos']]],
   ['Financeiro', allowed('financeiro'), finLinks()],
-  ['Administração', true, [['administradoras', 'Administradoras', 'administradoras', 'administradoras'], ['planos', 'Planos', 'planos', 'planos'], ['colaboradores', 'Colaboradores', 'colaboradores', 'colaboradores'], ['documentos', 'Central de documentos', 'documentos', 'documentos'], ['usuarios', 'Usuários', 'usuarios', 'usuarios'], ['configuracoes', 'Configurações', 'configuracoes', 'configuracoes']]],
+  ['Consórcios', true, [['administradoras', 'Administradoras', 'administradoras', 'administradoras'], ['planos', 'Planos', 'planos', 'planos']]],
+  ['Administração', true, [['colaboradores', 'Colaboradores', 'colaboradores', 'colaboradores'], ['documentos', 'Central de documentos', 'documentos', 'documentos'], ['usuarios', 'Usuários', 'usuarios', 'usuarios'], ['configuracoes', 'Configurações', 'configuracoes', 'configuracoes']]],
 ];
 // Rotas secundárias: [tela, módulo, item do menu destacado]
 const EXTRA = {

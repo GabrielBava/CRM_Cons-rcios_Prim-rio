@@ -1426,6 +1426,7 @@ const ADDED_COLUMNS = {
   attachments: [['description', 'TEXT'], ['purpose', 'TEXT']],
   // IA Vero: cada "Nova conversa" do chat é uma conversa (thread) própria
   ai_messages: [['thread', 'TEXT']],
+  referrals: [['removed_at', 'TEXT']],
   proposals: [
     ['simulator_token_hash', 'TEXT'], ['simulator_token_expires_at', 'TEXT'], ['generated_at', 'TEXT'], ['pdf_attachment_id', 'INTEGER REFERENCES attachments(id)'],
     ['accepted_at', 'TEXT'], ['accepted_channel', 'TEXT'], ['accepted_by', 'INTEGER REFERENCES users(id)'], ['refusal_reason', 'TEXT'],
@@ -2259,6 +2260,28 @@ CREATE TABLE IF NOT EXISTS ai_knowledge (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+-- Recomendações (indicações) do lead: aba Recomendações do painel; viram leads no pipeline
+CREATE TABLE IF NOT EXISTS referrals (
+  id INTEGER PRIMARY KEY,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id),
+  name TEXT,
+  phone TEXT,
+  whatsapp TEXT,
+  email TEXT,
+  recommended_by TEXT,
+  notes TEXT,
+  source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','diagnostico')),
+  position INTEGER NOT NULL DEFAULT 0,
+  lead_contact_id INTEGER REFERENCES contacts(id),
+  registered_at TEXT,
+  registered_by INTEGER REFERENCES users(id),
+  removed_at TEXT,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_referrals_contact ON referrals(contact_id);
+
 CREATE TABLE IF NOT EXISTS ai_messages (
   id INTEGER PRIMARY KEY,
   contact_id INTEGER NOT NULL REFERENCES contacts(id),

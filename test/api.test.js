@@ -2564,3 +2564,47 @@ test('agendas: a R2 só é liberada depois da R1 agendada e concluída', async (
   assert.equal((await call('c1', 'POST', `/api/reunioes/${r1.data.task_id}/resultado`, { result: 'realizada' })).status, 200);
   assert.equal((await call('c1', 'POST', '/api/reunioes/agendar', { kind: 'r2', contact_id: c.data.id, opportunity_id: opp.id, ...at(3) })).status, 200, 'R1 concluída libera a R2');
 });
+
+test('recomendações do lead: lista com 5+ linhas, importa do diagnóstico e o "+" cadastra a indicação no pipeline', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Indicador', phone1: '11 93817-5551', origin: 'site', relationship: 'lead' });
+  // Indicações registradas no diagnóstico financeiro entram sozinhas, com "quem recomendou" = o cliente
+  const s = await call('c1', 'POST', '/api/diagnosticos', { contact_id: c.data.id });
+  await call('c1', 'PUT', `/api/diagnosticos/${s.data.id}/dados`, { data: { id: `crm-${s.data.id}`, recomendacoes: [{ nome: 'Paula Diagnóstico', contato: 'paula.diag@exemplo.com' }, { nome: 'Rui Diagnóstico', contato: '11 93817-5552' }] } });
+  let r = (await call('c1', 'GET', `/api/cadastros/${c.data.id}/recomendacoes`)).data;
+  assert.equal(r.imported, 2);
+  assert.equal(r.rows[0].email, 'paula.diag@exemplo.com');
+  assert.equal(r.rows[1].phone, '11 93817-5552');
+  assert.equal(r.rows[0].recommended_by, 'Cliente Indicador');
+  assert.equal(r.rows[0].source, 'diagnostico');
+  assert.equal((await call('c1', 'GET', `/api/cadastros/${c.data.id}/recomendacoes`)).data.imported, 0, 'não duplica');
+  // Salva a lista (linhas vazias ignoradas, validação de e-mail e telefone)
+  const rows = [...r.rows.map((x) => ({ id: x.id, name: x.name, phone: x.phone, email: x.email })), { name: 'Lia Manual', phone: '11 93817-5553' }, {}, {}];
+  assert.equal((await call('c1', 'PUT', `/api/cadastros/${c.data.id}/recomendacoes`, { rows: [...rows, { name: 'X', email: 'invalido' }] })).status, 400);
+  assert.equal((await call('c1', 'PUT', `/api/cadastros/${c.data.id}/recomendacoes`, { rows: [{ phone: '11 93817-5554' }] })).status, 400, 'nome obrigatório');
+  r = (await call('c1', 'PUT', `/api/cadastros/${c.data.id}/recomendacoes`, { rows })).data;
+  assert.equal(r.rows.length, 3);
+  assert.equal(r.rows[2].source, 'manual');
+  assert.equal((await call('c2', 'GET', `/api/cadastros/${c.data.id}/recomendacoes`)).status, 404, 'fora do escopo');
+  // "+": cadastra a indicação como lead, com quem indicou; a linha fica ligada ao novo lead
+  const lia = r.rows[2];
+  const lead = await call('c1', 'POST', '/api/cadastros', { name: lia.name, phone1: lia.phone, origin: 'indicacao', relationship: 'lead', create_opportunity: true, referral_id: lia.id, referral_note: 'Quem indicou foi o cliente na R1.' });
+  assert.equal(lead.status, 200, JSON.stringify(lead.data));
+  const nc = (await call('c1', 'GET', `/api/cadastros/${lead.data.id}`)).data;
+  assert.equal(nc.referred_by_id, c.data.id);
+  assert.equal(nc.opportunities.length, 1, 'entra no pipeline');
+  r = (await call('c1', 'GET', `/api/cadastros/${c.data.id}/recomendacoes`)).data;
+  assert.equal(r.registered, 1);
+  assert.equal(r.rows[2].lead_contact_id, lead.data.id);
+  assert.ok(r.rows[2].lead_code);
+  const board = (await call('c1', 'GET', '/api/oportunidades?view=board')).data;
+  const card = (board.items || board.rows || board).find?.((o) => o.contact_id === lead.data.id);
+  if (card) assert.equal(card.referred_by_name, 'Cliente Indicador');
+  const notes = (await call('c1', 'GET', '/api/notificacoes')).data;
+  assert.ok((notes.items || notes.rows || notes).some((n) => n.kind === 'indicacao' && /Lia Manual/.test(n.title)), 'aviso de nova indicação');
+  // Não cadastra duas vezes; a linha cadastrada não é apagada ao salvar a lista sem ela
+  assert.equal((await call('c1', 'POST', '/api/cadastros', { name: 'Lia Outra', phone1: '11 93817-5555', referral_id: lia.id })).status, 409);
+  r = (await call('c1', 'PUT', `/api/cadastros/${c.data.id}/recomendacoes`, { rows: [] })).data;
+  assert.equal(r.rows.length, 1);
+  assert.equal((await call('c1', 'GET', `/api/cadastros/${c.data.id}/recomendacoes`)).data.rows.length, 1, 'as do diagnóstico apagadas não voltam');
+  assert.equal((await call('c2', 'POST', '/api/cadastros', { name: 'Intruso', phone1: '11 93817-5556', referral_id: lia.id })).status, 404, 'indicação de lead de outro consultor');
+});

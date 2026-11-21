@@ -218,7 +218,20 @@ function createRouter(db) {
   /* ---------- Cadastros ---------- */
   add('GET', '/api/cadastros', ({ user, query }) => contacts.listContacts(db, user, query));
   add('POST', '/api/cadastros', ({ user, body }) => {
-    const r = contacts.createContact(db, user, body);
+    // Indicação vinda da aba Recomendações: confere o acesso ao cadastro de origem antes de criar
+    const ref = body.referral_id ? db.prepare('SELECT contact_id, lead_contact_id FROM referrals WHERE id = ? AND removed_at IS NULL').get(Number(body.referral_id)) : null;
+    if (body.referral_id && !ref) throw require('./util').badRequest('Recomendação não encontrada.');
+    if (ref) {
+      core.loadContact(db, user, ref.contact_id);
+      if (ref.lead_contact_id) throw require('./util').conflict('Esta indicação já foi cadastrada no CRM.');
+      body.referred_by_id = ref.contact_id;
+    }
+    // Cadastro e vínculo com a recomendação na mesma transação
+    const r = require('./db').tx(db, () => {
+      const created = contacts.createContact(db, user, body);
+      if (ref) require('./services/referrals').markRegistered(db, user, body.referral_id, created.id, body.referral_note);
+      return created;
+    });
     // Cadastrado sem responsável: a roleta distribui na hora (sem esperar a rotina de 15 minutos)
     const c = db.prepare('SELECT owner_id FROM contacts WHERE id = ?').get(r.id);
     if (c && !c.owner_id) require('./services/distribution').autoDistribute(db, r.id);
@@ -337,6 +350,9 @@ function createRouter(db) {
   add('GET', '/api/funil/perdidos', ({ user, query }) => opps.lostBoard(db, user, query));
 
   /* ---------- Produtos do lead (cross-sell/up-sell), diagnóstico financeiro e IA Vero ---------- */
+  const referrals = require('./services/referrals');
+  add('GET', '/api/cadastros/:id/recomendacoes', ({ user, params }) => referrals.listReferrals(db, user, params.id));
+  add('PUT', '/api/cadastros/:id/recomendacoes', ({ user, params, body }) => referrals.saveReferrals(db, user, params.id, body));
   const leadProducts = require('./services/leadproducts');
   const diagnostics = require('./services/diagnostics');
   const assistant = require('./services/assistant');
