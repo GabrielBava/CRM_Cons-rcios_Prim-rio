@@ -1,6 +1,7 @@
 // 1. Painel inicial: visão do dia do especialista (ou consolidada para líder e administrador) e ações sugeridas.
 import { get } from '../api.js';
-import { html, render, $, on, state, selectOptions, userItems, fmtMoney, fmtMoneyShort, fmtDateTime, fmtDate, relTime, badge, empty, toastError, K, monthLabel, avatar } from '../ui.js';
+import { html, render, $, on, state, selectOptions, userItems, fmtMoney, fmtMoneyShort, badge, empty, toast, toastError, monthLabel, avatar } from '../ui.js';
+import { bindDrawerLinks } from '../drawer.js';
 import { tempBadge } from '../qualification.js';
 import { icon } from '../icons.js';
 import { onboardingCard } from './onboarding.js';
@@ -10,6 +11,8 @@ export const probBadge = (p) => badge(`${LEVEL[p.level]?.[0] || '—'} · ${p.pr
 const pctBar = (pct) => html`<div class="progress-bar goal"><span style="width:${Math.min(100, pct || 0)}%"></span></div>`;
 
 let selected = '';
+let filter = { periodo: 'mes', de: '', ate: '', variante: 0 };
+const PERIODS = [['dia', 'Dia'], ['semana', 'Semana'], ['quinzena', 'Quinzena'], ['mes', 'Mês'], ['data', 'Data específica']];
 const kpiIco = (name) => html`<span class="kpi-ico">${icon(name, 15)}</span>`;
 // Etiqueta escrita de cada ação sugerida (o status nunca é comunicado só pela cor)
 const actionTag = (a) => (a.level === 'danger' ? badge('Urgente', 'danger') : a.level === 'warn' ? (/hoje/i.test(a.text) ? badge('Hoje', 'warn') : badge('Atenção', 'warn')) : a.level === 'ok' ? badge('Oportunidade', 'ok') : '');
@@ -18,6 +21,56 @@ const actionText = (t) => {
   const m = String(t).match(/^((?:Faltam\s+)?(?:R\$\s?)?[\d.,]+\s+[^\s:;]+)(.*)$/);
   return m ? html`<strong>${m[1]}</strong>${m[2]}` : t;
 };
+export { actionTag, actionText };
+
+/** hh:mm:ss */
+const hms = (s) => {
+  if (s == null) return '—';
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(Math.floor(s / 3600))}:${p(Math.floor((s % 3600) / 60))}:${p(Math.round(s % 60))}`;
+};
+const pctTxt = (v) => (v == null ? '—' : `${Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%`);
+const WEEK = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+const dayLabel = (iso, today) => {
+  const d = new Date(`${iso}T12:00:00`);
+  return iso === today ? 'Hoje' : `${WEEK[d.getDay()]} ${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+};
+const hhmm = (iso) => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+/** Ganhos (verde) e perdidos (vermelho) por dia, últimos 7 dias. */
+function winLossChart(days, today) {
+  const max = Math.max(1, ...days.map((d) => Math.max(d.ganhos, d.perdidos)));
+  const tg = days.reduce((t, d) => t + d.ganhos, 0);
+  const tp = days.reduce((t, d) => t + d.perdidos, 0);
+  return html`<div class="wl-head"><span class="wl-legend"><i class="wl-won"></i> Ganhos <strong>${tg}</strong></span><span class="wl-legend"><i class="wl-lost"></i> Perdidos <strong>${tp}</strong></span>
+      <span class="muted small">${fmtMoneyShort(days.reduce((t, d) => t + d.valor_ganho, 0))} ganhos na semana</span></div>
+    <div class="wl-chart" role="img" aria-label="Ganhos e perdidos nos últimos 7 dias: ${tg} ganhos e ${tp} perdidos">${days.map((d) => html`<div class="wl-day">
+      <div class="wl-bars"><span class="wl-bar won" style="height:${(d.ganhos / max) * 100}%" title="${d.ganhos} ganho(s)">${d.ganhos ? html`<b>${d.ganhos}</b>` : ''}</span><span class="wl-bar lost" style="height:${(d.perdidos / max) * 100}%" title="${d.perdidos} perdido(s)">${d.perdidos ? html`<b>${d.perdidos}</b>` : ''}</span></div>
+      <span class="wl-label">${dayLabel(d.day, today)}</span></div>`)}</div>`;
+}
+
+function calendar5(cal, today) {
+  return html`<ol class="cal5">${cal.map((d) => html`<li class="${d.day === today ? 'today' : ''}"><div class="cal5-day"><strong>${dayLabel(d.day, today)}</strong><small class="muted">${d.total ? `${d.total} item(ns)${d.reunioes ? ` · ${d.reunioes} reunião(ões)` : ''}` : 'livre'}</small></div>
+    ${d.items.length ? html`<ul>${d.items.map((t) => html`<li class="${t.type === 'reuniao' ? 'meet' : ''} ${t.status === 'concluida' ? 'done' : ''}"><time>${hhmm(t.due_at)}</time><span>${t.type === 'reuniao' ? html`<b>${String(t.meeting_kind || 'r1').toUpperCase()}</b> ` : ''}${t.contact_id ? html`<a href="#/leads/${t.contact_id}" data-drawer="${t.contact_id}">${t.contact_name || t.title}</a>` : t.title}${t.type !== 'reuniao' && t.contact_id ? html`<small class="muted"> · ${t.title.replace(/ \(PR-[\d-v]+\)$/, '').slice(0, 48)}</small>` : ''}</span></li>`)}${d.total > d.items.length ? html`<li class="more"><a href="#/agenda">+${d.total - d.items.length} na agenda</a></li>` : ''}</ul>` : ''}</li>`)}</ol>`;
+}
+
+function pipeline360(stages, c) {
+  return html`<div class="p360-summary">
+      <div><span>Leads no pipeline</span><strong>${c.leads}</strong></div>
+      <div><span>R$ em oportunidade</span><strong>${fmtMoneyShort(c.valor)}</strong></div>
+      <div><span>Temperatura</span><strong class="p360-temps">${tempBadge('quente')} ${c.quente} ${tempBadge('morno')} ${c.morno} ${tempBadge('frio')} ${c.frio}</strong></div>
+      <div><span>Vendas no mês</span><strong>${c.ganhos_mes}</strong></div></div>
+    <div class="p360-flow" role="list">${stages.map((s, i) => html`<a class="p360-stage" role="listitem" href="#/funil" style="--i:${i}">
+      <span class="p360-name">${s.name}</span><strong class="p360-n">${s.leads}</strong><span class="p360-sub">${s.leads === 1 ? 'lead' : 'leads'}</span>
+      <span class="p360-val">${s.valor ? fmtMoneyShort(s.valor) : 'R$ 0'}</span><span class="p360-tma" title="Tempo médio na etapa (horas)">TMA ${s.tma_horas == null ? '—' : `${s.tma_horas.toLocaleString('pt-BR')} h`}</span></a>`)}</div>`;
+}
+
+function filterLabel() {
+  const p = PERIODS.find(([v]) => v === filter.periodo)?.[1] || 'Mês';
+  const per = filter.periodo === 'data' && filter.de ? `${filter.de.split('-').reverse().join('/')}${filter.ate && filter.ate !== filter.de ? ` a ${filter.ate.split('-').reverse().join('/')}` : ''}` : p === 'Mês' ? 'Mês vigente' : p;
+  const who = selected ? userItems().find((u) => String(u.value) === String(selected))?.label : null;
+  return `${per}${who ? ` · ${who}` : ''}`;
+}
 
 export async function show(view) {
   const manager = ['admin', 'gestor', 'leitura'].includes(state.user.role);
@@ -25,98 +78,107 @@ export async function show(view) {
     let d;
     let ob = null;
     try {
-      [d, ob] = await Promise.all([get('/api/inicio', selected ? { user_id: selected } : {}), get('/api/integracao').catch(() => null)]);
+      [d, ob] = await Promise.all([get('/api/inicio', { ...(selected ? { user_id: selected } : {}), periodo: filter.periodo, de: filter.de, ate: filter.ate, variante: filter.variante }), get('/api/integracao').catch(() => null)]);
     } catch (e) {
       toastError(e);
       return;
     }
     const hour = new Date().getHours();
     const hello = hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite';
-    const g = d.goal;
-    // Funil visual: etapas abertas em faixas que afunilam (Prospect → Follow-up), venda no fim; nutrição e perdidos ao lado
-    const open = d.funnel.filter((f) => f.kind === 'aberta');
-    const won = d.funnel.find((f) => f.kind === 'ganho');
-    const side = d.funnel.filter((f) => f.kind === 'nutricao' || f.kind === 'perdido');
-    const bands = [...open, ...(won ? [won] : [])];
-    const funnelTotal = open.reduce((t, f) => ({ n: t.n + f.count, v: t.v + f.value, q: t.q + f.temps.quente, m: t.m + f.temps.morno, fr: t.fr + f.temps.frio }), { n: 0, v: 0, q: 0, m: 0, fr: 0 });
-    render(view, html`<div class="page">
+    const v = d.v360;
+    const k = v.kpis;
+    const g = v.goal;
+    const today = v.calendar[0]?.day;
+    const per = v.period.kind === 'mes' ? 'no mês' : v.period.kind === 'dia' ? 'hoje' : 'no período';
+    render(view, html`<div class="page wide home360">
       <div class="page-head"><div><h1>${hello}, ${state.user.name.split(' ')[0]}!</h1><p class="muted">${new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })} · ${d.scope.name ? `visão de ${d.scope.name}` : d.scope.all ? 'visão de toda a empresa' : 'visão da sua equipe'}</p></div>
-        ${manager ? html`<label class="inline">Ver<select data-user>${selectOptions(userItems(), selected, { placeholder: state.user.role === 'admin' ? 'Toda a empresa' : 'Minha equipe' })}</select></label>` : ''}</div>
+        <div class="h360-filter"><button type="button" class="btn pb-filter-btn" data-hf aria-expanded="false">${icon('filtro', 16)} ${filterLabel()}</button>
+          <form class="filter-panel h360-panel" data-hf-panel hidden>
+            <fieldset class="h360-periods"><legend>Período</legend>${PERIODS.map(([val, l]) => html`<label class="h360-opt"><input type="radio" name="periodo" value="${val}" ${filter.periodo === val ? 'checked' : ''}> ${l}</label>`)}</fieldset>
+            <div class="h360-dates" ${filter.periodo === 'data' ? '' : 'hidden'}><label>De<input type="date" name="de" value="${filter.de}"></label><label>Até<input type="date" name="ate" value="${filter.ate}"></label></div>
+            ${manager ? html`<label class="h360-who">Ver<select name="user">${selectOptions(userItems(), selected, { placeholder: state.user.role === 'admin' ? 'Toda a empresa' : 'Minha equipe' })}</select></label>` : ''}
+            <div class="fp-actions"><button type="button" class="btn ghost" data-hf-close>Cancelar</button><button class="btn primary">Aplicar</button></div>
+          </form></div></div>
       ${onboardingCard(ob)}
 
-      <div class="kpis home-kpis">
-        <a class="kpi" href="#/leads">${kpiIco('leads')}<div class="kpi-label">Leads recebidos no mês</div><div class="kpi-value">${d.leads.mes}</div><div class="kpi-sub">${d.leads.hoje} hoje${d.no_contact ? html` · <span class="overdue">${d.no_contact} sem contato</span>` : ''}</div></a>
-        <a class="kpi" href="#/propostas">${kpiIco('propostas')}<div class="kpi-label">Propostas em andamento</div><div class="kpi-value">${d.proposals.em_andamento}</div><div class="kpi-sub">${fmtMoney(d.proposals.valor_andamento)} · ponderado ${fmtMoney(d.proposals.potencial_ponderado)}</div></a>
-        <a class="kpi" href="#/vendas">${kpiIco('vendas')}<div class="kpi-label">Vendas no mês</div><div class="kpi-value">${d.sales.mes}</div><div class="kpi-sub">${fmtMoney(d.sales.credito_mes)} em crédito${d.sales.aguardando ? ` · ${d.sales.aguardando} aguardando alocação` : ''}</div></a>
-        <a class="kpi" href="#/comissoes">${kpiIco('comissoes')}<div class="kpi-label">Comissões a receber no mês</div><div class="kpi-value">${fmtMoney(d.commissions.a_receber_mes)}</div><div class="kpi-sub">liberado ${fmtMoney(d.commissions.liberado_mes)} · próximos 3 meses ${fmtMoney(d.commissions.previsto_3_meses)}</div></a>
-        <a class="kpi" href="#/metas">${kpiIco('metas')}<div class="kpi-label">Meta do mês</div><div class="kpi-value">${g.pct_credit != null ? `${g.pct_credit}%` : '—'}</div>${pctBar(g.pct_credit)}<div class="kpi-sub">${g.target_credit ? `${fmtMoney(g.realized_credit)} de ${fmtMoney(g.target_credit)}` : 'Meta não cadastrada'}</div></a>
-        <a class="kpi ${d.agenda.atrasadas ? 'alert-kpi' : ''}" href="#/agenda">${kpiIco('agenda')}<div class="kpi-label">Agenda de hoje</div><div class="kpi-value">${d.agenda.hoje}</div><div class="kpi-sub">${d.agenda.atrasadas} atrasada(s) · ${d.agenda.urgentes} urgente(s) · ${d.agenda.r1_semana} R1 na semana</div></a>
+      <div class="kpis k360">
+        <a class="kpi" href="#/leads">${kpiIco('leads')}<div class="kpi-label">Leads recebidos (24 horas)</div><div class="kpi-value">${k.leads_24h}</div><div class="kpi-sub">${k.leads_periodo} ${per}${d.no_contact ? html` · <span class="overdue">${d.no_contact} sem contato</span>` : ''}</div></a>
+        <a class="kpi" href="#/funil">${kpiIco('relatorios')}<div class="kpi-label">Taxa de conversão</div><div class="kpi-value">${pctTxt(k.taxa_conversao)}</div><div class="kpi-sub">${k.ganhos} ganho(s) de ${k.leads_periodo} lead(s) ${per}</div></a>
+        <a class="kpi" href="#/leads">${kpiIco('telefone')}<div class="kpi-label">Tempo médio de resposta</div><div class="kpi-value mono">${hms(k.tempo_resposta)}</div><div class="kpi-sub">do lead recebido ao 1º contato</div></a>
+        <a class="kpi" href="#/propostas">${kpiIco('propostas')}<div class="kpi-label">Propostas em andamento</div><div class="kpi-value">${k.propostas_andamento}</div><div class="kpi-sub">${fmtMoney(k.propostas_valor)}</div></a>
+        <a class="kpi" href="#/vendas">${kpiIco('vendas')}<div class="kpi-label">Vendas ${v.period.kind === 'mes' ? 'no mês' : 'no período'}</div><div class="kpi-value">${fmtMoneyShort(k.vendas_valor)}</div><div class="kpi-sub">${k.vendas_qtd} venda(s) · ${fmtMoney(k.vendas_valor)}</div></a>
+        <a class="kpi" href="#/propostas?ver=lista">${kpiIco('confirmar')}<div class="kpi-label">Taxa de conversão de propostas</div><div class="kpi-value">${pctTxt(k.taxa_conversao_propostas)}</div><div class="kpi-sub">${k.propostas_aceitas} aceita(s) de ${k.propostas_decididas} decidida(s)</div></a>
+        <a class="kpi ${d.agenda.atrasadas ? 'alert-kpi' : ''}" href="#/agenda">${kpiIco('agenda')}<div class="kpi-label">Agendas de hoje</div><div class="kpi-value">${k.agendas_hoje}</div><div class="kpi-sub">reuniões · ${k.tarefas_hoje} tarefa(s) · ${d.agenda.atrasadas} atrasada(s)</div></a>
       </div>
 
-      <div class="cols">
-        <section class="card"><div class="section-head"><h3>Ações sugeridas para hoje</h3>${d.actions.length ? html`<span class="count">${d.actions.length} ${d.actions.length === 1 ? 'item' : 'itens'}</span>` : ''}</div>
-          ${d.actions.length ? html`<ul class="actions-list">${d.actions.map((a) => html`<li class="lvl-${a.level}"><span class="dot"></span>${a.href ? html`<a href="${a.href}">${actionText(a.text)}</a>` : html`<span class="grow">${actionText(a.text)}</span>`}${actionTag(a)}${a.href ? html`<span class="chev">${icon('avancar', 16)}</span>` : ''}</li>`)}</ul>` : empty('Tudo em dia. Aproveite para prospectar e pedir indicações.')}
-        </section>
+      <div class="h360-row">
+        <section class="card"><div class="section-head"><h3>Ganhos e perdidos · últimos 7 dias</h3><a href="#/funil?ver=perdidos" class="small">ver perdidos</a></div>${winLossChart(v.days7, today)}</section>
+        <section class="card"><div class="section-head"><h3>Calendário · 5 dias</h3><a href="#/calendario" class="small">abrir</a></div>${calendar5(v.calendar, today)}</section>
+      </div>
+
+      <section class="card"><div class="section-head"><h3>Pipeline · cenário geral</h3><a href="#/funil" class="small">abrir o pipeline</a></div>${pipeline360(v.pipeline, v.cenario)}
+        <p class="hint">Leads e R$ de oportunidade por etapa (proposta ativa ou, sem proposta, o crédito desejado). TMA: tempo médio que os negócios ficam na etapa, em horas.</p></section>
+
+      <div class="h360-three">
+        <section class="card"><div class="section-head"><h3>Ranking da squad</h3><small class="muted">crédito vendido no mês</small></div>
+          ${v.ranking.length ? html`<ol class="ranking ranking-people">${v.ranking.map((r, i) => html`<li class="${i < 3 && r.vendas ? `top top-${i + 1}` : ''} ${r.id === state.user.id ? 'me' : ''}">
+            <span class="rank-pos">${i + 1}º</span>${avatar(r, 32)}
+            <span class="rank-who"><strong>${r.name}</strong>${r.job_title ? html`<small>${r.job_title}</small>` : ''}</span>
+            <span class="rank-nums"><strong>${r.vendas} ${r.vendas === 1 ? 'venda' : 'vendas'}</strong><small>${fmtMoneyShort(r.credito)}</small></span></li>`)}</ol>` : empty('Sem ranking para mostrar.')}</section>
         <section class="card"><div class="section-head"><h3>Meta de ${monthLabel(d.month)}</h3><a href="#/metas" class="small">detalhes</a></div>
           ${g.target_credit || g.target_sales
-            ? html`<div class="goal-head"><div class="goal-ring" style="--p:${Math.min(100, g.pct_credit || 0)}"><span>${g.pct_credit ?? 0}%</span></div>
-                <p>${g.realized_sales ? html`<strong>${g.realized_sales} ${g.realized_sales === 1 ? 'venda' : 'vendas'}</strong> no mês.` : 'Nenhuma venda registrada ainda.'}${g.target_sales && g.target_sales > g.realized_sales ? html`<br>Para bater a meta, ${g.target_sales - g.realized_sales === 1 ? 'é necessária' : 'são necessárias'} <strong>${g.target_sales - g.realized_sales} ${g.target_sales - g.realized_sales === 1 ? 'venda' : 'vendas'}</strong> até o fim do mês.` : ''}</p></div>
-              <div class="goal-row"><span>Crédito vendido</span><strong>${fmtMoney(g.realized_credit)} / ${fmtMoney(g.target_credit)}</strong></div>${pctBar(g.pct_credit)}
+            ? html`<div class="goal-head"><div class="goal-ring" style="--p:${Math.min(100, g.pct_credit || 0)}"><span>${pctTxt(g.pct_credit ?? 0)}</span></div>
+                <p>${g.realized_sales ? html`<strong>${g.realized_sales} ${g.realized_sales === 1 ? 'venda' : 'vendas'}</strong> no mês.` : 'Nenhuma venda registrada ainda.'}${g.target_sales && g.target_sales > g.realized_sales ? html`<br>Faltam <strong>${g.target_sales - g.realized_sales} ${g.target_sales - g.realized_sales === 1 ? 'venda' : 'vendas'}</strong> para a meta.` : ''}</p></div>
+              <div class="goal-row"><span>Crédito vendido</span><strong>${fmtMoneyShort(g.realized_credit)} / ${fmtMoneyShort(g.target_credit)}</strong></div>${pctBar(g.pct_credit)}
               <div class="goal-row"><span>Vendas</span><strong>${g.realized_sales} / ${g.target_sales ?? '—'}</strong></div>${pctBar(g.pct_sales)}
               <div class="goal-tiles">
-                <div><span>Falta</span><strong>${g.missing_credit != null ? fmtMoneyShort(g.missing_credit) : '—'}</strong><small>${g.missing_credit != null ? fmtMoney(g.missing_credit) : ''}</small></div>
-                <div><span>Ritmo necessário</span><strong>${g.daily_needed ? fmtMoneyShort(g.daily_needed) : '—'}</strong><small>por dia útil</small></div>
-                <div><span>Dias úteis restantes</span><strong>${g.business_days_left}</strong><small>até o fim do mês</small></div>
-                ${d.position ? html`<div><span>Ranking do mês</span><strong>${d.position.position}º</strong><small>de ${d.position.of}</small></div>` : ''}</div>`
-            : html`<p class="muted">Nenhuma meta cadastrada para este mês. O administrador cadastra as metas em Metas.</p>`}
-        </section>
-      </div>
-
-      <section class="card funnel-card"><div class="section-head"><h3>Pipeline</h3><a href="#/funil" class="small">abrir o pipeline</a></div>
-        <div class="funnel-summary">
-          <span><strong>${funnelTotal.n}</strong> negócio(s) em aberto · <strong>${fmtMoneyShort(funnelTotal.v)}</strong></span>
-          <span class="temp-legend">${tempBadge('quente')} ${funnelTotal.q} ${tempBadge('morno')} ${funnelTotal.m} ${tempBadge('frio')} ${funnelTotal.fr}</span>
-        </div>
-        <div class="funnel-viz" role="list">${bands.map((f, i) => {
-          const w = 100 - (i * 58) / Math.max(1, bands.length - 1);
-          const next = bands[i + 1] ? (100 - ((i + 1) * 58) / Math.max(1, bands.length - 1)) : w - 6;
-          const pct = f.kind === 'aberta' && funnelTotal.n ? Math.round((f.count / funnelTotal.n) * 100) : null;
-          const cut = (((w - next) / 2) / w) * 100;
-          return html`<a class="funnel-band ${f.kind === 'ganho' ? 'won' : ''}" role="listitem" href="#/funil" style="--w:${w}%;--cut:${cut.toFixed(2)}%;--i:${i}">
-            <span class="funnel-name">${f.name}</span>
-            <span class="funnel-nums"><strong>${f.count}</strong> ${f.count === 1 ? 'card' : 'cards'} · <strong>${f.value ? fmtMoneyShort(f.value) : 'R$ 0'}</strong>${pct != null ? html` <small>· ${pct}% do funil</small>` : f.kind === 'ganho' ? html` <small>· no mês</small>` : ''}
-            ${f.kind === 'aberta' && f.count ? html`<span class="funnel-temps" title="Quente ${f.temps.quente} · Morno ${f.temps.morno} · Frio ${f.temps.frio}">${f.temps.quente ? html`<i class="t-q">${f.temps.quente}</i>` : ''}${f.temps.morno ? html`<i class="t-m">${f.temps.morno}</i>` : ''}${f.temps.frio ? html`<i class="t-f">${f.temps.frio}</i>` : ''}</span>` : ''}</span>
-          </a>`;
-        })}</div>
-        ${side.length ? html`<div class="funnel-side">${side.map((f) => html`<a href="#/funil"><span>${f.name}</span><strong>${f.count}</strong><small>${f.value ? fmtMoneyShort(f.value) : '—'}</small></a>`)}</div>` : ''}
-        <p class="hint">Valor de cada etapa: proposta ativa ou, sem proposta, o crédito desejado. Temperatura: quente (prazo curto, valor e lance ou parcela), morno (objetivo e valor) e frio (sem valor nem prazo).</p>
-        ${d.rotting ? html`<p class="small warn-text">${d.rotting} negócio(s) parado(s) além do prazo da etapa.</p>` : ''}
-      </section>
-
-      <div class="cols">
-        <section class="card"><div class="section-head"><h3>Agenda de hoje</h3><a href="#/agenda" class="small">ver agenda</a></div>
-          ${d.agenda.lista.length ? html`<ul class="task-list">${d.agenda.lista.map((t) => html`<li class="${new Date(t.due_at) < new Date() ? 'overdue' : ''}">${t.priority === 'urgente' ? badge('Urgente', 'danger') : ''} <strong>${t.title}</strong><br><small>${K('task_types', t.type)} · ${fmtDateTime(t.due_at)}${t.contact_name ? html` · <a href="#/leads/${t.contact_id}">${t.contact_name}</a>` : ''}</small></li>`)}</ul>` : empty('Nenhuma tarefa para hoje.')}
-        </section>
-        <section class="card"><div class="section-head"><h3>Propostas que pedem atenção</h3><a href="#/propostas" class="small">ver propostas</a></div>
-          ${d.proposals.lista.length ? html`<ul class="task-list">${d.proposals.lista.map((p) => html`<li><a href="#/leads/${p.contact_id}/propostas"><strong>${p.contact_name}</strong></a> · ${fmtMoney(p.credit_value)} ${probBadge(p)}<br><small>${p.code}${p.next_followup ? ` · próximo: ${p.next_followup.title.replace(/ \(PR-\d+\)$/, '')} ${relTime(p.next_followup.due_at)}` : ''}</small>${p.alerts.length ? html`<br><small class="warn-text">${p.alerts.join(' · ')}</small>` : ''}</li>`)}</ul>` : empty('Nenhuma proposta com alerta.')}
-        </section>
-      </div>
-
-      <div class="cols">
-        ${d.ranking.length ? html`<section class="card"><h3>Ranking do mês</h3><ol class="ranking ranking-people">${d.ranking.slice(0, 10).map((r, i) => html`<li class="${i < 3 && r.vendas ? `top top-${i + 1}` : ''}">
-          <span class="rank-pos">${i + 1}º</span>${avatar(r, 34)}
-          <span class="rank-who"><strong>${r.name}</strong>${r.job_title ? html`<small>${r.job_title}</small>` : ''}</span>
-          <span class="rank-nums"><strong>${r.vendas} ${r.vendas === 1 ? 'venda' : 'vendas'}</strong><small>${fmtMoney(r.credito)}</small></span></li>`)}</ol></section>` : ''}
-        <section class="card"><h3>Relacionamento e capacitação</h3>
-          ${d.birthdays.length ? html`<h4>Aniversariantes da semana</h4><ul class="task-list">${d.birthdays.map((b) => html`<li><a href="#/clientes/${b.id}">${b.name}</a> <small class="muted">${b.birth_date.slice(8, 10)}/${b.birth_date.slice(5, 7)}</small></li>`)}</ul>` : ''}
-          ${d.trainings.length ? html`<h4>Treinamentos obrigatórios pendentes</h4><ul class="task-list">${d.trainings.map((t) => html`<li><a href="#/treinamentos?id=${t.id}">${t.title}</a>${t.overdue ? html` ${badge('Atrasado', 'danger')}` : t.due_at ? html` <small class="muted">até ${fmtDate(t.due_at)}</small>` : ''}</li>`)}</ul>` : ''}
-          ${!d.birthdays.length && !d.trainings.length ? html`<p class="muted">Nenhum aniversariante nesta semana e nenhum treinamento obrigatório pendente.</p>` : ''}
-          <p class="small muted">Pré-vendas: ${d.presales.geradas} geradas · ${d.presales.concluidas_cliente} concluídas pelo cliente · ${d.presales.paradas} parada(s).</p>
-        </section>
+                <div><span>Falta</span><strong>${g.missing_credit != null ? fmtMoneyShort(g.missing_credit) : '—'}</strong></div>
+                <div><span>Ritmo / dia útil</span><strong>${g.daily_needed ? fmtMoneyShort(g.daily_needed) : '—'}</strong></div>
+                <div><span>Dias úteis</span><strong>${g.business_days_left}</strong></div></div>`
+            : html`<p class="muted">Nenhuma meta cadastrada para este mês. O administrador cadastra as metas em Metas.</p>`}</section>
+        <section class="card bi-ai"><div class="bi-ai-head"><span class="vai-orb xs" aria-hidden="true"><span></span><i></i></span><h3>Insights da Vero IA</h3>
+          <span class="bi-ai-actions"><button type="button" class="btn small" data-h360="regen">${icon('ia', 14)} Regenerar</button><button type="button" class="btn small ghost" data-h360="copy">${icon('copiar', 14)} Copiar</button></span></div>
+          ${v.insights.length ? html`<ul class="bi-ai-list">${v.insights.map((x) => html`<li class="tone-${x.tone}"><span class="bi-ai-dot"></span><div><strong>${x.area}</strong><p>${x.href ? html`<a href="${x.href}">${actionText(x.text)}</a>` : x.text}</p></div></li>`)}</ul>` : empty('Tudo em dia. Aproveite para prospectar e pedir indicações.')}</section>
       </div>
     </div>`);
-    const sel = $('[data-user]', view);
-    if (sel) sel.addEventListener('change', () => ((selected = sel.value), load()));
+    const btn = $('[data-hf]', view);
+    const panel = $('[data-hf-panel]', view);
+    btn.addEventListener('click', () => {
+      panel.hidden = !panel.hidden;
+      btn.setAttribute('aria-expanded', String(!panel.hidden));
+    });
+    $('[data-hf-close]', view).addEventListener('click', () => {
+      panel.hidden = true;
+      btn.setAttribute('aria-expanded', 'false');
+    });
+    panel.addEventListener('change', (e) => {
+      if (e.target.name === 'periodo') {
+        $('.h360-dates', panel).hidden = e.target.value !== 'data';
+        if (e.target.value === 'data' && !panel.de.value) panel.de.value = new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
+      }
+    });
+    panel.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const f = Object.fromEntries(new FormData(panel).entries());
+      filter = { ...filter, periodo: f.periodo || 'mes', de: f.de || '', ate: f.ate || '' };
+      if (manager) selected = f.user || '';
+      load();
+    });
+    cur = v;
   };
+  let cur = null;
+  on(view, 'click', '[data-h360=regen]', () => {
+    filter.variante = (filter.variante || 0) + 1;
+    load().then(() => toast('Insights regenerados.'));
+  });
+  on(view, 'click', '[data-h360=copy]', async () => {
+    if (!cur) return;
+    const text = cur.insights.map((x) => `• ${x.area}: ${x.text}`).join('\n');
+    try {
+      await navigator.clipboard.writeText(`Insights da Vero IA · ${cur.period.label}\n${text}`);
+    } catch {}
+    toast('Insights copiados.');
+  });
+  bindDrawerLinks(view);
   await load();
 }

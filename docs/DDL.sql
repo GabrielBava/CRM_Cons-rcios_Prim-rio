@@ -1,7 +1,7 @@
 -- =====================================================================
 -- Vero Consórcios (ERP/CRM) — DDL completo do banco (SQLite)
 -- Gerado por scripts/ddl.js a partir de um banco novo, com todas as migrações aplicadas.
--- 81 tabelas · 224 chaves estrangeiras declaradas · 61 índices
+-- 83 tabelas · 230 chaves estrangeiras declaradas · 64 índices
 --
 -- Observações
 --  - O SQLite verifica as chaves estrangeiras na gravação (PRAGMA foreign_keys = ON), não na criação:
@@ -385,6 +385,27 @@ CREATE TABLE IF NOT EXISTS imports (
   created_by INTEGER REFERENCES users(id),
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS referrals (
+  id INTEGER PRIMARY KEY,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id),
+  name TEXT,
+  phone TEXT,
+  whatsapp TEXT,
+  email TEXT,
+  recommended_by TEXT,
+  notes TEXT,
+  source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','diagnostico')),
+  position INTEGER NOT NULL DEFAULT 0,
+  lead_contact_id INTEGER REFERENCES contacts(id),
+  registered_at TEXT,
+  registered_by INTEGER REFERENCES users(id),
+  removed_at TEXT,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_referrals_contact ON referrals(contact_id);
 
 -- ---------------------------------------------------------------------
 -- Funil, atividades e distribuição
@@ -775,10 +796,37 @@ CREATE TABLE IF NOT EXISTS proposals (
   quota_split_notes TEXT,
   administrator_id INTEGER REFERENCES administrators(id),
   plan_other INTEGER NOT NULL DEFAULT 0,
+  public_token TEXT,
+  link_created_at TEXT,
+  link_first_opened_at TEXT,
+  link_last_opened_at TEXT,
+  link_views INTEGER NOT NULL DEFAULT 0,
+  link_seconds INTEGER NOT NULL DEFAULT 0,
+  link_max_scroll INTEGER,
+  link_advanced_at TEXT,
+  link_advanced_note TEXT,
+  consortium_kind TEXT,
+  entry_value REAL,
+  remaining_installments INTEGER,
+  diagnostic_id INTEGER REFERENCES diagnostics(id),
+  pricing TEXT,
   area TEXT NOT NULL DEFAULT 'consorcio',
   description TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_prop_opp ON proposals(opportunity_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_proposals_public_token ON proposals(public_token) WHERE public_token IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS proposal_views (
+  id INTEGER PRIMARY KEY,
+  proposal_id INTEGER NOT NULL REFERENCES proposals(id),
+  started_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  seconds INTEGER NOT NULL DEFAULT 0,
+  max_scroll INTEGER NOT NULL DEFAULT 0,
+  sections TEXT,
+  device TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_proposal_views ON proposal_views(proposal_id);
 
 -- ---------------------------------------------------------------------
 -- Pré-venda, vendas, cancelamentos e comissões
@@ -1415,7 +1463,8 @@ CREATE TABLE IF NOT EXISTS diagnostics (
   created_by INTEGER REFERENCES users(id),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  completed_at TEXT
+  completed_at TEXT,
+  pricing TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_diagnostics_contact ON diagnostics(contact_id);
 

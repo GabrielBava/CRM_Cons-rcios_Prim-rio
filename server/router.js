@@ -537,6 +537,7 @@ function createRouter(db) {
   add('POST', '/api/whatsapp/webhook', ({ req, body }) => wa.receiveWebhook(db, req, body), { integration: true, bodyLimit: 4e6 });
 
   add('GET', '/api/time/squad', ({ user, query }) => require('./services/team').squadDashboard(db, user, query));
+  add('GET', '/api/time/bi', ({ user, query }) => require('./services/bi').teamDashboard(db, user, query));
 
   /* ---------- Colaboradores (RH) ---------- */
   add('GET', '/api/colaboradores', ({ user, query }) => people.listEmployees(db, user, query));

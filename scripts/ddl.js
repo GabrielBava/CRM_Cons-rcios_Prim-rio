@@ -14,10 +14,10 @@ const db = initDb(new DatabaseSync(':memory:'));
 
 const DOMAINS = [
   ['Acesso, configuração e auditoria', ['users', 'teams', 'sessions', 'settings', 'options', 'counters', 'custom_fields', 'notifications', 'audit_log']],
-  ['Cadastros (prospects, leads e clientes)', ['contacts', 'addresses', 'company_contacts', 'partners', 'contact_origins', 'consents', 'data_requests', 'client_links', 'attachments', 'attachment_opportunities', 'imports']],
+  ['Cadastros (prospects, leads e clientes)', ['contacts', 'addresses', 'company_contacts', 'partners', 'contact_origins', 'consents', 'data_requests', 'client_links', 'attachments', 'attachment_opportunities', 'imports', 'referrals']],
   ['Funil, atividades e distribuição', ['pipeline_stages', 'opportunities', 'stage_history', 'r1_transcripts', 'activities', 'tasks', 'distribution_log', 'goals']],
   ['Catálogo: administradoras e planos', ['administrators', 'products']],
-  ['Simulações e propostas', ['simulations', 'simulation_versions', 'simulation_links', 'proposals']],
+  ['Simulações e propostas', ['simulations', 'simulation_versions', 'simulation_links', 'proposals', 'proposal_views']],
   ['Pré-venda, vendas, cancelamentos e comissões', ['pre_sales', 'pre_sale_quotas', 'sales', 'cancellations', 'commission_entries']],
   ['Produtos contratados e pós-venda', ['contracts', 'finance_entries', 'finance_issues', 'post_sale_items', 'nps_surveys', 'bid_strategies', 'bid_strategy_history']],
   ['Treinamentos', ['trainings', 'training_progress']],
@@ -117,6 +117,8 @@ erDiagram
   products ||--o{ proposals : "plano"
   administrators ||--o{ products : "planos"
   proposals ||--o| pre_sales : "aceite"
+  proposals ||--o{ proposal_views : "acessos do cliente"
+  contacts ||--o{ referrals : "recomendações"
   pre_sales ||--o{ pre_sale_quotas : "cotas"
   pre_sales ||--o| sales : "comprovante"
   sales ||--o{ contracts : "cotas alocadas"

@@ -2,7 +2,7 @@
 
 Gerado por `scripts/ddl.js` (rode `node scripts/ddl.js` depois de mudar o esquema). O DDL completo está em [`DDL.sql`](DDL.sql).
 
-**81 tabelas**, **224 chaves estrangeiras** declaradas e **17 relacionamentos lógicos** (sem FOREIGN KEY no banco, garantidos pela aplicação).
+**83 tabelas**, **230 chaves estrangeiras** declaradas e **17 relacionamentos lógicos** (sem FOREIGN KEY no banco, garantidos pela aplicação).
 
 ## Visão geral do fluxo comercial
 
@@ -21,6 +21,8 @@ erDiagram
   products ||--o{ proposals : "plano"
   administrators ||--o{ products : "planos"
   proposals ||--o| pre_sales : "aceite"
+  proposals ||--o{ proposal_views : "acessos do cliente"
+  contacts ||--o{ referrals : "recomendações"
   pre_sales ||--o{ pre_sale_quotas : "cotas"
   pre_sales ||--o| sales : "comprovante"
   sales ||--o{ contracts : "cotas alocadas"
@@ -101,6 +103,10 @@ erDiagram
 | `attachment_opportunities` | `attachment_id` | `attachments(id)` | — |
 | `attachment_opportunities` | `opportunity_id` | `opportunities(id)` | — |
 | `imports` | `created_by` | `users(id)` | — |
+| `referrals` | `contact_id` | `contacts(id)` | — |
+| `referrals` | `lead_contact_id` | `contacts(id)` | — |
+| `referrals` | `registered_by` | `users(id)` | — |
+| `referrals` | `created_by` | `users(id)` | — |
 
 ### Funil, atividades e distribuição
 
@@ -175,6 +181,8 @@ erDiagram
 | `proposals` | `pdf_attachment_id` | `attachments(id)` | — |
 | `proposals` | `accepted_by` | `users(id)` | — |
 | `proposals` | `administrator_id` | `administrators(id)` | — |
+| `proposals` | `diagnostic_id` | `diagnostics(id)` | — |
+| `proposal_views` | `proposal_id` | `proposals(id)` | — |
 
 ### Pré-venda, vendas, cancelamentos e comissões
 
@@ -427,6 +435,8 @@ Colunas acrescentadas por migração (o SQLite não permite incluir chave estran
 
 **`imports`** — `id` (PK), `filename`, `origin`, `campaign`, `mapping`, `total_rows`, `created_count`, `duplicate_count`, `error_count`, `errors`, `created_by` (FK), `created_at`
 
+**`referrals`** — `id` (PK), `contact_id` (FK), `name`, `phone`, `whatsapp`, `email`, `recommended_by`, `notes`, `source`, `position`, `lead_contact_id` (FK), `registered_at`, `registered_by` (FK), `removed_at`, `created_by` (FK), `created_at`, `updated_at`
+
 ### Funil, atividades e distribuição
 
 **`pipeline_stages`** — `id` (PK), `name`, `position`, `kind`, `active`, `created_at`, `key`, `playbook`, `rot_days`, `training_id`
@@ -459,7 +469,9 @@ Colunas acrescentadas por migração (o SQLite não permite incluir chave estran
 
 **`simulation_links`** — `id` (PK), `token_hash`, `contact_id` (FK), `opportunity_id` (FK), `created_by` (FK), `origin_screen`, `created_at`, `expires_at`, `first_used_at`, `last_used_at`, `revoked_at`
 
-**`proposals`** — `id` (PK), `code`, `contact_id` (FK), `opportunity_id` (FK), `simulation_id` (FK), `version`, `previous_id` (FK), `product_id` (FK), `credit_value`, `term_months`, `initial_installment`, `payment_modality`, `admin_fee_pct`, `reserve_fund_pct`, `insurance_pct`, `other_costs`, `readjustment_index`, `readjustment_assumptions`, `strategy`, `status`, `link_url`, `valid_until`, `notes`, `presented_at`, `owner_id` (FK), `created_by` (FK), `created_at`, `updated_at`, `simulator_token_hash`, `simulator_token_expires_at`, `generated_at`, `pdf_attachment_id` (FK), `accepted_at`, `accepted_channel`, `accepted_by` (FK), `refusal_reason`, `category`, `sent_channel`, `last_response_at`, `last_response`, `refusal_notes`, `refused_at`, `retake_at`, `has_adhesion`, `adhesion_pct`, `adhesion_months`, `reducer_pct`, `readjustment_rate`, `bid_deduction`, `contemplation_month`, `embedded_bid_pct`, `quotas`, `quota_split_strategy`, `quota_values`, `quota_split_notes`, `administrator_id` (FK), `plan_other`, `area`, `description`
+**`proposals`** — `id` (PK), `code`, `contact_id` (FK), `opportunity_id` (FK), `simulation_id` (FK), `version`, `previous_id` (FK), `product_id` (FK), `credit_value`, `term_months`, `initial_installment`, `payment_modality`, `admin_fee_pct`, `reserve_fund_pct`, `insurance_pct`, `other_costs`, `readjustment_index`, `readjustment_assumptions`, `strategy`, `status`, `link_url`, `valid_until`, `notes`, `presented_at`, `owner_id` (FK), `created_by` (FK), `created_at`, `updated_at`, `simulator_token_hash`, `simulator_token_expires_at`, `generated_at`, `pdf_attachment_id` (FK), `accepted_at`, `accepted_channel`, `accepted_by` (FK), `refusal_reason`, `category`, `sent_channel`, `last_response_at`, `last_response`, `refusal_notes`, `refused_at`, `retake_at`, `has_adhesion`, `adhesion_pct`, `adhesion_months`, `reducer_pct`, `readjustment_rate`, `bid_deduction`, `contemplation_month`, `embedded_bid_pct`, `quotas`, `quota_split_strategy`, `quota_values`, `quota_split_notes`, `administrator_id` (FK), `plan_other`, `public_token`, `link_created_at`, `link_first_opened_at`, `link_last_opened_at`, `link_views`, `link_seconds`, `link_max_scroll`, `link_advanced_at`, `link_advanced_note`, `consortium_kind`, `entry_value`, `remaining_installments`, `diagnostic_id` (FK), `pricing`, `area`, `description`
+
+**`proposal_views`** — `id` (PK), `proposal_id` (FK), `started_at`, `last_seen_at`, `seconds`, `max_scroll`, `sections`, `device`
 
 ### Pré-venda, vendas, cancelamentos e comissões
 
@@ -527,7 +539,7 @@ Colunas acrescentadas por migração (o SQLite não permite incluir chave estran
 
 **`lead_products`** — `id` (PK), `contact_id` (FK), `opportunity_id` (FK), `area`, `sub_type`, `description`, `value`, `value_range`, `notes`, `status`, `created_by` (FK), `created_at`, `updated_at`
 
-**`diagnostics`** — `id` (PK), `contact_id` (FK), `opportunity_id` (FK), `status`, `data`, `summary`, `created_by` (FK), `created_at`, `updated_at`, `completed_at`
+**`diagnostics`** — `id` (PK), `contact_id` (FK), `opportunity_id` (FK), `status`, `data`, `summary`, `created_by` (FK), `created_at`, `updated_at`, `completed_at`, `pricing`
 
 **`ai_knowledge`** — `id` (PK), `kind`, `title`, `content`, `stage_key`, `area`, `active`, `likes`, `dislikes`, `created_by` (FK), `created_at`, `updated_at`
 

@@ -204,6 +204,20 @@ cliques em `iniciar-windows.bat`. Ao fechar a área restrita, tudo é apagado.
 5. **Agendas:** o botão "Agendar R2" fica bloqueado até a R1 ser concluída.
 6. **Arquivos:** "Anexar arquivo" com tipo (extrato, apólice, carteira...), descrição, objetivo e observações.
 
+### H6. Painel 360, recomendações, propostas e BI do time
+
+1. **Painel inicial:** o botão de filtro (canto direito) troca o período (dia, semana, quinzena, mês ou data). Confira os 7
+   indicadores, o gráfico de ganhos/perdidos, o calendário de 5 dias, o pipeline horizontal (leads, R$ e TMA) e os insights.
+2. **Painel do lead › Recomendações:** preencha nome e telefone numa linha e clique em **+**: o cadastro abre com "Indicado
+   por". Salve: o kanban abre com a etiqueta **Indicação** no cartão; volte ao lead de origem e veja a linha verde.
+3. **Propostas:** alterne **Kanban** (colunas Dia 0 a Dia 21) e **Lista**. Em uma proposta, clique no ícone de link, copie o
+   endereço e abra numa janela anônima (ou no celular): ao voltar, o status muda para **Lido**, com tempo e acessos. Clique em
+   **Quero avançar** na página do cliente e veja o aviso e a tarefa no CRM.
+4. **Gerar PDF** abre a versão para imprimir/salvar em PDF; **WhatsApp** abre o modelo da mensagem do passo da régua.
+5. **Nova proposta › Consórcio › Carta contemplada:** informe crédito, entrada e parcelas restantes.
+6. **Gestão do time › BI do time** (líder ou administrador): troque período, colaborador e área; abra "Como cada indicador é
+   calculado" no fim da página.
+
 ### H2. Menu lateral e Gestão do time
 
 1. O botão no canto superior esquerdo recolhe o menu (fica só o símbolo da Vero e os ícones); clique de novo para expandir.

@@ -199,6 +199,13 @@ docs/
 - **Pipeline:** busca, ordenação e botão **Filtros** numa linha (responsável, área, origem, etapa, próxima ação, prioridade, data de criação de/até e valor mínimo/máximo), com etiquetas removíveis.
 - **Painel do lead:** IA Vero em formato de chat (orbe animado, atalhos, histórico de conversas e fontes) com Análise e Resumo; Detalhes em blocos Dados e Negociação; aba **Arquivos**; R2 liberada só depois da R1 concluída. Detalhes em `docs/ESPECIFICACAO.md` §21.
 
+## Painel 360, propostas rastreáveis e BI do time
+
+- **Painel inicial 360:** filtro único de período, 7 indicadores do topo, ganhos/perdidos de 7 dias, calendário de 5 dias, pipeline horizontal com TMA, ranking da squad, meta e insights da IA Vero.
+- **Recomendações** no painel do lead (importa as do diagnóstico; o "+" cadastra a indicação no pipeline).
+- **Propostas:** Kanban pela régua Dia 0-2-5-9-14-21 e Lista; **link on-line rastreável** para o cliente (Aguardando/Lido/Avançar, tempo e acessos), PDF, modelo de WhatsApp, carta contemplada e proposta do planejamento gerada pelo diagnóstico.
+- **BI do time** (líder e administrador) e bloco **Consórcios** no menu. Detalhes em `docs/ESPECIFICACAO.md` §22.
+
 ## Configuração local (senhas e chaves)
 
 Senhas e chaves (Google, SMTP) ficam no arquivo `config.env`, na pasta do sistema, fora do Git (`.gitignore`). Modelo em `config.env.exemplo`. O servidor lê o arquivo ao iniciar (`npm start`, `npm run local` e os atalhos) e o instalador do Ubuntu o leva para `/etc/vero-consorcios.env`.

@@ -2,10 +2,11 @@
 import { get, post } from '../api.js';
 import { html, render, $, on, avatar, fmtMoney, fmtNum, fmtPct, toast, toastError, subnav, selectOptions, empty, table, modal, field, fmtDateTime, badge, state } from '../ui.js';
 
-const tabs = (active) => subnav([['#/time/organograma', 'Organograma do time', 'organograma'], ['#/time/squad', 'Dashboard squad', 'squad'], ['#/time/one-on-ones', 'One-on-ones', 'oneonone']], active);
+const tabs = (active) => subnav([['#/time/organograma', 'Organograma do time', 'organograma'], ['#/time/squad', 'Dashboard squad', 'squad'], ['#/time/bi', 'BI do time', 'bi'], ['#/time/one-on-ones', 'One-on-ones', 'oneonone']], active);
 
 export async function show(view, { id }) {
   if (id === 'one-on-ones') return oneOnOnes(view);
+  if (id === 'bi') return import('./team-bi.js').then((m) => m.show(view, tabs));
   return id === 'squad' ? squad(view) : orgChart(view);
 }
 

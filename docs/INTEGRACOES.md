@@ -248,3 +248,14 @@ Tela: aba **IA Vero** do painel do lead. Configuração: **Configurações › I
 ## Exportação para discadora
 
 **Prospects e leads › Lista para discadora** gera um CSV com `id_lead;nome;telefone;telefone_2;responsavel`, respeitando os filtros da tela. A lista exclui automaticamente cadastros com oposição a ligações ou a todos os canais, cadastros sem telefone e cadastros anonimizados. O `id_lead` é o que a discadora deve devolver nos eventos.
+
+## 13. Link da proposta para o cliente (página pública rastreável)
+
+- **Endereço:** `https://SEU-CRM/#/proposta/<código>` (o código tem 24 caracteres aleatórios e é criado em Propostas › ícone de link; "Gerar novo link" invalida o anterior). Com `PUBLIC_URL` no `config.env`, o CRM monta o link com esse endereço; sem ele, usa o endereço aberto no navegador.
+- **Rotas públicas (sem login):** `GET /api/publico/proposta?token=…&device=mobile|desktop` (dados da página e abertura do acesso; `equipe=1` não registra acesso), `POST /api/publico/proposta/evento` (`token`, `view`, `seconds` até 120 por evento, `scroll` 0–100, `sections`) e `POST /api/publico/proposta/avancar` (`token`, `note` opcional). Todas exigem o cabeçalho `X-Requested-With: crm` nos POST.
+- **Dados expostos:** primeiro nome do cliente, código e condições da proposta, nome/cargo/WhatsApp do consultor. Sem CPF, telefone, e-mail ou endereço do cliente. A página pede para não ser indexada (`noindex`).
+- **Rotas da equipe:** `GET/POST /api/propostas/:id/link` (situação, acessos, criar/trocar o link) e `GET /api/propostas/:id/whatsapp` (modelos da régua).
+
+## 14. Precificação do planejamento (diagnóstico → proposta)
+
+A ponte da ferramenta de diagnóstico envia, junto com cada salvamento, a precificação calculada pela própria ferramenta (`precificacao`: valor, total à vista, total e parcelas no cartão, condição). Diagnóstico concluído e precificado gera a proposta de **planejamento** (gerada, pronta para enviar); enquanto não for enviada, acompanha a precificação. Para reaplicar a ponte num diagnóstico já gerado: `node scripts/build-tools.js --atualizar-ponte`.

@@ -414,7 +414,21 @@ function seedDemo(db, password) {
   seedProposalLinksDemo(db, { admin });
   // Ingresso no CRM antes do primeiro contato (as atividades do demo são retroativas)
   for (const c of db.prepare('SELECT id, created_at, first_contact_at FROM contacts WHERE first_contact_at IS NOT NULL AND first_contact_at < created_at').all()) {
-    db.prepare('UPDATE contacts SET created_at = ? WHERE id = ?').run(new Date(Date.parse(c.first_contact_at) - DAY / 3).toISOString(), c.id);
+    db.prepare('UPDATE contacts SET created_at = ? WHERE id = ?').run(new Date(Date.parse(c.first_contact_at) - (12 + ((c.id * 17) % 90)) * 60000).toISOString(), c.id);
+  }
+  // Atribuição no cadastro (o primeiro contato vem depois) e tempo típico em cada etapa (as movimentações do demo
+  // acontecem no mesmo instante): base para o TMR e o tempo médio por etapa do BI e dos relatórios
+  db.prepare('UPDATE contacts SET assigned_at = created_at WHERE assigned_at IS NOT NULL AND first_contact_at IS NOT NULL AND assigned_at > first_contact_at').run();
+  // Ganhos e perdidos espalhados pela última semana (gráfico de 7 dias do painel inicial)
+  for (const o of db.prepare("SELECT id, status FROM opportunities WHERE status IN ('ganha','perdida') ORDER BY id").all()) {
+    const back = o.status === 'ganha' ? (o.id * 3) % 5 : (o.id * 5) % 7;
+    db.prepare('UPDATE opportunities SET closed_at = ? WHERE id = ?').run(new Date(Date.now() - back * DAY - ((o.id * 7) % 5) * 3600000).toISOString(), o.id);
+  }
+  // O negócio nasce com o cadastro (ciclo de vendas = da entrada do lead ao ganho)
+  db.prepare('UPDATE opportunities SET created_at = (SELECT c.created_at FROM contacts c WHERE c.id = opportunities.contact_id) WHERE created_at > (SELECT c.created_at FROM contacts c WHERE c.id = opportunities.contact_id)').run();
+  const typical = { prospect: 0.2, lead: 0.15, tentativa: 1.2, qualificado: 1.8, r1: 3.5, r2: 4, negociacao: 6.5 };
+  for (const h of db.prepare('SELECT h.id, s.key FROM stage_history h JOIN pipeline_stages s ON s.id = h.from_stage_id').all()) {
+    db.prepare('UPDATE stage_history SET seconds_in_previous = ? WHERE id = ?').run(Math.round(((typical[h.key] ?? 1) * DAY * (0.7 + ((h.id * 37) % 60) / 100)) / 1000), h.id);
   }
 }
 

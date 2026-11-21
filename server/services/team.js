@@ -147,4 +147,4 @@ function squadDashboard(db, user, q = {}) {
   return { teams, team_id: teamId, period: { from, to }, rows, totals, funnel, lost };
 }
 
-module.exports = { orgChart, squadDashboard };
+module.exports = { orgChart, squadDashboard, visibleTeams };

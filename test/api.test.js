@@ -2711,3 +2711,56 @@ test('carta contemplada e planejamento: proposta de consórcio contemplada e pro
   assert.equal(page.brand, 'Vero Planejamento');
   assert.equal((await call('c1', 'PUT', `/api/diagnosticos/${s.data.id}/dados`, { data: { id: 'x', coletaFinalizada: true }, precificacao: { valor: -1 } })).data.proposal.id, pl.id, 'precificação inválida não muda a proposta');
 });
+
+test('BI do time: só líder e administrador, filtros de período, colaborador e área, indicadores, funil, MP e insights', async () => {
+  assert.equal((await call('c1', 'GET', '/api/time/bi')).status, 403, 'especialista não acessa');
+  const r = await call('admin', 'GET', `/api/time/bi?${new URLSearchParams({ periodo: 'mes' })}`);
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  const k = r.data.kpis;
+  for (const key of ['pipeline_qtd', 'pipeline_valor', 'leads_recebidos', 'leads_movimentados', 'taxa_agendamento', 'taxa_no_show', 'taxa_realizacao_r1', 'taxa_realizacao_r2', 'tmr', 'tma', 'tme', 'ligacoes', 'tarefas_criadas', 'tarefas_concluidas', 'tarefas_atraso', 'win_rate', 'ganhos', 'ciclo_dias', 'receita', 'ticket_medio']) {
+    assert.ok(key in k, `indicador ${key}`);
+  }
+  assert.ok(k.leads_recebidos > 0);
+  assert.ok(r.data.prev && 'leads_recebidos' in r.data.prev, 'período anterior para comparação');
+  assert.equal(r.data.funnel[0].pct_topo, 100);
+  assert.ok(r.data.funnel.every((s, i) => i === 0 || s.n <= r.data.funnel[i - 1].n), 'funil decrescente');
+  assert.ok(Array.isArray(r.data.lost) && Array.isArray(r.data.people) && r.data.insights.length);
+  // Períodos
+  for (const periodo of ['dia', 'semana', 'quinzena']) assert.equal((await call('admin', 'GET', `/api/time/bi?${new URLSearchParams({ periodo })}`)).status, 200, periodo);
+  assert.equal((await call('admin', 'GET', `/api/time/bi?${new URLSearchParams({ periodo: 'data' })}`)).status, 400, 'data específica exige a data');
+  const today = new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
+  const one = await call('admin', 'GET', `/api/time/bi?${new URLSearchParams({ periodo: 'data', de: today })}`);
+  assert.equal(one.status, 200);
+  assert.equal(one.data.period.kind, 'data');
+  // Colaborador e área
+  const c1 = await userId('c1@t.com');
+  const only = await call('admin', 'GET', `/api/time/bi?${new URLSearchParams({ colaborador: c1, area: 'consorcio' })}`);
+  assert.equal(only.status, 200);
+  assert.equal(only.data.people.length, 1);
+  assert.equal(only.data.filters.area, 'consorcio');
+  const g = await call('gestor', 'GET', '/api/time/bi');
+  assert.equal(g.status, 200, 'líder vê a própria squad');
+  // Variante dos insights (Regenerar) muda a ordem
+  const v1 = (await call('admin', 'GET', `/api/time/bi?${new URLSearchParams({ variante: 1 })}`)).data.insights;
+  if (r.data.insights.length > 1) assert.notEqual(v1[0].text, r.data.insights[0].text);
+});
+
+test('painel inicial 360: período (dia, semana, quinzena, mês, data), indicadores do topo, 7 dias, calendário de 5 dias, pipeline com TMA, ranking e insights', async () => {
+  for (const periodo of ['dia', 'semana', 'quinzena', 'mes']) {
+    const r = await call('c1', 'GET', `/api/inicio?periodo=${periodo}`);
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.equal(r.data.v360.period.kind, periodo);
+  }
+  const today = new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
+  const v = (await call('c1', 'GET', `/api/inicio?periodo=data&de=${today}`)).data.v360;
+  for (const key of ['leads_24h', 'taxa_conversao', 'tempo_resposta', 'propostas_andamento', 'vendas_valor', 'taxa_conversao_propostas', 'agendas_hoje']) assert.ok(key in v.kpis, key);
+  assert.equal(v.days7.length, 7);
+  assert.ok(v.days7.every((d) => 'ganhos' in d && 'perdidos' in d));
+  assert.equal(v.calendar.length, 5);
+  assert.equal(v.calendar[0].day, today);
+  assert.ok(v.pipeline.length >= 5 && v.pipeline.every((s) => 'leads' in s && 'valor' in s && 'tma_horas' in s));
+  assert.ok('leads' in v.cenario && 'valor' in v.cenario);
+  assert.ok(Array.isArray(v.ranking) && Array.isArray(v.insights));
+  assert.ok(v.goal);
+  assert.equal((await call('c1', 'GET', '/api/inicio?periodo=data')).status, 400, 'data específica exige a data');
+});
