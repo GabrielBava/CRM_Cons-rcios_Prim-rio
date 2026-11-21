@@ -108,7 +108,7 @@ export async function show(view, { params = {} } = {}) {
             <section class="card"><h3>Amanhã (${tomorrow.length})</h3>${tomorrow.length ? tomorrow.map((t) => card(t)) : empty('Nada agendado.')}</section>
             <section class="card"><h3>Rotina sugerida do especialista</h3><ol class="tips">
               <li><strong>8h–9h:</strong> atrasadas e urgentes (pré-venda sem acesso, propostas sem resposta).</li>
-              <li><strong>9h–12h:</strong> bloco de ligações: primeiro contato dos leads novos em até 5 minutos e follow-ups D+1…D+10.</li>
+              <li><strong>9h–12h:</strong> bloco de ligações: primeiro contato dos leads novos em até 5 minutos e follow-ups da régua de propostas (Dia 0 a Dia 21).</li>
               <li><strong>Manhã:</strong> envie as propostas cedo; o follow-up D0 acontece no fim do mesmo dia.</li>
               <li><strong>14h–17h:</strong> R1 (reuniões de diagnóstico) e apresentações de proposta.</li>
               <li><strong>17h–18h:</strong> follow-up D0 das propostas enviadas pela manhã e planejamento do dia seguinte.</li>

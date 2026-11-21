@@ -1135,19 +1135,23 @@ test('venda: comissão em parcelas com carência, cancelamento com motivo concre
   assert.equal((await call('c1', 'GET', '/api/cancelamentos')).data.length >= 1, true);
 });
 
-test('proposta enviada inicia a esteira de follow-up (D0…D10); resposta negativa cria tarefa de revisão; aceite para a esteira', async () => {
+test('proposta enviada inicia a régua de follow-up (Dia 0, 2, 5, 9, 14 e 21); resposta negativa cria tarefa de revisão; aceite para a régua', async () => {
   const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Esteira', phone1: '11 94444-3003' });
   const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
   const p = await call('c1', 'POST', '/api/propostas', { opportunity_id: opp.id, credit_value: 150000 });
   assert.equal(p.status, 200, JSON.stringify(p.data));
   assert.equal((await call('c1', 'POST', `/api/propostas/${p.data.id}/status`, { status: 'apresentada', sent_channel: 'whatsapp' })).status, 200);
   let tasks = (await call('c1', 'GET', `/api/tarefas?contact_id=${c.data.id}&status=pendente`)).data.rows.filter((t) => t.type === 'follow_up_proposta');
-  assert.ok(tasks.length >= 5, 'D1, D2, D3, D5 e D10 (e D0 se enviada pela manhã)');
-  assert.ok(tasks.some((t) => t.cadence_step === 'D10' && t.priority === 'alta'));
+  assert.deepEqual(tasks.map((t) => t.cadence_step).sort(), ['D0', 'D14', 'D2', 'D21', 'D5', 'D9']);
+  assert.ok(tasks.some((t) => t.cadence_step === 'D21' && t.priority === 'alta'));
+  // Dias corridos: nenhum passo cai no fim de semana (horário de Brasília)
+  for (const t of tasks) assert.ok(![0, 6].includes(new Date(Date.parse(t.due_at) - 3 * 3600000).getUTCDay()), `${t.cadence_step} em dia útil`);
   const pan = (await call('c1', 'GET', '/api/propostas-panorama')).data;
   const row = pan.rows.find((r) => r.id === p.data.id);
   assert.ok(row.probability >= 5 && row.probability <= 95);
   assert.ok(row.next_followup);
+  assert.equal(row.regua.length, 6);
+  assert.equal(row.cadence_stage, row.next_step, 'a coluna do Kanban é o próximo passo da régua');
   assert.equal((await call('c1', 'POST', `/api/propostas/${p.data.id}/resposta`, { response: 'negativa' })).status, 200);
   tasks = (await call('c1', 'GET', `/api/tarefas?contact_id=${c.data.id}&status=pendente`)).data.rows;
   assert.ok(tasks.some((t) => t.type === 'revisar_proposta'));
@@ -2607,4 +2611,103 @@ test('recomendações do lead: lista com 5+ linhas, importa do diagnóstico e o 
   assert.equal(r.rows.length, 1);
   assert.equal((await call('c1', 'GET', `/api/cadastros/${c.data.id}/recomendacoes`)).data.rows.length, 1, 'as do diagnóstico apagadas não voltam');
   assert.equal((await call('c2', 'POST', '/api/cadastros', { name: 'Intruso', phone1: '11 93817-5556', referral_id: lia.id })).status, 404, 'indicação de lead de outro consultor');
+});
+
+test('proposta on-line: link rastreável (aguardando, lido, tempo, acessos, avançar), visão da equipe e modelo do WhatsApp', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Link Proposta', phone1: '11 93817-5561', origin: 'site', relationship: 'lead' });
+  const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
+  const p = await call('c1', 'POST', '/api/propostas', { opportunity_id: opp.id, credit_value: 200000, initial_installment: 1500, term_months: 180 });
+  assert.equal(p.status, 200, JSON.stringify(p.data));
+  let row = (await call('c1', 'GET', '/api/propostas-panorama')).data.rows.find((r) => r.id === p.data.id);
+  assert.equal(row.link_status, 'sem_link');
+  assert.equal((await call('leitor', 'POST', `/api/propostas/${p.data.id}/link`, {})).status, 403, 'somente leitura não gera link');
+  const link = (await call('c1', 'POST', `/api/propostas/${p.data.id}/link`, {})).data;
+  assert.match(link.token, /^[A-Za-z0-9_-]{20,}$/);
+  assert.equal((await call('c1', 'POST', `/api/propostas/${p.data.id}/link`, {})).data.token, link.token, 'o link é o mesmo');
+  assert.equal((await call('c2', 'GET', `/api/propostas/${p.data.id}/link`)).status, 404);
+  row = (await call('c1', 'GET', '/api/propostas-panorama')).data.rows.find((r) => r.id === p.data.id);
+  assert.equal(row.link_status, 'aguardando');
+  // Visão da equipe não conta como acesso
+  const pub = async (q) => {
+    const r = await fetch(`${base}/api/publico/proposta?${new URLSearchParams(q)}`);
+    return { status: r.status, data: await r.json() };
+  };
+  const team = await pub({ token: link.token, equipe: '1' });
+  assert.equal(team.status, 200);
+  assert.equal(team.data.view_id, null);
+  assert.equal(team.data.client_first_name, 'Cliente');
+  assert.equal(team.data.values.credit_value, 200000);
+  assert.equal(team.data.phone, undefined, 'sem dados de contato do cliente');
+  assert.equal((await pub({ token: 'x'.repeat(24) })).status, 404);
+  // Cliente abre: conta o acesso, avisa o responsável e registra tempo, rolagem e seções
+  const open = await pub({ token: link.token, device: 'mobile' });
+  assert.ok(open.data.view_id);
+  const ev = (body) => fetch(`${base}/api/publico/proposta/evento`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'crm' }, body: JSON.stringify({ token: link.token, view: open.data.view_id, ...body }) });
+  assert.equal((await ev({ seconds: 30, scroll: 55, sections: ['resumo', 'valores', 'hack'] })).status, 200);
+  assert.equal((await ev({ seconds: 9999, scroll: 90 })).status, 200, 'tempo por evento é limitado');
+  let det = (await call('c1', 'GET', `/api/propostas/${p.data.id}/link`)).data;
+  assert.equal(det.views, 1);
+  assert.equal(det.seconds, 150);
+  assert.equal(det.max_scroll, 90);
+  assert.equal(det.status, 'lido');
+  assert.ok(det.first_opened_at);
+  assert.deepEqual(det.views_list[0].sections, ['resumo', 'valores']);
+  assert.equal(det.views_list[0].device, 'mobile');
+  const notes = (await call('c1', 'GET', '/api/notificacoes')).data;
+  assert.ok((notes.items || notes.rows || notes).some((n) => /abriu a proposta/.test(n.title)), 'aviso de leitura');
+  // Avançar: tarefa de contato imediato, retorno positivo e aviso
+  const adv = await fetch(`${base}/api/publico/proposta/avancar`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'crm' }, body: JSON.stringify({ token: link.token, note: 'Pode me ligar à tarde' }) });
+  assert.equal(adv.status, 200);
+  det = (await call('c1', 'GET', `/api/propostas/${p.data.id}/link`)).data;
+  assert.equal(det.status, 'avancar');
+  assert.equal(det.advanced_note, 'Pode me ligar à tarde');
+  const tasks = (await call('c1', 'GET', `/api/tarefas?contact_id=${c.data.id}&status=pendente`)).data.rows;
+  assert.ok(tasks.some((t) => /quer avançar/.test(t.title) && t.priority === 'alta'));
+  assert.equal((await call('c1', 'GET', `/api/propostas/${p.data.id}`)).data.last_response, 'positiva');
+  // Modelos do WhatsApp por passo da régua (com o primeiro nome e o consultor)
+  const wa = (await call('c1', 'GET', `/api/propostas/${p.data.id}/whatsapp`)).data;
+  assert.deepEqual(wa.steps.map((x) => x.step), ['D0', 'D2', 'D5', 'D9', 'D14', 'D21']);
+  assert.match(wa.steps[0].text, /^Olá, Cliente!/);
+  assert.match(wa.steps[0].text, /\{link\}/);
+  assert.equal(wa.phone, '11938175561');
+  // Novo link: o anterior deixa de abrir
+  const renew = (await call('c1', 'POST', `/api/propostas/${p.data.id}/link`, { renew: true })).data;
+  assert.notEqual(renew.token, link.token);
+  assert.equal((await pub({ token: link.token })).status, 404);
+  assert.equal((await pub({ token: renew.token, equipe: '1' })).status, 200);
+});
+
+test('carta contemplada e planejamento: proposta de consórcio contemplada e proposta do planejamento a partir do diagnóstico precificado', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Contemplada', phone1: '11 93817-5571', origin: 'site', relationship: 'lead' });
+  const opp = (await call('c1', 'GET', `/api/cadastros/${c.data.id}`)).data.opportunities[0];
+  assert.equal((await call('c1', 'POST', '/api/propostas', { opportunity_id: opp.id, area: 'consorcio', consortium_kind: 'contemplada' })).status, 400, 'crédito obrigatório');
+  const k = await call('c1', 'POST', '/api/propostas', { opportunity_id: opp.id, area: 'consorcio', consortium_kind: 'contemplada', credit_value: 300000, entry_value: 60000, remaining_installments: 120, initial_installment: 2100 });
+  assert.equal(k.status, 200, JSON.stringify(k.data));
+  const kp = (await call('c1', 'GET', `/api/propostas/${k.data.id}`)).data;
+  assert.equal(kp.consortium_kind, 'contemplada');
+  assert.equal(kp.entry_value, 60000);
+  assert.equal(kp.product_id, null, 'sem plano de cota nova');
+  // Planejamento: diagnóstico concluído e precificado gera a proposta (gerada, pronta para enviar)
+  const s = await call('c1', 'POST', '/api/diagnosticos', { contact_id: c.data.id });
+  const pricing = { valor: 4800, pix_total: 4560, cartao_total: 5140.2, parcelas: 10, parcela: 514.02, condicao: 'pix' };
+  let r = await call('c1', 'PUT', `/api/diagnosticos/${s.data.id}/dados`, { data: { id: `crm-${s.data.id}`, objetivos: [] }, precificacao: pricing });
+  assert.equal(r.data.proposal, null, 'só depois de concluído');
+  r = await call('c1', 'PUT', `/api/diagnosticos/${s.data.id}/dados`, { data: { id: `crm-${s.data.id}`, coletaFinalizada: true }, precificacao: pricing });
+  assert.ok(r.data.proposal, JSON.stringify(r.data));
+  let pl = (await call('c1', 'GET', `/api/propostas/${r.data.proposal.id}`)).data;
+  assert.equal(pl.area, 'planejamento');
+  assert.equal(pl.credit_value, 4800);
+  assert.equal(pl.status, 'rascunho');
+  assert.match(pl.description, /Pix ou boleto/);
+  // Nova precificação antes do envio atualiza a mesma proposta
+  r = await call('c1', 'PUT', `/api/diagnosticos/${s.data.id}/dados`, { data: { id: `crm-${s.data.id}`, coletaFinalizada: true, x: 1 }, precificacao: { ...pricing, valor: 5200 } });
+  assert.equal(r.data.proposal.id, pl.id);
+  pl = (await call('c1', 'GET', `/api/propostas/${pl.id}`)).data;
+  assert.equal(pl.credit_value, 5200);
+  const link = (await call('c1', 'POST', `/api/propostas/${pl.id}/link`, {})).data;
+  const page = await (await fetch(`${base}/api/publico/proposta?token=${link.token}&equipe=1`)).json();
+  assert.equal(page.area, 'planejamento');
+  assert.equal(page.pricing.parcelas, 10);
+  assert.equal(page.brand, 'Vero Planejamento');
+  assert.equal((await call('c1', 'PUT', `/api/diagnosticos/${s.data.id}/dados`, { data: { id: 'x', coletaFinalizada: true }, precificacao: { valor: -1 } })).data.proposal.id, pl.id, 'precificação inválida não muda a proposta');
 });

@@ -1,72 +1,116 @@
-// 6. Propostas: esteira de follow-up (D0 a D10), panorama com probabilidade de fechamento e nova proposta a partir do cadastro.
+// Propostas: todas as propostas (consórcio e carta contemplada, planejamento financeiro, seguros e investimentos) em
+// Kanban pela régua de follow-up (Dia 0, 2, 5, 9, 14 e 21) ou em Lista, com o link on-line rastreável para o cliente
+// (Aguardando / Lido / Avançar, tempo na proposta e acessos), PDF e modelo de mensagem do WhatsApp.
 import { get, post, patch, download } from '../api.js';
-import { html, render, $, on, state, selectOptions, opts, userItems, table, badge, fmtMoney, fmtDate, fmtDateTime, relTime, optLabel, K, can, modal, field, toast, toastError, empty, subnav } from '../ui.js';
-import { proposalDetail, openProposalSimulator, newProposalFlow } from '../forms.js';
+import { html, render, $, on, state, selectOptions, opts, userItems, badge, fmtMoney, fmtDate, fmtDateTime, relTime, optLabel, K, can, modal, field, toast, toastError, empty } from '../ui.js';
+import { icon } from '../icons.js';
+import { proposalDetail, newProposalFlow } from '../forms.js';
 import { probBadge } from './dashboard.js';
+import { linkBadge, readTime, optionButtons, bindOptionButtons } from '../proposal-actions.js';
+import { bindDrawerLinks } from '../drawer.js';
 
+const VIEW_KEY = 'crm-prop-view';
+const savedView = () => {
+  try {
+    return localStorage.getItem(VIEW_KEY) === 'lista' ? 'lista' : 'kanban';
+  } catch {
+    return 'kanban';
+  }
+};
 let saved = { status: 'andamento' };
 
-const COLS = [
-  ['gerada', 'Gerada (não enviada)'],
-  ['enviada', 'Enviada'],
-  ['D0', 'D0'],
-  ['D1', 'D+1'],
-  ['D2', 'D+2'],
-  ['D3', 'D+3'],
-  ['D5', 'D+5'],
-  ['D10', 'D+10'],
-];
+const STEPS = [['D0', 'Dia 0'], ['D2', 'Dia 2'], ['D5', 'Dia 5'], ['D9', 'Dia 9'], ['D14', 'Dia 14'], ['D21', 'Dia 21']];
+const COLS = [['gerada', 'Gerada', 'ainda não enviada'], ...STEPS.map(([k, l]) => [k, l, null])];
+const AREA_LABEL = { consorcio: 'Consórcio', seguros: 'Seguros', planejamento: 'Planejamento', investimentos: 'Investimentos' };
+const ACTIVE = ['rascunho', 'apresentada', 'em_analise'];
+
+/** Área e categoria: consórcio mostra a categoria (ou "carta contemplada"); as outras áreas, o nome da área. */
+const areaCell = (p) => {
+  const a = p.area || 'consorcio';
+  const sub = a === 'consorcio' ? (p.consortium_kind === 'contemplada' ? 'Carta contemplada' : optLabel('categoria_credito', p.category) || '') : p.diagnostic_id ? 'do diagnóstico' : '';
+  return html`<span class="chip-sm area area-${a}">${AREA_LABEL[a]}</span>${sub ? html`<small class="muted"> ${sub}</small>` : ''}`;
+};
+const code = (p) => String(p.code).replace(/-v\d+$/, '');
+const dateTime = (v) => {
+  const [d, t] = String(fmtDateTime(v)).split(', ');
+  return html`${d}${t ? html`<br><small class="muted">${t}</small>` : ''}`;
+};
+
+/** Régua: Dia 0 a Dia 21 (feito, atrasado, a fazer, cancelado). */
+const REGUA_LABEL = { feito: 'feito', atrasado: 'atrasado', pendente: 'a fazer', cancelado: 'encerrado' };
+const regua = (p) => html`<span class="regua">${(p.regua || []).map((r) => html`<span class="rg rg-${r.status || 'none'} ${p.next_step === r.step ? 'rg-next' : ''}" title="${STEPS.find(([k]) => k === r.step)[1]}${r.status ? ` · ${REGUA_LABEL[r.status]}` : ''}${r.due_at ? ` · ${fmtDateTime(r.due_at)}` : ''}">${r.step.slice(1)}</span>`)}</span>`;
 
 export async function show(view, { params }) {
-  const tab = params.aba === 'panorama' ? 'panorama' : 'esteira';
+  let mode = params.ver === 'lista' ? 'lista' : params.ver === 'kanban' ? 'kanban' : savedView();
   const manager = can.manage();
-  render(view, html`<div class="page wide">
-    <div class="page-head"><div><h1>Propostas</h1><p class="muted">Cada proposta nasce do cadastro do cliente e segue a esteira de follow-up até o fechamento.</p></div>
-      <div class="actions">${can.write() ? html`<button class="btn primary" data-act="new">+ Nova proposta</button>` : ''}${can.admin() ? html`<button class="btn" data-act="export">Exportar CSV</button>` : ''}</div></div>
-    ${subnav([['#/propostas', 'Esteira de propostas', 'esteira'], ['#/propostas?aba=panorama', 'Panorama geral', 'panorama']], tab)}
+  render(view, html`<div class="page wide proposals-page">
+    <div class="page-head"><div><h1>Propostas</h1><p class="muted">Consórcio, carta contemplada, planejamento financeiro, seguros e investimentos: do envio do link ao aceite, com a régua de follow-up.</p></div>
+      <div class="actions">${can.write() ? html`<button class="btn primary" data-act="new">${icon('adicionar', 16)} Nova proposta</button>` : ''}${can.admin() ? html`<button class="btn" data-act="export">Exportar CSV</button>` : ''}</div></div>
     <div id="kpis"></div>
-    <form class="filters" data-f>
-      <label ${tab === 'esteira' ? 'hidden' : ''}>Situação<select name="status">${selectOptions([{ value: 'andamento', label: 'Em andamento' }, { value: 'aprovada', label: 'Aceitas' }, { value: 'recusada', label: 'Recusadas' }, { value: 'expirada', label: 'Expiradas' }], saved.status, { placeholder: 'Todas' })}</select></label>
-      ${manager ? html`<label>Especialista<select name="owner_id">${selectOptions(userItems(), saved.owner_id, { placeholder: 'Todos' })}</select></label>` : ''}
-      <label>Categoria<select name="category">${selectOptions(opts('categoria_credito'), saved.category, { placeholder: 'Todas' })}</select></label>
-      <label>Chance de fechamento<select name="level">${selectOptions([{ value: 'alta', label: 'Alta' }, { value: 'media', label: 'Média' }, { value: 'baixa', label: 'Baixa' }], saved.level, { placeholder: 'Todas' })}</select></label>
-      <label class="check"><input type="checkbox" name="alerts" value="1" ${saved.alerts ? 'checked' : ''}> Só com alerta</label>
-    </form>
+    <form class="pipe-bar prop-bar" data-f><div class="pb-line">
+      <label class="pb-search">${icon('buscar', 16)}<input type="search" name="q" placeholder="Buscar cliente ou ID da proposta" value="${saved.q || ''}" aria-label="Buscar"></label>
+      <select name="area" aria-label="Área">${selectOptions(Object.entries(AREA_LABEL).map(([value, label]) => ({ value, label })), saved.area, { placeholder: 'Todas as áreas' })}</select>
+      <select name="status" aria-label="Situação">${selectOptions([{ value: 'andamento', label: 'Em andamento' }, { value: 'aprovada', label: 'Aceitas' }, { value: 'recusada', label: 'Recusadas' }, { value: 'expirada', label: 'Expiradas' }], saved.status, { placeholder: 'Todas as situações' })}</select>
+      <select name="link" aria-label="Link do cliente">${selectOptions([{ value: 'aguardando', label: 'Link: aguardando' }, { value: 'lido', label: 'Link: lido' }, { value: 'avancar', label: 'Link: avançar' }, { value: 'sem_link', label: 'Link não gerado' }], saved.link, { placeholder: 'Link do cliente' })}</select>
+      ${manager ? html`<select name="owner_id" aria-label="Usuário">${selectOptions(userItems(), saved.owner_id, { placeholder: 'Todos os usuários' })}</select>` : ''}
+      <span class="seg view-toggle" role="group" aria-label="Visualização">
+        <button type="button" data-mode="kanban" class="${mode === 'kanban' ? 'active' : ''}">${icon('kanban', 16)} Kanban</button>
+        <button type="button" data-mode="lista" class="${mode === 'lista' ? 'active' : ''}">${icon('lista', 16)} Lista</button></span>
+    </div></form>
     <div id="list"></div></div>`);
   const form = $('[data-f]', view);
   let data = null;
+  let rows = [];
+  const draw = () => render($('#list', view), mode === 'kanban' ? board(rows, data.summary, saved.status) : list(rows));
   const load = async () => {
     const f = Object.fromEntries(new FormData(form).entries());
     saved = f;
     try {
-      // A esteira mostra todas as situações (em andamento, aceitas e recusadas recentes); o panorama segue o filtro
-      data = await get('/api/propostas-panorama', { status: tab === 'esteira' ? '' : f.status, owner_id: f.owner_id, category: f.category });
+      // O Kanban mostra as em andamento e as aceitas/recusadas recentes; a Lista segue o filtro de situação
+      data = await get('/api/propostas-panorama', { status: mode === 'kanban' && f.status === 'andamento' ? '' : f.status, owner_id: f.owner_id, area: f.area, q: f.q });
     } catch (e) {
       return toastError(e);
     }
-    let rows = data.rows;
-    if (f.level) rows = rows.filter((p) => p.level === f.level);
-    if (f.alerts) rows = rows.filter((p) => p.alerts.length);
+    rows = data.rows;
+    if (f.link) rows = rows.filter((p) => p.link_status === f.link);
     const s = data.summary;
-    render($('#kpis', view), html`<div class="kpis small">
+    render($('#kpis', view), html`<div class="kpis small prop-kpis">
+      <div class="kpi"><div class="kpi-label">Em andamento</div><div class="kpi-value">${s.em_andamento}</div><div class="kpi-sub">${fmtMoney(s.valor_andamento)}</div></div>
       <div class="kpi"><div class="kpi-label">Geradas no mês</div><div class="kpi-value">${s.geradas_mes}</div><div class="kpi-sub">${s.enviadas_mes} enviadas</div></div>
-      <div class="kpi"><div class="kpi-label">Em andamento</div><div class="kpi-value">${s.em_andamento}</div><div class="kpi-sub">${fmtMoney(s.valor_andamento)} em crédito</div></div>
-      <div class="kpi"><div class="kpi-label">Potencial ponderado</div><div class="kpi-value">${fmtMoney(s.potencial_ponderado)}</div><div class="kpi-sub">crédito × chance de fechamento</div></div>
-      <div class="kpi"><div class="kpi-label">Chance de fechamento</div><div class="kpi-value">${s.alta} / ${s.media} / ${s.baixa}</div><div class="kpi-sub">alta / média / baixa</div></div>
-      <div class="kpi ${s.com_alerta ? 'alert-kpi' : ''}"><div class="kpi-label">Com alerta</div><div class="kpi-value">${s.com_alerta}</div><div class="kpi-sub">follow-up atrasado, validade ou sem decisão</div></div>
+      <div class="kpi"><div class="kpi-label">Link aguardando</div><div class="kpi-value">${s.links_aguardando}</div><div class="kpi-sub">enviado e ainda não aberto</div></div>
+      <div class="kpi"><div class="kpi-label">Link lido</div><div class="kpi-value">${s.links_lidos}</div><div class="kpi-sub">cliente abriu a proposta</div></div>
+      <div class="kpi ${s.querem_avancar ? 'ok-kpi' : ''}"><div class="kpi-label">Querem avançar</div><div class="kpi-value">${s.querem_avancar}</div><div class="kpi-sub">clicaram em "Avançar"</div></div>
       <div class="kpi"><div class="kpi-label">Taxa de aceite</div><div class="kpi-value">${s.taxa_aceite != null ? `${s.taxa_aceite}%` : '—'}</div><div class="kpi-sub">aceitas ÷ decididas</div></div>
     </div>`);
-    render($('#list', view), tab === 'esteira' ? board(rows, s) : overview(rows));
+    draw();
   };
+  let t;
   form.addEventListener('change', load);
+  form.q.addEventListener('input', () => {
+    clearTimeout(t);
+    t = setTimeout(load, 300);
+  });
+  form.addEventListener('submit', (e) => e.preventDefault());
+  on(form, 'click', '[data-mode]', (e, b) => {
+    mode = b.dataset.mode;
+    try {
+      localStorage.setItem(VIEW_KEY, mode);
+    } catch {}
+    form.querySelectorAll('[data-mode]').forEach((x) => x.classList.toggle('active', x === b));
+    load();
+  });
   on(view, 'click', '[data-prop]', (e, a) => {
     e.preventDefault();
     proposalDetail(a.dataset.prop, load);
   });
+  bindOptionButtons(view, (id) => rows.find((p) => p.id === id), load);
+  bindDrawerLinks(view);
   on(view, 'click', '[data-done]', async (e, b) => {
+    const p = rows.find((x) => x.id === Number(b.dataset.proposal));
+    const step = state.meta.constants.proposal_cadence.find((c) => c.step === p?.next_step);
     const ok = await modal({
       title: 'Registrar follow-up',
-      body: html`<p><strong>${b.dataset.title}</strong></p><p class="hint">${b.dataset.script || ''}</p>${field({ name: 'notes', label: 'Como foi o contato?', type: 'textarea', full: true, required: true })}
+      body: html`<p><strong>${step?.title || b.dataset.title}</strong></p><p class="hint">${step?.script || ''}</p>${field({ name: 'notes', label: 'Como foi o contato?', type: 'textarea', full: true, required: true })}
         ${field({ name: 'response', label: 'Retorno do cliente', type: 'select', options: opts('resposta_proposta'), placeholder: 'Sem registrar' })}`,
       submitLabel: 'Concluir follow-up',
       async onSubmit(d) {
@@ -81,78 +125,85 @@ export async function show(view, { params }) {
   on(view, 'click', '[data-act=export]', () => download('/api/exportar/propostas', {}).catch(toastError));
   on(view, 'click', '[data-act=new]', () => newProposal().then((r) => r && load()));
   await load();
+  // Aviso "cliente abriu / quer avançar": abre a proposta direto
+  if (params.id) proposalDetail(params.id, load);
 }
-
-const AREA_LABEL = { consorcio: 'Consórcio', seguros: 'Seguros', planejamento: 'Planejamento', investimentos: 'Investimentos' };
 
 function card(p) {
   const nf = p.next_followup;
-  const script = nf ? state.meta.constants.proposal_cadence.find((c) => nf.title.startsWith(c.title.split(' · ')[0]))?.script : '';
-  return html`<article class="opp-card prop-card lvl-${p.level}">
-    <a href="#" data-prop="${p.id}" class="title">${p.contact_name}</a>
-    <div class="small muted">${p.code} · ${p.area && p.area !== 'consorcio' ? html`<span class="chip-sm area area-${p.area}">${AREA_LABEL[p.area]}</span>` : optLabel('categoria_credito', p.category)} · ${p.owner_name || '—'}</div>
-    <div class="small">${fmtMoney(p.credit_value)}${p.initial_installment ? ` · parcela ${fmtMoney(p.initial_installment)}` : ''}</div>
-    <div>${probBadge(p)}</div>
-    ${nf ? html`<div class="small ${nf.overdue ? 'overdue' : ''}">▸ ${nf.title.replace(/ \(PR-\d+\)$/, '')} (${relTime(nf.due_at)})</div>` : ''}
+  return html`<article class="opp-card prop-card lvl-${p.level} ${p.link_status === 'avancar' ? 'wants' : ''}">
+    <div class="prop-card-top"><a href="#" data-prop="${p.id}" class="title">${p.contact_name}</a>${probBadge(p)}</div>
+    <div class="small muted">${code(p)} · ${p.owner_name || '—'}</div>
+    <div class="prop-card-area">${areaCell(p)}</div>
+    <div class="prop-card-value">${fmtMoney(p.credit_value)}${p.initial_installment && (p.area || 'consorcio') === 'consorcio' ? html`<small> · parcela ${fmtMoney(p.initial_installment)}</small>` : ''}</div>
+    <div class="prop-card-link">${linkBadge(p)}${p.link_views ? html`<small class="muted">${p.link_views} acesso(s) · ${readTime(p.link_seconds)}</small>` : ''}</div>
+    ${ACTIVE.includes(p.status) && p.status !== 'rascunho' ? regua(p) : ''}
+    ${nf ? html`<div class="small ${nf.overdue ? 'overdue' : ''}">▸ ${nf.title.replace(/ \(PR-[\d-v]+\)$/, '')} (${relTime(nf.due_at)})</div>` : ''}
     ${p.alerts.length ? html`<div class="small warn-text">${p.alerts.join(' · ')}</div>` : ''}
-    ${can.write() && nf ? html`<button class="btn small" data-done="${nf.id}" data-proposal="${p.id}" data-title="${nf.title}" data-script="${script || ''}">Registrar follow-up</button>` : ''}
-    ${p.status === 'rascunho' && can.write() ? html`<button class="btn small" data-prop="${p.id}">Completar e enviar</button>` : ''}
+    <div class="prop-card-foot">${optionButtons(p)}
+      ${can.write() && nf ? html`<button class="btn small" data-done="${nf.id}" data-proposal="${p.id}" data-title="${nf.title}">Registrar follow-up</button>` : ''}
+      ${p.status === 'rascunho' && can.write() ? html`<button class="btn small" data-p-wa="${p.id}">Enviar ao cliente</button>` : ''}</div>
   </article>`;
 }
 
 const RECENT = 60 * 86400000;
 const recent = (d) => d && Date.now() - Date.parse(d) < RECENT;
 
-function board(rows, summary) {
-  const active = rows.filter((p) => ['rascunho', 'apresentada', 'em_analise'].includes(p.status));
-  const accepted = rows.filter((p) => p.status === 'aprovada' && recent(p.accepted_at || p.updated_at));
-  const refused = rows.filter((p) => p.status === 'recusada' && recent(p.refused_at || p.updated_at));
+function board(rows, summary, status) {
+  const active = rows.filter((p) => ACTIVE.includes(p.status));
+  const accepted = rows.filter((p) => p.status === 'aprovada' && (status === 'aprovada' || recent(p.accepted_at || p.updated_at)));
+  const refused = rows.filter((p) => ['recusada', 'expirada'].includes(p.status) && (status === 'recusada' || status === 'expirada' || recent(p.refused_at || p.updated_at)));
   const col = (key) => active.filter((p) => p.cadence_stage === key);
-  const total = (list) => fmtMoney(list.reduce((t, p) => t + (p.credit_value || 0), 0));
+  const total = (l) => fmtMoney(l.reduce((t, p) => t + (p.credit_value || 0), 0));
   const reasons = summary.recusas_por_motivo || [];
-  return html`<div class="kanban">${COLS.map(([k, label]) => {
+  const showActive = !['aprovada', 'recusada', 'expirada'].includes(status);
+  return html`<div class="kanban prop-kanban">${showActive ? COLS.map(([k, label, hint]) => {
     const cards = col(k);
-    return html`<section class="column"><header><strong>${label}</strong><span class="count">${cards.length}</span>${cards.length ? html`<small>${total(cards)}</small>` : ''}</header>
+    const late = cards.filter((p) => p.next_followup?.overdue).length;
+    return html`<section class="column" data-key="${k}"><header><strong>${label}</strong><span class="count">${cards.length}</span>
+      <small>${cards.length ? total(cards) : hint || '—'}${late ? html` · <span class="overdue">${late} atrasado(s)</span>` : ''}</small></header>
       <div class="cards">${cards.length ? cards.map(card) : html`<div class="empty small">—</div>`}</div></section>`;
-  })}
-    <section class="column kind-ganho"><header><strong>Aceitas</strong><span class="count">${accepted.length}</span><small>${accepted.length ? total(accepted) : 'seguem para a pré-venda'}</small></header>
-      <div class="cards">${accepted.length ? accepted.map((p) => html`<article class="opp-card"><a href="#" data-prop="${p.id}" class="title">${p.contact_name}</a><div class="small">${fmtMoney(p.credit_value)} · aceita em ${fmtDate(p.accepted_at)}</div><a class="small" href="#/prevenda">ver pré-venda</a></article>`) : html`<div class="empty small">—</div>`}</div></section>
-    <section class="column kind-perdido"><header><strong>Recusadas</strong><span class="count">${refused.length}</span><small>${refused.length ? total(refused) : 'com o motivo da recusa'}</small></header>
+  }) : ''}
+    ${status !== 'recusada' && status !== 'expirada' ? html`<section class="column kind-ganho"><header><strong>Aceitas</strong><span class="count">${accepted.length}</span><small>${accepted.length ? total(accepted) : 'seguem para a pré-venda'}</small></header>
+      <div class="cards">${accepted.length ? accepted.map((p) => html`<article class="opp-card"><a href="#" data-prop="${p.id}" class="title">${p.contact_name}</a><div class="small muted">${code(p)} · ${p.owner_name || '—'}</div><div>${areaCell(p)}</div><div class="small">${fmtMoney(p.credit_value)} · aceita em ${fmtDate(p.accepted_at)}</div><a class="small" href="#/prevenda">ver pré-venda</a></article>`) : html`<div class="empty small">—</div>`}</div></section>` : ''}
+    ${status !== 'aprovada' ? html`<section class="column kind-perdido"><header><strong>Recusadas</strong><span class="count">${refused.length}</span><small>${refused.length ? total(refused) : 'com o motivo da recusa'}</small></header>
       <div class="cards">${refused.length
         ? refused.map((p) => html`<article class="opp-card refused"><a href="#" data-prop="${p.id}" class="title">${p.contact_name}</a>
-            <div class="small">${fmtMoney(p.credit_value)} · recusada em ${fmtDate(p.refused_at || p.updated_at)}</div>
-            <div>${badge(optLabel('motivo_recusa_proposta', p.refusal_reason) || 'Motivo não informado', 'danger')}</div>
-            ${p.refusal_notes ? html`<div class="small muted">${p.refusal_notes}</div>` : ''}
+            <div class="small muted">${code(p)} · ${p.owner_name || '—'}</div>
+            <div class="small">${fmtMoney(p.credit_value)} · ${p.status === 'expirada' ? 'expirada' : 'recusada'} em ${fmtDate(p.refused_at || p.updated_at)}</div>
+            ${p.refusal_reason ? html`<div>${badge(optLabel('motivo_recusa_proposta', p.refusal_reason), 'danger')}</div>` : ''}
             ${p.retake_at ? html`<div class="small">▸ Retomar em ${fmtDate(p.retake_at)}</div>` : ''}</article>`)
-        : html`<div class="empty small">—</div>`}</div></section>
+        : html`<div class="empty small">—</div>`}</div></section>` : ''}
   </div>
-  ${reasons.length ? html`<section class="card"><h3>Motivos de recusa</h3>
-    <p class="hint">Base para o trabalho de recuperação (closer): os motivos marcados como recuperáveis indicam clientes que podem voltar com uma nova condição ou em outro momento.</p>
+  ${reasons.length && showActive ? html`<section class="card"><h3>Motivos de recusa</h3>
     <div class="reason-bars">${reasons.map((r) => html`<div class="reason-row"><span>${r.label} ${r.recuperavel ? badge('recuperável', 'ok') : ''}</span>
       <span class="bar"><span style="width:${Math.round((r.count / reasons[0].count) * 100)}%"></span></span><strong>${r.count}</strong><small class="muted">${fmtMoney(r.credit)}</small></div>`)}</div></section>` : ''}
-  <p class="muted small">A coluna indica o último follow-up concluído. Enviada pela manhã, a proposta tem D0 no fim do dia; à tarde, a esteira começa no D+1 (dias úteis). Aceitas e recusadas mostram os últimos 60 dias. Para recusar, abra a proposta e informe o motivo.</p>`;
+  <p class="muted small">A coluna é o próximo passo da régua (dias corridos a partir do envio; sábado e domingo passam para segunda). Enviada até as 16h, o Dia 0 é no próprio dia. Aceitas e recusadas mostram os últimos 60 dias.</p>`;
 }
 
-function overview(rows) {
-  return html`<section class="card">${table(
-    [
-      { label: 'Proposta', render: (p) => html`<a href="#" data-prop="${p.id}">${String(p.code).replace(/-v\d+$/, '')}</a> <small>v${p.version}</small>` },
-      { label: 'Cliente', render: (p) => html`<a href="#/leads/${p.contact_id}">${p.contact_name}</a><br><small>${p.contact_code}</small>` },
-      { label: 'Área / categoria', render: (p) => (p.area && p.area !== 'consorcio' ? html`<span class="chip-sm area area-${p.area}">${AREA_LABEL[p.area]}</span>${p.description ? html`<br><small>${String(p.description).slice(0, 60)}</small>` : ''}` : html`Consórcio<br><small>${optLabel('categoria_credito', p.category) || ''}</small>`) },
-      { label: 'Valor', render: (p) => html`${fmtMoney(p.credit_value)}${p.initial_installment ? html`<br><small>parcela ${fmtMoney(p.initial_installment)}</small>` : ''}`, cls: 'num' },
-      { label: 'Gerada / enviada', render: (p) => html`${fmtDate(p.created_at)}<br><small>${p.presented_at ? `enviada ${fmtDate(p.presented_at)}` : 'não enviada'}</small>` },
-      { label: 'Situação', render: (p) => html`${badge(K('proposal_status', p.status), `st-${p.status}`)}<br><small>${['rascunho', 'apresentada', 'em_analise'].includes(p.status) ? `esteira: ${p.cadence_stage}` : ''}</small>` },
-      { label: 'Chance', render: (p) => html`<span title="${p.factors.map(([l, v]) => `${l} (${v > 0 ? '+' : ''}${v})`).join('\n')}">${probBadge(p)}</span><br><small>ponderado ${fmtMoney(p.weighted)}</small>` },
-      { label: 'Próximo follow-up', render: (p) => (p.next_followup ? html`<span class="${p.next_followup.overdue ? 'overdue' : ''}">${fmtDateTime(p.next_followup.due_at)}</span><br><small>${p.next_followup.title.replace(/ \(PR-\d+\)$/, '')}</small>` : '—') },
-      { label: 'Especialista', render: (p) => p.owner_name || '—' },
-      { label: 'Alertas', render: (p) => (p.alerts.length ? html`<span class="warn-text small">${p.alerts.join(' · ')}</span>` : '—') },
-    ],
-    rows,
-    { emptyMsg: 'Nenhuma proposta com esses filtros.' },
-  )}<p class="muted small">Passe o mouse sobre a chance para ver os fatores considerados.</p></section>`;
+function list(rows) {
+  if (!rows.length) return html`<section class="card">${empty('Nenhuma proposta com esses filtros.')}</section>`;
+  return html`<section class="card table-card"><div class="table-wrap"><table class="data prop-table">
+    <thead><tr><th>ID proposta</th><th>Cliente</th><th>Área / categoria</th><th class="num">Valor</th><th>Status</th><th>Usuário</th><th>Gerada em</th>
+      <th>Régua follow <small>(dias)</small></th><th>Link do cliente</th><th class="num">Tempo na proposta</th><th class="num">Acessos</th><th>Opções</th></tr></thead>
+    <tbody>${rows.map((p) => html`<tr>
+      <td data-label="ID proposta" class="nowrap"><a href="#" data-prop="${p.id}"><strong>${code(p)}</strong></a>${p.version > 1 ? html` <small>v${p.version}</small>` : ''}</td>
+      <td data-label="Cliente"><a href="#/leads/${p.contact_id}" data-drawer="${p.contact_id}">${p.contact_name}</a><br><small class="muted">${p.contact_code}</small></td>
+      <td data-label="Área / categoria">${areaCell(p)}</td>
+      <td data-label="Valor" class="num nowrap">${fmtMoney(p.credit_value)}</td>
+      <td data-label="Status">${badge(K('proposal_status', p.status), `st-${p.status}`)}</td>
+      <td data-label="Usuário">${p.owner_name || '—'}</td>
+      <td data-label="Gerada em" class="nowrap">${dateTime(p.generated_at || p.created_at)}</td>
+      <td data-label="Régua follow">${p.status === 'rascunho' ? html`<span class="muted small">não enviada</span>` : regua(p)}</td>
+      <td data-label="Link do cliente">${linkBadge(p)}</td>
+      <td data-label="Tempo na proposta" class="num nowrap">${readTime(p.link_seconds)}</td>
+      <td data-label="Acessos" class="num">${p.link_views || 0}</td>
+      <td data-label="Opções">${optionButtons(p)}</td>
+    </tr>`)}</tbody></table></div>
+    <p class="muted small">Régua: <span class="rg rg-feito">0</span> feito · <span class="rg rg-pendente rg-next">2</span> próximo · <span class="rg rg-atrasado">5</span> atrasado · <span class="rg rg-none">9</span> sem tarefa. Link: Aguardando (enviado, não aberto), Lido (data e hora da primeira abertura) e Avançar (cliente clicou em "Quero avançar").</p></section>`;
 }
 
-/** Nova proposta: escolhe o cliente pelo nome ou ID e o negócio; o simulador abre com nome e contato preenchidos. */
+/** Nova proposta: escolhe o cliente pelo nome ou ID e o negócio; segue para a área (consórcio, contemplada, planejamento…). */
 async function newProposal() {
   let chosen = null;
   const ok = await modal({
@@ -184,7 +235,6 @@ async function newProposal() {
       if (!chosen) throw new Error('Escolha o cliente.');
       if (!d.opportunity_id) throw new Error('O cliente precisa ter um negócio aberto.');
       const opp = await get(`/api/oportunidades/${d.opportunity_id}`);
-      // Consórcio (simulador ou registro), seguros, planejamento financeiro ou investimentos
       await newProposalFlow({ ...opp, contact_name: chosen.name }, chosen, { simulations: opp.simulations || [] });
       return true;
     },

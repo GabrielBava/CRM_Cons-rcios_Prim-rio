@@ -1,5 +1,5 @@
 'use strict';
-const { PROPOSAL_STATUS, PROPOSAL_CADENCE } = require('../constants');
+const { PROPOSAL_STATUS, PROPOSAL_CADENCE, PROPOSAL_CADENCE_LEGACY } = require('../constants');
 const { loadContact, childScope, audit, diff, paging, optionLabel } = require('../core');
 const { badRequest, notFound, HttpError, clean, toNumber, toDateOnly, nowIso, randomToken, sha256 } = require('../util');
 const { tx, nextCode } = require('../db');
@@ -24,36 +24,39 @@ const FREE_FIELDS = ['link_url', 'notes', 'description'];
 const FINAL = ['aprovada', 'recusada', 'expirada', 'substituida'];
 const ACTIVE = ['rascunho', 'apresentada', 'em_analise'];
 
-/* ------------------------- Esteira de follow-up (D0 a D10) ------------------------- */
+/* ------------------------- Régua de follow-up (Dia 0 a Dia 21) ------------------------- */
 
 // Horários no fuso de Brasília (UTC−3, sem horário de verão)
 const SP_OFFSET = 3 * 3600000;
-function spDate(base, businessDays, hh, mm) {
-  const d = new Date(new Date(base).getTime() - SP_OFFSET);
-  let added = 0;
-  while (added < businessDays) {
-    d.setUTCDate(d.getUTCDate() + 1);
-    if (![0, 6].includes(d.getUTCDay())) added++;
-  }
-  while (businessDays > 0 && [0, 6].includes(d.getUTCDay())) d.setUTCDate(d.getUTCDate() + 1);
+const toSp = (iso) => new Date(new Date(iso).getTime() - SP_OFFSET);
+const fromSp = (d) => new Date(d.getTime() + SP_OFFSET).toISOString();
+const weekend = (d) => [0, 6].includes(d.getUTCDay());
+/** Data do passo: N dias corridos depois do envio, às hh:mm de Brasília; sábado e domingo passam para segunda. */
+function spCalDate(base, days, hh, mm) {
+  const d = toSp(base);
+  d.setUTCDate(d.getUTCDate() + days);
+  while (weekend(d)) d.setUTCDate(d.getUTCDate() + 1);
   d.setUTCHours(hh, mm, 0, 0);
-  return new Date(d.getTime() + SP_OFFSET).toISOString();
+  return fromSp(d);
 }
+/** Coluna da régua atual para um passo (os da régua antiga D1, D3 e D10 entram na coluna mais próxima). */
+const stepCol = (step) => PROPOSAL_CADENCE_LEGACY[step] || step;
 
 /**
- * Cria as tarefas da esteira a partir do envio. Enviada pela manhã (até 13h): D0 no fim do dia (17h30).
- * Enviada à tarde: começa no D+1. Depois D+2, D+3, D+5 e D+10 (dias úteis).
+ * Cria as tarefas da régua a partir do envio: Dia 0 no próprio dia (17h30; enviada depois das 16h ou no fim de semana,
+ * no próximo dia útil às 10h) e depois Dia 2, 5, 9, 14 e 21 às 10h (dias corridos; fim de semana passa para segunda).
  */
 function startCadence(db, user, p, sentAt) {
-  const localHour = new Date(new Date(sentAt).getTime() - SP_OFFSET).getUTCHours();
+  const local = toSp(sentAt);
   const opp = db.prepare('SELECT owner_id FROM opportunities WHERE id = ?').get(p.opportunity_id);
   const now = nowIso();
   for (const c of PROPOSAL_CADENCE) {
-    if (c.days === 0 && localHour >= 13) continue;
-    const due = c.days === 0 ? spDate(sentAt, 0, 17, 30) : spDate(sentAt, c.days, 10, 0);
+    let due;
+    if (c.days === 0) due = !weekend(local) && local.getUTCHours() < 16 ? spCalDate(sentAt, 0, 17, 30) : spCalDate(sentAt, weekend(local) ? 0 : 1, 10, 0);
+    else due = spCalDate(sentAt, c.days, 10, 0);
     db.prepare(`INSERT INTO tasks (contact_id, opportunity_id, type, title, notes, due_at, assigned_to, priority, proposal_id, cadence_step, created_by, created_at, updated_at)
       VALUES (?, ?, 'follow_up_proposta', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(p.contact_id, p.opportunity_id, `${c.title} (${p.code})`, c.script, due, p.owner_id ?? opp?.owner_id ?? user.id, c.step === 'D10' ? 'alta' : 'normal', p.id, c.step, user.id, now, now);
+      .run(p.contact_id, p.opportunity_id, `${c.title} (${p.code})`, c.script, due, p.owner_id ?? opp?.owner_id ?? user.id, c.step === 'D21' ? 'alta' : 'normal', p.id, c.step, user.id, now, now);
   }
   const first = db.prepare("SELECT title, due_at FROM tasks WHERE proposal_id = ? AND status = 'pendente' ORDER BY due_at LIMIT 1").get(p.id);
   if (first) db.prepare('UPDATE opportunities SET next_action = ?, next_action_at = ? WHERE id = ?').run(first.title, first.due_at, p.opportunity_id);
@@ -112,6 +115,20 @@ function normalize(db, data, contactId) {
   if (data.area !== undefined) {
     if (!PROPOSAL_AREAS.includes(data.area)) throw badRequest('Área da proposta inválida.');
     o.area = data.area;
+  }
+  // Consórcio: cota nova (simulador/plano) ou carta contemplada (crédito, entrada/ágio e parcelas restantes)
+  if (data.consortium_kind !== undefined) {
+    o.consortium_kind = clean(data.consortium_kind) || null;
+    if (o.consortium_kind && !['nova', 'contemplada'].includes(o.consortium_kind)) throw badRequest('Tipo de consórcio: cota nova ou carta contemplada.');
+  }
+  if (data.entry_value !== undefined) {
+    o.entry_value = toNumber(data.entry_value);
+    if (o.entry_value != null && o.entry_value < 0) throw badRequest('Valores não podem ser negativos.');
+  }
+  if (data.remaining_installments !== undefined) {
+    const n = toNumber(data.remaining_installments);
+    if (n != null && (!Number.isInteger(n) || n <= 0)) throw badRequest('Parcelas restantes: número inteiro maior que zero.');
+    o.remaining_installments = n;
   }
   for (const f of ['credit_value', 'initial_installment']) {
     if (data[f] !== undefined) {
@@ -269,9 +286,11 @@ function createProposal(db, user, data) {
   }
   // Seguros, planejamento e investimentos: proposta registrada com descrição e valor (sem plano de consórcio)
   const isConsorcio = (o.area || 'consorcio') === 'consorcio';
+  const contemplada = isConsorcio && o.consortium_kind === 'contemplada';
   if (!isConsorcio && !o.description) throw badRequest('Descreva a proposta (produto, seguradora/instituição e condições).');
-  if (isConsorcio && o.product_id == null && opp.product_id) o.product_id = opp.product_id;
-  if (isConsorcio) planDefaults(db, o);
+  if (contemplada && !(o.credit_value > 0)) throw badRequest('Informe o crédito da carta contemplada.');
+  if (isConsorcio && !contemplada && o.product_id == null && opp.product_id) o.product_id = opp.product_id;
+  if (isConsorcio && !contemplada) planDefaults(db, o);
   if (o.quotas == null && opp.quotas) o.quotas = opp.quotas;
   checkQuotaSplit(o);
   const status = data.status && ['rascunho', 'apresentada', 'em_analise'].includes(data.status) ? data.status : 'rascunho';
@@ -639,6 +658,15 @@ function panorama(db, user, q = {}) {
   const sc = childScope(db, user, 'pr');
   const where = [sc.sql, "pr.status <> 'substituida'"];
   const params = [...sc.params];
+  if (q.area) {
+    where.push("COALESCE(pr.area, 'consorcio') = ?");
+    params.push(String(q.area));
+  }
+  if (q.q) {
+    where.push('(c.name LIKE ? OR pr.code LIKE ? OR c.code LIKE ?)');
+    const like = `%${String(q.q).trim()}%`;
+    params.push(like, like, like);
+  }
   if (q.owner_id) {
     where.push('pr.owner_id = ?');
     params.push(Number(q.owner_id));
@@ -668,7 +696,7 @@ function panorama(db, user, q = {}) {
     const tasks = db.prepare('SELECT id, title, due_at, status, cadence_step, completed_at FROM tasks WHERE proposal_id = ? ORDER BY due_at').all(p.id);
     const cad = tasks.filter((t) => t.cadence_step);
     const next = tasks.find((t) => t.status === 'pendente');
-    const lastDone = [...cad].reverse().find((t) => t.status === 'concluida');
+    const nextCad = cad.find((t) => t.status === 'pendente');
     const days = p.presented_at ? Math.floor((Date.now() - Date.parse(p.presented_at)) / 86400000) : null;
     const alerts = [];
     if (next && next.due_at < now) alerts.push('Follow-up atrasado');
@@ -678,7 +706,13 @@ function panorama(db, user, q = {}) {
     }
     if (p.status === 'rascunho' && Date.now() - Date.parse(p.created_at) > 86400000) alerts.push('Gerada e ainda não enviada');
     if (ACTIVE.includes(p.status) && cad.length && !cad.some((t) => t.status === 'pendente')) alerts.push('Esteira concluída sem decisão: fechar, nutrir ou perder');
-    const stage = !ACTIVE.includes(p.status) ? p.status : p.status === 'rascunho' ? 'gerada' : lastDone?.cadence_step || (cad.length ? 'enviada' : 'enviada');
+    // Coluna da régua: o próximo passo a fazer (régua concluída sem decisão fica no Dia 21)
+    const stage = !ACTIVE.includes(p.status) ? p.status : p.status === 'rascunho' ? 'gerada' : nextCad ? stepCol(nextCad.cadence_step) : cad.length ? stepCol(cad[cad.length - 1].cadence_step) : 'D0';
+    const regua = PROPOSAL_CADENCE.map((c) => {
+      const t = [...cad].reverse().find((x) => stepCol(x.cadence_step) === c.step);
+      const st = !t ? null : t.status === 'concluida' ? 'feito' : t.status === 'pendente' ? (t.due_at < now ? 'atrasado' : 'pendente') : 'cancelado';
+      return { step: c.step, status: st, due_at: t?.due_at || null, done_at: t?.completed_at || null, task_id: t?.id || null };
+    });
     return {
       ...p,
       probability: sc2.score,
@@ -688,7 +722,10 @@ function panorama(db, user, q = {}) {
       cadence_stage: stage,
       next_followup: next ? { id: next.id, title: next.title, due_at: next.due_at, overdue: next.due_at < now } : null,
       cadence: cad.map((t) => ({ step: t.cadence_step, status: t.status, due_at: t.due_at })),
+      regua,
+      next_step: nextCad ? stepCol(nextCad.cadence_step) : null,
       days_since_sent: days,
+      link_status: linkStatus(p),
       alerts,
     };
   });
@@ -703,7 +740,7 @@ function panorama(db, user, q = {}) {
   const decided = base.filter((p) => ['aprovada', 'recusada', 'expirada'].includes(p.status));
   return {
     rows: out,
-    cadence: PROPOSAL_CADENCE.map(({ step, title }) => ({ step, title })),
+    cadence: PROPOSAL_CADENCE.map(({ step, title, days }) => ({ step, title, days })),
     summary: {
       geradas_mes: monthRows.length,
       enviadas_mes: monthRows.filter((p) => p.presented_at).length,
@@ -716,8 +753,215 @@ function panorama(db, user, q = {}) {
       com_alerta: active.filter((p) => p.alerts.length).length,
       recusas_por_motivo: refusalBreakdown(db, base.filter((p) => p.status === 'recusada')),
       taxa_aceite: decided.length ? Math.round((decided.filter((p) => p.status === 'aprovada').length / decided.length) * 1000) / 10 : null,
+      links_lidos: active.filter((p) => p.link_first_opened_at).length,
+      links_aguardando: active.filter((p) => p.public_token && !p.link_first_opened_at).length,
+      querem_avancar: active.filter((p) => p.link_advanced_at).length,
     },
   };
 }
 
-module.exports = { createProposal, updateProposal, changeStatus, newVersion, expireSweep, getProposal, listProposals, registerResponse, startProposal, receiveFromSimulator, panorama, proposalScore, startCadence };
+/* ------------------------- Link da proposta para o cliente (rastreável) ------------------------- */
+
+const linkStatus = (p) => (p.link_advanced_at ? 'avancar' : p.link_first_opened_at ? 'lido' : p.public_token ? 'aguardando' : 'sem_link');
+const linkInfo = (p) => ({
+  token: p.public_token || null, path: p.public_token ? `#/proposta/${p.public_token}` : null, public_url: process.env.PUBLIC_URL || null,
+  status: linkStatus(p), created_at: p.link_created_at || null, first_opened_at: p.link_first_opened_at || null, last_opened_at: p.link_last_opened_at || null,
+  views: p.link_views || 0, seconds: p.link_seconds || 0, max_scroll: p.link_max_scroll ?? null, advanced_at: p.link_advanced_at || null, advanced_note: p.link_advanced_note || null,
+});
+
+/** Cria (uma vez) o link da proposta para o cliente; "novo" troca o endereço (o anterior deixa de abrir). */
+function ensureLink(db, user, id, { renew = false } = {}) {
+  const p = loadProposal(db, user, id, true);
+  if (p.status === 'substituida') throw badRequest('Esta versão foi substituída. Envie o link da versão mais recente.');
+  if (!p.public_token || renew) {
+    const token = randomToken(18);
+    const now = nowIso();
+    db.prepare('UPDATE proposals SET public_token = ?, link_created_at = COALESCE(?, link_created_at, ?), updated_at = ? WHERE id = ?').run(token, renew ? now : null, now, now, p.id);
+    audit(db, user, 'proposal', p.id, renew ? 'link_renovado' : 'link_criado', null, p.contact_id);
+    p.public_token = token;
+    p.link_created_at = p.link_created_at || now;
+  }
+  return linkInfo(p);
+}
+
+function linkDetails(db, user, id) {
+  const p = loadProposal(db, user, id, false);
+  const views = db.prepare('SELECT id, started_at, last_seen_at, seconds, max_scroll, sections, device FROM proposal_views WHERE proposal_id = ? ORDER BY id DESC LIMIT 50').all(p.id)
+    .map((v) => ({ ...v, sections: v.sections ? JSON.parse(v.sections) : [] }));
+  return { ...linkInfo(p), views_list: views };
+}
+
+const SECTIONS = ['resumo', 'valores', 'condicoes', 'estrategia', 'entrega', 'como_funciona', 'investimento', 'consultor', 'avancar'];
+const AREA_TITLE = { consorcio: 'Consórcio', planejamento: 'Planejamento financeiro', seguros: 'Seguros', investimentos: 'Investimentos' };
+const BRAND = { consorcio: 'Vero Consórcios', planejamento: 'Vero Planejamento', seguros: 'Vero Seguros', investimentos: 'Vero Investimentos' };
+
+/** O que a página on-line mostra: só o primeiro nome do cliente e as condições (sem CPF, contato ou endereço). */
+function pagePayload(db, p) {
+  const c = db.prepare('SELECT name FROM contacts WHERE id = ?').get(p.contact_id) || {};
+  const u = p.owner_id ? db.prepare('SELECT name, job_title, whatsapp, phone, email FROM users WHERE id = ?').get(p.owner_id) : null;
+  const plan = p.product_id ? db.prepare('SELECT name, plan_code FROM products WHERE id = ?').get(p.product_id) : null;
+  const adm = p.administrator_id ? db.prepare('SELECT name FROM administrators WHERE id = ?').get(p.administrator_id) : null;
+  const area = p.area || 'consorcio';
+  const next = p.status === 'substituida' ? db.prepare('SELECT public_token FROM proposals WHERE previous_id = ?').get(p.id) : null;
+  const lbl = (list, v) => (v ? optionLabel(db, list, v) : null);
+  let quotaValues = null;
+  try {
+    quotaValues = p.quota_values ? JSON.parse(p.quota_values) : null;
+  } catch {
+    quotaValues = null;
+  }
+  return {
+    code: String(p.code).replace(/-v\d+$/, ''), version: p.version, area, area_label: AREA_TITLE[area], brand: BRAND[area] || 'Vero',
+    consortium_kind: area === 'consorcio' ? p.consortium_kind || 'nova' : null,
+    client_first_name: String(c.name || '').trim().split(/\s+/)[0] || 'Cliente',
+    status: p.status, status_label: PROPOSAL_STATUS[p.status], closed: FINAL.includes(p.status) && p.status !== 'aprovada', accepted: p.status === 'aprovada',
+    superseded_by: next?.public_token || null,
+    created_at: p.created_at, presented_at: p.presented_at, valid_until: p.valid_until,
+    category_label: lbl('categoria_credito', p.category), administrator: adm?.name || null, plan: plan ? plan.name : null,
+    values: {
+      credit_value: p.credit_value, initial_installment: p.initial_installment, term_months: p.term_months, admin_fee_pct: p.admin_fee_pct,
+      reserve_fund_pct: p.reserve_fund_pct, insurance_pct: p.insurance_pct, payment_modality: lbl('modalidade_pagamento', p.payment_modality),
+      readjustment_index: lbl('indice_reajuste', p.readjustment_index), has_adhesion: !!p.has_adhesion, adhesion_pct: p.adhesion_pct,
+      adhesion_months: p.adhesion_months, reducer_pct: p.reducer_pct, contemplation_month: p.contemplation_month, embedded_bid_pct: p.embedded_bid_pct,
+      quotas: p.quotas, quota_values: quotaValues, bid_deduction: p.bid_deduction, entry_value: p.entry_value, remaining_installments: p.remaining_installments,
+    },
+    strategy: lbl('estrategia', p.strategy), description: p.description || null,
+    pricing: p.pricing ? JSON.parse(p.pricing) : null,
+    consultant: u ? { name: u.name, job_title: u.job_title || null, whatsapp: u.whatsapp || u.phone || null, email: u.email || null } : null,
+    has_pdf: !!p.pdf_attachment_id,
+    advanced_at: p.link_advanced_at || null,
+  };
+}
+
+const byToken = (db, token) => {
+  const t = clean(token);
+  if (!t || !/^[A-Za-z0-9_-]{16,64}$/.test(t)) throw notFound('Proposta não encontrada.');
+  const p = db.prepare('SELECT * FROM proposals WHERE public_token = ?').get(t);
+  if (!p) throw notFound('Proposta não encontrada ou link substituído. Peça um novo link ao seu consultor.');
+  return p;
+};
+
+/**
+ * Cliente abriu o link (sem login). Cada abertura conta um acesso; a primeira avisa o responsável. A visualização da
+ * equipe (?equipe=1, botões "Ver como o cliente" e "Gerar PDF") não conta como acesso.
+ */
+function publicOpen(db, token, { team = false, device = null } = {}) {
+  const p = byToken(db, token);
+  const out = pagePayload(db, p);
+  if (team) return { ...out, view_id: null, team: true };
+  const now = nowIso();
+  const viewId = tx(db, () => {
+    const id = Number(db.prepare('INSERT INTO proposal_views (proposal_id, started_at, last_seen_at, device) VALUES (?, ?, ?, ?)').run(p.id, now, now, ['mobile', 'desktop'].includes(device) ? device : null).lastInsertRowid);
+    db.prepare('UPDATE proposals SET link_views = link_views + 1, link_first_opened_at = COALESCE(link_first_opened_at, ?), link_last_opened_at = ? WHERE id = ?').run(now, now, p.id);
+    if (!p.link_first_opened_at) {
+      const c = db.prepare('SELECT name FROM contacts WHERE id = ?').get(p.contact_id);
+      insertActivity(db, { contact_id: p.contact_id, opportunity_id: p.opportunity_id, type: 'proposta', notes: `O cliente abriu o link da proposta ${p.code} pela primeira vez.`, ref_type: 'proposal', ref_id: p.id, source: 'sistema' });
+      if (p.owner_id) require('./notifications').notify(db, p.owner_id, { kind: 'proposta', title: `${c?.name || 'Cliente'} abriu a proposta ${p.code}`, body: 'Bom momento para um contato: o cliente está com a proposta aberta.', link: `#/propostas?id=${p.id}`, level: 'ok' });
+    }
+    return id;
+  });
+  return { ...out, view_id: viewId };
+}
+
+/** Tempo na proposta, rolagem e seções vistas (enviado pela página a cada 15 s). */
+function publicEvent(db, token, body = {}) {
+  const p = byToken(db, token);
+  const v = db.prepare('SELECT * FROM proposal_views WHERE id = ? AND proposal_id = ?').get(Number(body.view), p.id);
+  if (!v) throw notFound('Acesso não encontrado.');
+  if (Date.now() - Date.parse(v.started_at) > 12 * 3600000) return { ok: true, ignored: true };
+  const delta = Math.max(0, Math.min(120, Math.round(Number(body.seconds) || 0)));
+  const add = Math.max(0, Math.min(delta, 6 * 3600 - v.seconds));
+  const scroll = Math.max(0, Math.min(100, Math.round(Number(body.scroll) || 0)));
+  const seen = new Set(v.sections ? JSON.parse(v.sections) : []);
+  for (const sct of [].concat(body.sections || body.section || [])) if (SECTIONS.includes(sct)) seen.add(sct);
+  const now = nowIso();
+  db.prepare('UPDATE proposal_views SET seconds = seconds + ?, max_scroll = MAX(max_scroll, ?), sections = ?, last_seen_at = ? WHERE id = ?').run(add, scroll, JSON.stringify([...seen]), now, v.id);
+  db.prepare('UPDATE proposals SET link_seconds = link_seconds + ?, link_max_scroll = MAX(COALESCE(link_max_scroll, 0), ?), link_last_opened_at = ? WHERE id = ?').run(add, scroll, now, p.id);
+  return { ok: true };
+}
+
+/** Cliente clicou em "Avançar": avisa o responsável, cria a tarefa de contato imediato e marca o retorno positivo. */
+function publicAdvance(db, token, body = {}) {
+  const p = byToken(db, token);
+  if (!ACTIVE.includes(p.status)) throw new HttpError(409, p.status === 'aprovada' ? 'Esta proposta já foi aceita. Seu consultor vai seguir com você.' : 'Esta proposta não está mais disponível. Fale com o seu consultor.');
+  if (p.link_advanced_at) return { ok: true, already: true, advanced_at: p.link_advanced_at };
+  const note = clean(body.note) ? String(clean(body.note)).slice(0, 500) : null;
+  const now = nowIso();
+  tx(db, () => {
+    db.prepare("UPDATE proposals SET link_advanced_at = ?, link_advanced_note = ?, last_response = 'positiva', last_response_at = ?, updated_at = ? WHERE id = ?").run(now, note, now, now, p.id);
+    const c = db.prepare('SELECT name FROM contacts WHERE id = ?').get(p.contact_id);
+    insertActivity(db, { contact_id: p.contact_id, opportunity_id: p.opportunity_id, type: 'proposta', notes: `O cliente clicou em "Avançar" no link da proposta ${p.code}.${note ? ` Mensagem: ${note}` : ''}`, ref_type: 'proposal', ref_id: p.id, source: 'sistema' });
+    db.prepare(`INSERT INTO tasks (contact_id, opportunity_id, type, title, notes, due_at, assigned_to, priority, proposal_id, created_by, created_at, updated_at)
+      VALUES (?, ?, 'retorno', ?, ?, ?, ?, 'alta', ?, NULL, ?, ?)`)
+      .run(p.contact_id, p.opportunity_id, `Cliente quer avançar: proposta ${p.code}`, `O cliente clicou em "Avançar" no link da proposta. Ligue agora e siga para o aceite e o cadastro de adesão.${note ? `\nMensagem do cliente: ${note}` : ''}`, new Date(Date.now() + 30 * 60000).toISOString(), p.owner_id, p.id, now, now);
+    if (p.owner_id) require('./notifications').notify(db, p.owner_id, { kind: 'proposta', title: `${c?.name || 'Cliente'} quer avançar com a proposta ${p.code}`, body: note || 'O cliente clicou em "Avançar" no link da proposta. Ligue agora.', link: `#/propostas?id=${p.id}`, level: 'ok' });
+    audit(db, { id: null, name: 'Cliente (link da proposta)' }, 'proposal', p.id, 'cliente_avancar', { mensagem: note }, p.contact_id);
+  });
+  return { ok: true, advanced_at: now };
+}
+
+/** Modelos de mensagem do WhatsApp para cada passo da régua (o {link} é completado na tela com o endereço do CRM). */
+function whatsappTemplates(db, user, id) {
+  const p = loadProposal(db, user, id, false);
+  const c = db.prepare('SELECT name, whatsapp, phone1, phone2 FROM contacts WHERE id = ?').get(p.contact_id);
+  const owner = p.owner_id ? db.prepare('SELECT name FROM users WHERE id = ?').get(p.owner_id) : null;
+  const money = (v) => (v == null ? '' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
+  const first = String(c?.name || '').trim().split(/\s+/)[0] || '';
+  const fill = (t) => t.replace(/\{nome\}/g, first).replace(/\{consultor\}/g, String(owner?.name || user.name).split(/\s+/)[0]).replace(/\{proposta\}/g, `${AREA_TITLE[p.area || 'consorcio']} · ${String(p.code).replace(/-v\d+$/, '')}`).replace(/\{valor\}/g, money(p.credit_value));
+  const pending = db.prepare("SELECT cadence_step FROM tasks WHERE proposal_id = ? AND status = 'pendente' AND cadence_step IS NOT NULL ORDER BY due_at LIMIT 1").get(p.id);
+  return {
+    phone: String(c?.whatsapp || c?.phone1 || c?.phone2 || '').replace(/\D/g, ''),
+    current: pending ? stepCol(pending.cadence_step) : 'D0',
+    link: linkInfo(p),
+    steps: PROPOSAL_CADENCE.map((x) => ({ step: x.step, title: x.title, text: fill(x.whatsapp) })),
+  };
+}
+
+/* ------------------------- Planejamento financeiro: proposta a partir do diagnóstico ------------------------- */
+
+const num = (v) => (v == null || v === '' || !Number.isFinite(Number(v)) ? null : Math.round(Number(v) * 100) / 100);
+/** Precificação enviada pela ferramenta (valor do plano, à vista e no cartão), só com números válidos. */
+function cleanPricing(x) {
+  if (!x || typeof x !== 'object') return null;
+  const out = {
+    valor: num(x.valor), pix_total: num(x.pix_total), cartao_total: num(x.cartao_total), parcelas: x.parcelas ? Math.max(1, Math.min(24, Math.round(Number(x.parcelas)) || 1)) : null,
+    parcela: num(x.parcela), condicao: ['pix', 'cartao'].includes(x.condicao) ? x.condicao : null, validade_dias: x.validade_dias ? Math.round(Number(x.validade_dias)) || null : null,
+    observacoes: clean(x.observacoes) ? String(clean(x.observacoes)).slice(0, 1000) : null,
+  };
+  return out.valor > 0 ? out : null;
+}
+
+/**
+ * Diagnóstico concluído e precificado: a proposta do planejamento aparece em Propostas (gerada, pronta para enviar).
+ * Enquanto não for enviada, acompanha a precificação do diagnóstico; depois de enviada, mudanças pedem nova versão.
+ */
+function fromDiagnostic(db, user, diag, pricing) {
+  const pr = cleanPricing(pricing);
+  if (!pr) return null;
+  const opp = (diag.opportunity_id && db.prepare("SELECT * FROM opportunities WHERE id = ? AND status = 'aberta'").get(diag.opportunity_id)) ||
+    db.prepare("SELECT * FROM opportunities WHERE contact_id = ? AND status = 'aberta' ORDER BY updated_at DESC LIMIT 1").get(diag.contact_id);
+  if (!opp) return null;
+  const money = (v) => Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const desc = [
+    'Vero Planejamento: diagnóstico financeiro completo, plano de ação e acompanhamento.',
+    pr.pix_total ? `À vista (Pix ou boleto): ${money(pr.pix_total)}.` : null,
+    pr.cartao_total ? `Cartão: ${pr.parcelas > 1 ? `${pr.parcelas}× ${money(pr.parcela)} (total ${money(pr.cartao_total)})` : money(pr.cartao_total)}.` : null,
+  ].filter(Boolean).join(' ');
+  const existing = db.prepare("SELECT * FROM proposals WHERE diagnostic_id = ? AND status <> 'substituida' ORDER BY id DESC LIMIT 1").get(diag.id);
+  const now = nowIso();
+  if (existing) {
+    if (existing.status === 'rascunho' && (existing.credit_value !== pr.valor || existing.pricing !== JSON.stringify(pr))) {
+      db.prepare('UPDATE proposals SET credit_value = ?, pricing = ?, description = ?, updated_at = ? WHERE id = ?').run(pr.valor, JSON.stringify(pr), desc, now, existing.id);
+      audit(db, user, 'proposal', existing.id, 'precificacao_atualizada', { valor: pr.valor }, existing.contact_id);
+    }
+    return { id: existing.id, code: existing.code, updated: true };
+  }
+  const valid = new Date(Date.now() + (pr.validade_dias || 7) * 86400000).toISOString().slice(0, 10);
+  const res = insertProposal(db, user, { area: 'planejamento', contact_id: opp.contact_id, opportunity_id: opp.id, status: 'rascunho', owner_id: opp.owner_id, credit_value: pr.valor, description: desc, diagnostic_id: diag.id, pricing: JSON.stringify(pr), valid_until: valid, generated_at: now });
+  insertActivity(db, { contact_id: opp.contact_id, opportunity_id: opp.id, type: 'proposta', notes: `Proposta ${res.code} do planejamento financeiro gerada a partir do diagnóstico: ${money(pr.valor)}.`, user_id: user.id, ref_type: 'proposal', ref_id: res.id });
+  audit(db, user, 'proposal', res.id, 'criada', { code: res.code, origem: 'diagnostico' }, opp.contact_id);
+  if (opp.owner_id) require('./notifications').notify(db, opp.owner_id, { kind: 'proposta', title: `Proposta ${res.code} do planejamento pronta`, body: `Diagnóstico concluído e precificado (${money(pr.valor)}). Envie o link da proposta ao cliente.`, link: `#/propostas?id=${res.id}` });
+  return res;
+}
+
+module.exports = { ensureLink, linkDetails, publicOpen, publicEvent, publicAdvance, whatsappTemplates, fromDiagnostic, cleanPricing, pagePayload, stepCol, createProposal, updateProposal, changeStatus, newVersion, expireSweep, getProposal, listProposals, registerResponse, startProposal, receiveFromSimulator, panorama, proposalScore, startCadence };

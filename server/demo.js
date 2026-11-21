@@ -368,8 +368,9 @@ function seedDemo(db, password) {
         id: `crm-${d.id}`, versaoDados: 10, coletaFinalizada: true, atualizadoEm: ago(1), cadastro: { nome: db.prepare('SELECT name FROM contacts WHERE id = ?').get(ids[4]).name },
         objetivos: [{ titulo: 'Reserva de emergência de 6 meses' }, { titulo: 'Imóvel para morar em 3 anos' }, { titulo: 'Aposentadoria aos 55' }],
         plano: [{ titulo: 'Montar a reserva com 15% da renda', prazo: 'curto' }, { titulo: 'Consórcio de imóvel com lance planejado', prazo: 'médio' }, { titulo: 'Seguro de vida para proteger a renda', prazo: 'curto' }, { titulo: 'Previdência privada (PGBL)', prazo: 'longo' }],
-        dependentes: [{ nome: 'Filho' }], imoveis: [], moveis: [{ tipo: 'Carro' }], financiamentos: [], emprestimos: [], cartoes: [{ banco: 'Cartão' }], recomendacoes: [],
-      } });
+        dependentes: [{ nome: 'Filho' }], imoveis: [], moveis: [{ tipo: 'Carro' }], financiamentos: [], emprestimos: [], cartoes: [{ banco: 'Cartão' }],
+        recomendacoes: [{ nome: 'Paulo Mendes', contato: '(11) 98888-1201' }, { nome: 'Carla Nunes', contato: 'carla.nunes@example.com' }],
+      }, precificacao: { valor: 4800, pix_total: 4560, cartao_total: 5172.38, parcelas: 10, parcela: 517.24, condicao: 'pix' } });
     }
     // Arquivos do lead (aba Arquivos): extrato da carteira para avaliar a migração
     if (ids[6]) {
@@ -410,10 +411,65 @@ function seedDemo(db, password) {
   finance.overdueSweep(db);
   sales.presaleSweep(db);
   sales.commissionSweep(db);
+  seedProposalLinksDemo(db, { admin });
   // Ingresso no CRM antes do primeiro contato (as atividades do demo são retroativas)
   for (const c of db.prepare('SELECT id, created_at, first_contact_at FROM contacts WHERE first_contact_at IS NOT NULL AND first_contact_at < created_at').all()) {
     db.prepare('UPDATE contacts SET created_at = ? WHERE id = ?').run(new Date(Date.parse(c.first_contact_at) - DAY / 3).toISOString(), c.id);
   }
+}
+
+/**
+ * Propostas: carta contemplada gerada e links on-line enviados aos clientes (aguardando, lido com tempo e "quer avançar").
+ */
+function seedProposalLinksDemo(db, { admin }) {
+  const neg = db.prepare("SELECT o.id FROM opportunities o JOIN pipeline_stages s ON s.id = o.stage_id WHERE s.key = 'negociacao' AND o.status = 'aberta' ORDER BY o.id DESC LIMIT 1").get();
+  if (neg) {
+    proposals.createProposal(db, admin, { opportunity_id: neg.id, area: 'consorcio', consortium_kind: 'contemplada', category: 'imovel', credit_value: 320000, entry_value: 64000, remaining_installments: 132, initial_installment: 2380, description: 'Grupo 4521, cota 118 (contemplada por lance). Transferência em até 15 dias após a aprovação do cadastro.', valid_until: new Date(Date.now() + 7 * DAY).toISOString().slice(0, 10) });
+  }
+  // Propostas de outras áreas já enviadas há alguns dias (régua em andamento: passos anteriores feitos)
+  const negs = db.prepare("SELECT o.id, o.contact_id FROM opportunities o JOIN pipeline_stages s ON s.id = o.stage_id WHERE s.key = 'negociacao' AND o.status = 'aberta' ORDER BY o.id").all();
+  [
+    { area: 'seguros', description: 'Seguro de vida: capital de R$ 500 mil com cobertura de invalidez e doenças graves. Prêmio mensal de R$ 186.', credit_value: 500000, days: 6 },
+    { area: 'investimentos', description: 'Migração da carteira de R$ 350 mil para a assessoria (perfil moderado), com plano de aportes mensais.', credit_value: 350000, days: 11 },
+    { area: 'seguros', description: 'Seguro empresarial da loja: incêndio, roubo e responsabilidade civil. Prêmio anual de R$ 3.200.', credit_value: 3200, days: 16 },
+  ].forEach((x, k) => {
+    const o = negs[k % Math.max(1, negs.length)];
+    if (!o) return;
+    const pr = proposals.createProposal(db, admin, { opportunity_id: o.id, area: x.area, description: x.description, credit_value: x.credit_value });
+    const sent = new Date(Date.now() - x.days * DAY);
+    sent.setUTCHours(13, 30, 0, 0);
+    db.prepare("UPDATE proposals SET status = 'apresentada', presented_at = ?, sent_channel = 'whatsapp', created_at = ? WHERE id = ?").run(sent.toISOString(), new Date(sent.getTime() - 3600000).toISOString(), pr.id);
+    const row = db.prepare('SELECT * FROM proposals WHERE id = ?').get(pr.id);
+    proposals.startCadence(db, admin, row, sent.toISOString());
+    db.prepare("UPDATE tasks SET status = 'concluida', completed_at = due_at, updated_at = due_at WHERE proposal_id = ? AND status = 'pendente' AND due_at < ?").run(pr.id, new Date(Date.now() - 20 * 3600000).toISOString());
+  });
+  const rows = db.prepare("SELECT id, presented_at FROM proposals WHERE status IN ('apresentada','em_analise') ORDER BY id").all();
+  rows.forEach((p, k) => {
+    const link = proposals.ensureLink(db, admin, p.id);
+    if (k % 3 === 0) {
+      // Enviado, aguardando a leitura
+      if (Date.now() - Date.parse(p.presented_at || 0) < 6 * 3600000) db.prepare('UPDATE proposals SET presented_at = ?, created_at = ?, link_created_at = ? WHERE id = ?').run(new Date(Date.now() - 3 * 3600000).toISOString(), new Date(Date.now() - 4 * 3600000).toISOString(), new Date(Date.now() - 3 * 3600000).toISOString(), p.id);
+      return;
+    }
+    const v = proposals.publicOpen(db, link.token, { device: k % 2 ? 'mobile' : 'desktop' });
+    proposals.publicEvent(db, link.token, { view: v.view_id, seconds: 100, scroll: 55 + ((k * 13) % 45), sections: ['resumo', 'valores', 'condicoes', 'como_funciona'] });
+    proposals.publicEvent(db, link.token, { view: v.view_id, seconds: 40 + k * 25 });
+    if (k % 4 === 1) {
+      const v2 = proposals.publicOpen(db, link.token, { device: 'mobile' });
+      proposals.publicEvent(db, link.token, { view: v2.view_id, seconds: 75, scroll: 100, sections: ['estrategia', 'avancar', 'consultor'] });
+    }
+    if (k % 3 === 2) proposals.publicAdvance(db, link.token, { note: 'Gostei da proposta! Pode me ligar amanhã de manhã?' });
+    // Leitura algumas horas depois do envio (as enviadas agora pela demonstração passam a ter sido enviadas pela manhã)
+    let base = Date.parse(p.presented_at || new Date().toISOString());
+    if (Date.now() - base < 6 * 3600000) {
+      base = Date.now() - (6 + k) * 3600000;
+      db.prepare('UPDATE proposals SET presented_at = ?, created_at = ?, generated_at = NULL WHERE id = ?').run(new Date(base).toISOString(), new Date(base - 2 * 3600000).toISOString(), p.id);
+      p.presented_at = new Date(base).toISOString();
+    }
+    const first = new Date(Math.min(Date.now() - 3600000, base + (2 + k) * 3600000)).toISOString();
+    db.prepare('UPDATE proposals SET link_first_opened_at = ?, link_created_at = ? WHERE id = ?').run(first, p.presented_at || first, p.id);
+    db.prepare('UPDATE proposal_views SET started_at = ?, last_seen_at = ? WHERE proposal_id = ? AND id = (SELECT MIN(id) FROM proposal_views WHERE proposal_id = ?)').run(first, first, p.id, p.id);
+  });
 }
 
 /**

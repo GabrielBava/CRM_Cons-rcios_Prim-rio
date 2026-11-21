@@ -425,6 +425,13 @@ function createRouter(db) {
   add('GET', '/api/propostas/:id', ({ user, params }) => proposals.getProposal(db, user, params.id));
   add('PATCH', '/api/propostas/:id', ({ user, params, body }) => (proposals.updateProposal(db, user, params.id, body), { ok: true }));
   add('POST', '/api/propostas/:id/status', ({ user, params, body }) => (proposals.changeStatus(db, user, params.id, body), { ok: true }));
+  // Link da proposta para o cliente (versão on-line rastreável) e modelos de mensagem do WhatsApp
+  add('GET', '/api/propostas/:id/link', ({ user, params }) => proposals.linkDetails(db, user, params.id));
+  add('POST', '/api/propostas/:id/link', ({ user, params, body }) => proposals.ensureLink(db, user, params.id, { renew: body.renew === true }));
+  add('GET', '/api/propostas/:id/whatsapp', ({ user, params }) => proposals.whatsappTemplates(db, user, params.id));
+  add('GET', '/api/publico/proposta', ({ query }) => proposals.publicOpen(db, query.token, { team: query.equipe === '1', device: query.device }), { public: true });
+  add('POST', '/api/publico/proposta/evento', ({ body }) => proposals.publicEvent(db, body.token, body), { public: true });
+  add('POST', '/api/publico/proposta/avancar', ({ body }) => proposals.publicAdvance(db, body.token, body), { public: true });
   add('POST', '/api/propostas/:id/nova-versao', ({ user, params, body }) => proposals.newVersion(db, user, params.id, body));
   add('GET', '/api/clientes', ({ user, query }) => (perms.requireModule(user, 'clientes'), clients.listClients(db, user, query)));
   add('GET', '/api/contratos', ({ user, query }) => clients.listContracts(db, user, query));

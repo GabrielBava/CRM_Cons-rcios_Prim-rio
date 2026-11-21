@@ -163,25 +163,29 @@ Em **Meu cadastro › Google Agenda**, conecte a sua agenda (uma única vez). As
     ],
   },
   {
-    title: '7. Follow-up de propostas: esteira D0 a D+10',
+    title: '7. Follow-up de propostas: régua Dia 0 a Dia 21',
     category: 'processo_comercial',
     duration_min: 15,
-    description: 'Cadência de follow-up depois da apresentação da proposta e modelos de mensagem.',
-    content: `## A esteira
-Ao marcar a proposta como **apresentada**, o CRM cria as tarefas de follow-up na sua agenda: D0, D+1, D+2, D+3, D+5 e D+10. Cada tarefa traz o roteiro do contato.
+    description: 'Régua de follow-up depois do envio da proposta, link rastreável e modelos de mensagem.',
+    content: `## Régua de follow-up
 
-## Modelos de mensagem
-- **D0 · confirmar recebimento:** "Oi, {nome}! Conseguiu abrir a proposta? Qual foi a primeira impressão? Ficou alguma dúvida sobre parcela, prazo ou lance?"
-- **D+1 · reforçar o objetivo:** "Bom dia, {nome}! Lembrando o que você quer conquistar: {objetivo}. A estratégia da proposta foi montada para isso. Posso explicar algum ponto?"
-- **D+2 · cenários de lance:** "{nome}, separei os cenários de contemplação do grupo (sorteio, lance embutido, lance livre e FGTS). Quer que eu te mostre em 10 minutos?"
-- **D+3 · fechamento:** "{nome}, faz sentido seguirmos? O próximo passo é o cadastro para a adesão, e a próxima assembleia é dia X."
-- **D+5 · reforço de valor:** "{nome}, comparei com o financiamento e com o aluguel que você paga hoje. Posso te mandar os números?"
-- **D+10 · decisão:** "{nome}, o projeto continua de pé? Se preferir, ajusto a proposta ou retomamos mais para frente."
+Ao marcar a proposta como **apresentada** (ou ao enviar pelo botão do WhatsApp na guia Propostas), o CRM cria as tarefas da régua na sua agenda: **Dia 0, Dia 2, Dia 5, Dia 9, Dia 14 e Dia 21** (dias corridos; sábado e domingo passam para segunda). Cada tarefa traz o roteiro do contato e um modelo de mensagem.
 
-## Registre tudo
-Cada retorno do cliente deve ser registrado na proposta (**Registrar retorno**): isso atualiza a probabilidade de fechamento e os relatórios.`,
+- **Dia 0 · envio:** envie o link da proposta e confirme se o cliente conseguiu abrir.
+- **Dia 2 · dúvidas:** retome o objetivo do cliente e esclareça parcela, prazo e contemplação.
+- **Dia 5 · valor:** compare com a alternativa dele (financiamento, aluguel, aplicação).
+- **Dia 9 · fechamento:** proponha o próximo passo concreto (cadastro para adesão).
+- **Dia 14 · ajuste:** entenda o que trava e ofereça outro crédito, prazo ou parcela.
+- **Dia 21 · decisão:** "{nome}, o projeto continua de pé? Se preferir, ajusto a proposta ou retomamos mais para frente."
+
+## Link da proposta
+
+O link on-line mostra a proposta no celular do cliente. Na guia Propostas você vê se ele ainda não abriu (**Aguardando**), quando abriu (**Lido**, com data e hora), quanto tempo ficou e quantas vezes acessou. Se ele clicar em **Quero avançar**, você recebe um aviso e uma tarefa de contato imediato: ligue na hora.
+
+Proposta aceita encerra a régua e abre a pré-venda; recusada pede o motivo (e, se quiser, a data para retomar).`,
     quiz: [
-      { question: 'Quando a esteira de follow-up começa?', options: ['Quando a proposta é marcada como apresentada', 'Quando o lead entra no funil'], correct: 0 },
+      { question: 'Quando a régua de follow-up começa?', options: ['Quando a proposta é marcada como enviada ao cliente', 'Quando o lead entra no funil'], correct: 0 },
+      { question: 'O que fazer quando o cliente clica em "Quero avançar" no link?', options: ['Esperar o próximo passo da régua', 'Ligar na hora: o CRM cria uma tarefa de contato imediato'], correct: 1 },
     ],
   },
 ];

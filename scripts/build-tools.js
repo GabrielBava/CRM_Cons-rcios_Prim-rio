@@ -4,6 +4,7 @@
  * Gera as ferramentas HTML da Vero (Ferramentas › Planejamento financeiro e › Consórcio) a partir dos arquivos originais:
  *
  *   node scripts/build-tools.js --diag <Diagnostico.html> --sim <Simulador.html>
+ *   node scripts/build-tools.js --atualizar-ponte   (só reaplica a ponte com o CRM no diagnóstico já gerado)
  *
  * Saída (servida pelo CRM):
  *   public/ferramentas/diagnostico-financeiro.html  — marca Vero Planejamento + ponte com o CRM (?crm=<id>)
@@ -146,11 +147,41 @@ function buildDiagnostic(src) {
   const open = s.indexOf('<script type="module">');
   if (open < 0) throw new Error('Script principal do diagnóstico não encontrado.');
   const close = s.indexOf('</script>', open);
-  s = `${s.slice(0, open)}<script type="text/plain" id="vero-app">${s.slice(open + '<script type="module">'.length, close)}</script>\n<script>${BRIDGE}</script>${s.slice(close + '</script>'.length)}`;
+  s = `${s.slice(0, open)}<script type="text/plain" id="vero-app">${exposePricing(s.slice(open + '<script type="module">'.length, close))}</script>\n<script>${BRIDGE}</script>${s.slice(close + '</script>'.length)}`;
   const left = ['Grupo Life', 'grupolifebrasil', 'dashycrm', 'Bavaresco', 'LIFE'].filter((w) => s.includes(w));
   if (left.length) console.warn(`  aviso: ainda aparece no diagnóstico: ${left.join(', ')}`);
   console.log(`  diagnóstico: ${(before / 1e6).toFixed(2)} MB → ${(s.length / 1e6).toFixed(2)} MB`);
   return s;
+}
+
+/**
+ * Precificação do planejamento: a função do app que calcula o valor do plano (à vista e no cartão) fica disponível para
+ * a ponte (window.__veroPrecificacao), que envia o resultado ao CRM junto com o diagnóstico. Assim, diagnóstico concluído
+ * e precificado vira a proposta do planejamento em Propostas.
+ */
+function exposePricing(code) {
+  if (code.includes('window.__veroPrecificacao')) return code;
+  const m = code.match(/function ([\w$]+)\(e\)\{const t=e\.especificacao\?\?\{\}/);
+  if (!m) {
+    console.warn('  aviso: cálculo da precificação não encontrado (a proposta do planejamento não será gerada sozinha).');
+    return code;
+  }
+  return `${code}\n;window.__veroPrecificacao=${m[1]};`;
+}
+
+/** Reaplica a ponte e a precificação no diagnóstico já gerado (sem precisar do arquivo original). */
+function refreshBridge(file) {
+  let s = fs.readFileSync(file, 'utf8');
+  const tag = '<script type="text/plain" id="vero-app">';
+  const a = s.indexOf(tag);
+  if (a < 0) throw new Error('Diagnóstico gerado não encontrado ou em formato antigo.');
+  const b = s.indexOf('</script>', a);
+  const code = exposePricing(s.slice(a + tag.length, b));
+  const c = s.indexOf('<script>', b);
+  const d = s.indexOf('</script>', c);
+  s = `${s.slice(0, a + tag.length)}${code}</script>\n<script>${BRIDGE}</script>${s.slice(d + '</script>'.length)}`;
+  fs.writeFileSync(file, s);
+  console.log('  ponte do diagnóstico atualizada.');
 }
 
 /**
@@ -221,6 +252,18 @@ const BRIDGE = `(function () {
     if (!cfg.empresa) cfg.empresa = 'Vero Planejamento';
     write(CFG, cfg);
     if (!location.hash || location.hash === '#/' || location.hash === '#/clientes') location.hash = '#/clientes/' + cid;
+    // Precificação do plano (valor, à vista e cartão), quando o consultor já passou pela tela de investimento
+    function pricing(c) {
+      try {
+        var esp = c && c.especificacao;
+        if (!esp || typeof window.__veroPrecificacao !== 'function') return null;
+        var filled = ['percentual', 'valorManual', 'rendaAnual', 'condicao', 'parcelas', 'descontoPct', 'descontoValor'].some(function (k) { return esp[k] !== undefined && esp[k] !== null && esp[k] !== ''; });
+        if (!filled) return null;
+        var o = window.__veroPrecificacao(c);
+        if (!o || !(o.valor > 0)) return null;
+        return { valor: o.valor, pix_total: o.pix && o.pix.total, cartao_total: o.cartao && o.cartao.total, parcelas: o.cartao && o.cartao.parcelas, parcela: o.cartao && o.cartao.parcela, condicao: o.condicao || null, observacoes: o.observacoes || null };
+      } catch (e) { return null; }
+    }
     // Salvamento automático: cada gravação do app é devolvida ao CRM (1,5 s depois da última alteração)
     var timer = null, last = '';
     function push() {
@@ -230,8 +273,8 @@ const BRIDGE = `(function () {
       var json = JSON.stringify(mine);
       if (json === last) return;
       status('Salvando no CRM…');
-      api('/api/diagnosticos/' + id + '/dados', { method: 'PUT', body: { data: mine } })
-        .then(function (r) { last = json; status(r.status === 'concluido' ? 'Diagnóstico concluído · salvo no CRM' : 'Salvo no CRM', 'ok'); })
+      api('/api/diagnosticos/' + id + '/dados', { method: 'PUT', body: { data: mine, precificacao: pricing(mine) } })
+        .then(function (r) { last = json; status(r.proposal ? 'Diagnóstico concluído · proposta ' + r.proposal.code + ' em Propostas' : r.status === 'concluido' ? 'Diagnóstico concluído · salvo no CRM' : 'Salvo no CRM', 'ok'); })
         .catch(function (e) { status('Não foi possível salvar no CRM: ' + e.message, 'erro'); });
     }
     Storage.prototype.setItem = function (k, v) {
@@ -324,6 +367,10 @@ function buildSimulator(src) {
 
 const diag = arg('diag');
 const sim = arg('sim');
+if (process.argv.includes('--atualizar-ponte')) {
+  refreshBridge(path.join(OUT, 'diagnostico-financeiro.html'));
+  process.exit(0);
+}
 if (!diag && !sim) {
   console.log('Uso: node scripts/build-tools.js --diag <Diagnostico.html> --sim <Simulador.html>');
   process.exit(1);

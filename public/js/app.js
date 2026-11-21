@@ -131,13 +131,16 @@ function previewBackLink(show) {
 
 async function boot() {
   stopNotifications();
-  previewBackLink(/^#\/(ficha|nps)\//.test(location.hash));
+  previewBackLink(/^#\/(ficha|nps|proposta)\//.test(location.hash));
   // Link enviado ao cliente: página pública, sem login
   const pub = location.hash.match(/^#\/ficha\/([A-Za-z0-9_-]+)/);
   if (pub) return publicForm.show(app, pub[1]);
   // Pesquisa de satisfação enviada ao cliente: página pública, sem login
   const nps = location.hash.match(/^#\/nps\/([A-Za-z0-9_-]+)/);
   if (nps) return publicForm.showNps(app, nps[1]);
+  // Proposta on-line enviada ao cliente (link rastreável): página pública, sem login
+  const prop = location.hash.match(/^#\/proposta\/([A-Za-z0-9_-]+)(?:\?(.*))?/);
+  if (prop) return import('./views/proposal-page.js').then((m) => m.show(app, prop[1], new URLSearchParams(prop[2] || '')));
   setUnauthorizedHandler(() => showLogin('Sua sessão expirou. Entre novamente.'));
   try {
     const s = await get('/api/setup');
@@ -469,7 +472,7 @@ function setupSearch() {
 
 let currentCleanup = null;
 async function route() {
-  if (/^#\/(ficha|nps)\//.test(location.hash)) return boot();
+  if (/^#\/(ficha|nps|proposta)\//.test(location.hash)) return boot();
   previewBackLink(false);
   if (!state.meta) return boot();
   if (!$('#view')) shell();

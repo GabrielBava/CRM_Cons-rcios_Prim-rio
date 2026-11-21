@@ -934,7 +934,7 @@ const DEFAULT_STAGES = [
   ['Qualificação', 'aberta', 'qualificado', 5, 'Conversa realizada. Objetivo: entender objetivo, valor, capacidade e prazo, e agendar a R1.'],
   ['R1', 'aberta', 'r1', 7, 'Primeira reunião (R1): diagnóstico, apresentação da Vero e da estratégia. Cliente que não compareceu fica marcado como NS (no-show) e é remarcado.'],
   ['R2', 'aberta', 'r2', 7, 'Segunda reunião (R2): apresentação da proposta e da estratégia montada a partir da R1, com o decisor.'],
-  ['Negociação', 'aberta', 'negociacao', 10, 'Proposta apresentada. Seguir o follow-up (D0 a D10), ajustar a proposta e conduzir até o aceite.'],
+  ['Negociação', 'aberta', 'negociacao', 10, 'Proposta apresentada. Seguir a régua de follow-up (Dia 0 a Dia 21), ajustar a proposta e conduzir até o aceite.'],
   ['Venda', 'ganho', 'venda', null, 'Venda confirmada com o pagamento da primeira parcela. Entra automaticamente pela tela de Vendas.'],
   ['Nutrição futura', 'nutricao', 'nutricao', null, 'Arquivado: sem momento agora. Registrar o motivo e a data para retomar o contato.'],
   ['Perdido', 'perdido', 'perdido', null, 'Arquivado: negócio encerrado. O motivo da perda (MP) alimenta os relatórios.'],
@@ -1302,6 +1302,13 @@ function seedDefaults(db) {
     }
     db.prepare("INSERT INTO settings (key, value) VALUES ('migr_v13_arquivos', 'true')").run();
   }
+  // v14: treinamento do follow-up de propostas com a régua Dia 0 a Dia 21 e o link rastreável
+  if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_v14_regua'").get()) {
+    const { TRAININGS } = require('./services/onboarding-content');
+    const t = TRAININGS.find((x) => x.title.startsWith('7. Follow-up de propostas'));
+    if (t) db.prepare("UPDATE trainings SET title = ?, description = ?, content = ?, quiz = ?, updated_at = ? WHERE track = 'consorcios' AND title = '7. Follow-up de propostas: esteira D0 a D+10'").run(t.title, t.description, t.content, JSON.stringify(t.quiz || []), now);
+    db.prepare("INSERT INTO settings (key, value) VALUES ('migr_v14_regua', 'true')").run();
+  }
   // Central de documentos: pastas padrão (o administrador cria subpastas dentro delas)
   if (db.prepare('SELECT COUNT(*) AS n FROM doc_folders').get().n === 0) {
     const ins = db.prepare('INSERT INTO doc_folders (name, description, position, system, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)');
@@ -1427,6 +1434,7 @@ const ADDED_COLUMNS = {
   // IA Vero: cada "Nova conversa" do chat é uma conversa (thread) própria
   ai_messages: [['thread', 'TEXT']],
   referrals: [['removed_at', 'TEXT']],
+  diagnostics: [['pricing', 'TEXT']],
   proposals: [
     ['simulator_token_hash', 'TEXT'], ['simulator_token_expires_at', 'TEXT'], ['generated_at', 'TEXT'], ['pdf_attachment_id', 'INTEGER REFERENCES attachments(id)'],
     ['accepted_at', 'TEXT'], ['accepted_channel', 'TEXT'], ['accepted_by', 'INTEGER REFERENCES users(id)'], ['refusal_reason', 'TEXT'],
@@ -1437,6 +1445,13 @@ const ADDED_COLUMNS = {
     ['quota_split_strategy', 'TEXT'], ['quota_values', 'TEXT'], ['quota_split_notes', 'TEXT'],
     // Administradora da proposta e plano "Outros" (condições livres, quando o plano não está cadastrado)
     ['administrator_id', 'INTEGER REFERENCES administrators(id)'], ['plan_other', 'INTEGER NOT NULL DEFAULT 0'],
+    // Link da proposta para o cliente (versão on-line), com rastreio de leitura, tempo e "Avançar"
+    ['public_token', 'TEXT'], ['link_created_at', 'TEXT'], ['link_first_opened_at', 'TEXT'], ['link_last_opened_at', 'TEXT'],
+    ['link_views', 'INTEGER NOT NULL DEFAULT 0'], ['link_seconds', 'INTEGER NOT NULL DEFAULT 0'], ['link_max_scroll', 'INTEGER'],
+    ['link_advanced_at', 'TEXT'], ['link_advanced_note', 'TEXT'],
+    // Consórcio: cota nova ou carta contemplada (entrada/ágio e parcelas restantes); planejamento vindo do diagnóstico
+    ['consortium_kind', 'TEXT'], ['entry_value', 'REAL'], ['remaining_installments', 'INTEGER'], ['diagnostic_id', 'INTEGER REFERENCES diagnostics(id)'],
+    ['pricing', 'TEXT'],
     // Propostas de todas as áreas: consórcio (simulador) e seguros, planejamento financeiro e investimentos (registro direto)
     ['area', "TEXT NOT NULL DEFAULT 'consorcio'"], ['description', 'TEXT'],
   ],
@@ -2260,6 +2275,19 @@ CREATE TABLE IF NOT EXISTS ai_knowledge (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+-- Acessos do cliente ao link da proposta (uma linha por abertura): tempo, rolagem e seções vistas
+CREATE TABLE IF NOT EXISTS proposal_views (
+  id INTEGER PRIMARY KEY,
+  proposal_id INTEGER NOT NULL REFERENCES proposals(id),
+  started_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  seconds INTEGER NOT NULL DEFAULT 0,
+  max_scroll INTEGER NOT NULL DEFAULT 0,
+  sections TEXT,
+  device TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_proposal_views ON proposal_views(proposal_id);
+
 -- Recomendações (indicações) do lead: aba Recomendações do painel; viram leads no pipeline
 CREATE TABLE IF NOT EXISTS referrals (
   id INTEGER PRIMARY KEY,
@@ -2332,6 +2360,8 @@ function migrate(db) {
       if (!existing.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
     }
   }
+  // Índices de colunas acrescentadas acima (só existem depois do ALTER TABLE nos bancos antigos)
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_proposals_public_token ON proposals(public_token) WHERE public_token IS NOT NULL');
   // Estratégias de lance anteriores ao histórico: registra a situação atual como o primeiro item do histórico
   db.exec(`INSERT INTO bid_strategy_history (contract_id, contact_id, will_bid, bid_type, bid_pct, use_embedded, use_fgts, notes, created_by, created_at)
     SELECT b.contract_id, b.contact_id, b.will_bid, b.bid_type, b.bid_pct, b.use_embedded, b.use_fgts, b.notes, b.updated_by, b.updated_at FROM bid_strategies b

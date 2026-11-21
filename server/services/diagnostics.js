@@ -8,6 +8,7 @@
  */
 const { audit, loadContact } = require('../core');
 const { badRequest, notFound, nowIso } = require('../util');
+const { tx } = require('../db');
 
 const MAX_DATA = 4 * 1024 * 1024;
 const TOOL_PATH = 'ferramentas/diagnostico-financeiro.html';
@@ -90,10 +91,20 @@ function saveFromTool(db, user, id, body = {}) {
   const sum = summarize(body.data);
   const now = nowIso();
   const done = sum.coleta_finalizada || sum.recomendacoes_finalizadas;
-  db.prepare('UPDATE diagnostics SET data = ?, summary = ?, updated_at = ?, status = ?, completed_at = ? WHERE id = ?')
-    .run(json, JSON.stringify(sum), now, done || d.status === 'concluido' ? 'concluido' : 'em_andamento', done ? d.completed_at || now : d.completed_at, d.id);
-  if (done && d.status !== 'concluido') audit(db, user, 'diagnostic', d.id, 'concluido', null, d.contact_id);
-  return { ok: true, status: done || d.status === 'concluido' ? 'concluido' : 'em_andamento' };
+  const proposals = require('./proposals');
+  // Precificação calculada pela ferramenta (valor do plano, à vista e no cartão); sem uma válida, vale a última recebida
+  const pricing = proposals.cleanPricing(body.precificacao) || (d.pricing ? JSON.parse(d.pricing) : null);
+  if (pricing) sum.precificacao = pricing;
+  const status = done || d.status === 'concluido' ? 'concluido' : 'em_andamento';
+  let proposal = null;
+  tx(db, () => {
+    db.prepare('UPDATE diagnostics SET data = ?, summary = ?, pricing = ?, updated_at = ?, status = ?, completed_at = ? WHERE id = ?')
+      .run(json, JSON.stringify(sum), pricing ? JSON.stringify(pricing) : null, now, status, done ? d.completed_at || now : d.completed_at, d.id);
+    if (done && d.status !== 'concluido') audit(db, user, 'diagnostic', d.id, 'concluido', null, d.contact_id);
+    // Concluído e precificado: a proposta do planejamento aparece em Propostas
+    if (status === 'concluido' && pricing) proposal = proposals.fromDiagnostic(db, user, d, pricing);
+  });
+  return { ok: true, status, proposal: proposal ? { id: proposal.id, code: proposal.code } : null };
 }
 
 function conclude(db, user, id) {
@@ -101,7 +112,8 @@ function conclude(db, user, id) {
   const now = nowIso();
   db.prepare("UPDATE diagnostics SET status = 'concluido', completed_at = COALESCE(completed_at, ?), updated_at = ? WHERE id = ?").run(now, now, d.id);
   audit(db, user, 'diagnostic', d.id, 'concluido', null, d.contact_id);
-  return { ok: true };
+  const proposal = d.pricing ? require('./proposals').fromDiagnostic(db, user, d, JSON.parse(d.pricing)) : null;
+  return { ok: true, proposal: proposal ? { id: proposal.id, code: proposal.code } : null };
 }
 
 module.exports = { forContact, start, forTool, saveFromTool, conclude, summarize, TOOL_PATH };

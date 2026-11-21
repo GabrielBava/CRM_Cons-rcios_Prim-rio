@@ -7,6 +7,7 @@ import { qualFormFields, bindQualForm } from './qualification.js';
 import { transcriptFlow } from './r1.js';
 import { downloadLeadTemplate } from './lead-import.js';
 import { icon } from './icons.js';
+import { linkBadge, readTime, optionButtons, bindOptionButtons } from './proposal-actions.js';
 import { scheduleMeetingDialog } from './meeting.js';
 
 const nav = (hash) => (location.hash = hash);
@@ -548,6 +549,32 @@ export function areaProposalForm(opp, area = 'seguros') {
   });
 }
 
+/** Carta contemplada (consórcio): crédito disponível, entrada (ágio), parcelas restantes e administradora. */
+export function contempladaForm(opp) {
+  return modal({
+    title: `Carta contemplada — ${opp.contact_name || opp.code}`,
+    wide: true,
+    submitLabel: 'Gerar proposta',
+    body: html`<p class="hint">Carta já contemplada (crédito disponível após a transferência). A proposta entra em Propostas como consórcio e segue a régua de follow-up quando enviada.</p>
+    <div class="grid">
+      ${field({ name: 'credit_value', label: 'Crédito da carta (R$)', type: 'money', required: true })}
+      ${field({ name: 'entry_value', label: 'Entrada / ágio (R$)', type: 'money' })}
+      ${field({ name: 'remaining_installments', label: 'Parcelas restantes', type: 'number', min: 1 })}
+      ${field({ name: 'initial_installment', label: 'Valor da parcela (R$)', type: 'money' })}
+      ${field({ name: 'administrator_id', label: 'Administradora', type: 'select', options: admItems({}) })}
+      ${field({ name: 'category', label: 'Categoria', type: 'select', options: opts('categoria_credito') })}
+      ${field({ name: 'description', label: 'Detalhes da carta', type: 'textarea', rows: 2, full: true, placeholder: 'Ex.: grupo 1234, cota 56; transferência em até 15 dias após a aprovação do cadastro.' })}
+      ${field({ name: 'valid_until', label: 'Validade', type: 'date' })}
+      ${field({ name: 'status', label: 'Salvar como', type: 'select', options: [{ value: 'rascunho', label: 'Gerada (ainda não enviada)' }, { value: 'apresentada', label: 'Apresentada ao cliente' }], value: 'rascunho', allowEmpty: false })}
+    </div>`,
+    async onSubmit(d) {
+      const r = await post('/api/propostas', { ...d, area: 'consorcio', consortium_kind: 'contemplada', opportunity_id: opp.id });
+      toast(r.moved ? `Proposta ${r.code} gerada: o negócio foi para Negociação.` : `Proposta ${r.code} gerada.`);
+      return r;
+    },
+  });
+}
+
 /** Escolha da área e abre o formulário certo (consórcio: simulador ou registro com plano). */
 export async function newProposalFlow(opp, contact, { simulations = [] } = {}) {
   const area = await modal({
@@ -562,14 +589,16 @@ export async function newProposalFlow(opp, contact, { simulations = [] } = {}) {
   if (area !== 'consorcio') return areaProposalForm(opp, area);
   const how = await modal({
     title: 'Proposta de consórcio',
-    body: html`<div class="area-pick two"><button type="button" class="area-card" data-how="sim">${icon('simulador', 22)}<strong>Gerar pelo simulador</strong><small>Abre o simulador com o cliente; a proposta volta para o CRM.</small></button>
-      <button type="button" class="area-card" data-how="form">${icon('propostas', 22)}<strong>Registrar proposta</strong><small>Plano, administradora, crédito e condições.</small></button></div>`,
+    body: html`<div class="area-pick"><button type="button" class="area-card" data-how="sim">${icon('simulador', 22)}<strong>Gerar pelo simulador</strong><small>Abre o simulador com o cliente; a proposta volta para o CRM.</small></button>
+      <button type="button" class="area-card" data-how="form">${icon('propostas', 22)}<strong>Registrar proposta</strong><small>Plano, administradora, crédito e condições.</small></button>
+      <button type="button" class="area-card" data-how="contemplada">${icon('confirmar', 22)}<strong>Carta contemplada</strong><small>Crédito disponível, entrada (ágio) e parcelas restantes.</small></button></div>`,
     onMount(form, close) {
       on(form, 'click', '[data-how]', (e, b) => close(b.dataset.how));
     },
   });
   if (how === 'sim') return openProposalSimulator(contact || { id: opp.contact_id, name: opp.contact_name }, opp.id);
   if (how === 'form') return proposalForm(opp, simulations);
+  if (how === 'contemplada') return contempladaForm(opp);
   return null;
 }
 
@@ -897,6 +926,8 @@ export async function proposalDetail(id, onChange) {
   const nextStatuses = ['rascunho', 'apresentada', 'em_analise', 'aprovada', 'recusada', 'expirada'].filter((s) => s !== p.status);
   const gaps = proposalPlanGaps(p);
   const body = html`
+    ${p.status !== 'substituida' ? html`<div class="prop-linkbar"><div><strong>Link do cliente</strong> ${linkBadge(p)} <small class="muted">${p.link_views || 0} acesso(s) · ${readTime(p.link_seconds)} na proposta</small></div>${optionButtons(p)}</div>` : ''}
+    ${p.consortium_kind === 'contemplada' ? html`<div class="alert info small">Carta contemplada: crédito ${fmtMoney(p.credit_value)}${p.entry_value != null ? ` · entrada ${fmtMoney(p.entry_value)}` : ''}${p.remaining_installments ? ` · ${p.remaining_installments} parcelas restantes${p.initial_installment ? ` de ${fmtMoney(p.initial_installment)}` : ''}` : ''}.</div>` : ''}
     ${editable ? proposalFields(p) : proposalBlocks(p)}
     ${!editable && gaps.length && !final ? html`<div class="alert warn small">Conferência com o simulador: falta informar ${gaps.join(', ')}. Para completar, crie uma nova versão.</div>` : ''}
     ${!editable && can.write() ? html`<div class="prop-notes"><label for="prop-notes"><strong>Observações</strong> <small class="muted">ficam salvas na proposta e no histórico</small></label>
@@ -939,6 +970,7 @@ export async function proposalDetail(id, onChange) {
         bindQualForm(form);
         bindPlanFields(form);
       }
+      bindOptionButtons(form, () => p, onChange);
       on(form, 'click', '[data-act=save-notes]', async () => {
         try {
           await patch(`/api/propostas/${p.id}`, { notes: form.notes_edit.value });
@@ -957,7 +989,7 @@ export async function proposalDetail(id, onChange) {
         try {
           await post(`/api/propostas/${p.id}/status`, { status: s, accepted_channel: form.accepted_channel?.value, accepted_at: form.accepted_at?.value, refusal_reason: form.refusal_reason?.value, refusal_notes: form.refusal_notes?.value, retake_at: form.retake_at?.value || undefined, sent_channel: form.sent_channel?.value });
           if (s === 'aprovada') toast('Aceite registrado. A pré-venda foi aberta (veja em Pré-venda).');
-          else if (s === 'apresentada') toast('Proposta enviada: a esteira de follow-up D0 a D10 foi criada na agenda.');
+          else if (s === 'apresentada') toast('Proposta enviada: a régua de follow-up (Dia 0 a Dia 21) foi criada na agenda.');
           else toast('Status atualizado.');
           close(true);
           onChange?.();

@@ -1622,3 +1622,92 @@ html.nav-collapsed { --sidebar-w: 74px; }
 .ref-chip { background: color-mix(in srgb, var(--success) 18%, transparent); color: var(--success); font-weight: 600; }
 .referral-box { border: 1px solid color-mix(in srgb, var(--success) 40%, transparent); background: color-mix(in srgb, var(--success) 8%, transparent); border-radius: 12px; padding: 8px 12px; margin-bottom: 10px; display: grid; gap: 6px; }
 @media (max-width: 900px) { .ref-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ref-fields .ref-plus, .ref-fields .ref-plus-placeholder { grid-column: 1 / -1; width: 100%; } }
+
+/* ==========================================================
+   Propostas: Kanban pela régua (Dia 0 a 21), Lista, link do cliente e opções
+   ========================================================== */
+.prop-bar .pb-line > select { min-height: 40px; width: auto; min-width: 9.5rem; }
+.view-toggle { display: inline-flex; margin: 0 0 0 auto; padding: 3px; border: 1px solid var(--border); border-radius: 12px; background: var(--pill-bg); }
+.view-toggle button { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 12px; border: 0; border-radius: 9px; background: transparent; color: var(--text-muted); font: inherit; font-size: var(--fs-sm); cursor: pointer; }
+.view-toggle button.active { background: var(--bg-card); color: var(--text); box-shadow: var(--shadow-sm); }
+.kpi.ok-kpi .kpi-value { color: var(--success); }
+.prop-kanban .column[data-key="gerada"] header { border-bottom-style: dashed; }
+.prop-card { display: grid; gap: 6px; }
+.prop-card.wants { box-shadow: inset 3px 0 0 var(--success), var(--shadow-sm); }
+.prop-card-top { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
+.prop-card-value { font-weight: 700; }
+.prop-card-value small { font-weight: 400; color: var(--text-muted); }
+.prop-card-link { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+.prop-card-foot { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: space-between; margin-top: 2px; }
+.prop-opts { display: inline-flex; gap: 4px; }
+.prop-opts .icon-btn { width: 32px; height: 32px; border-radius: 9px; }
+.prop-opts .icon-btn.wa:hover { color: var(--success); }
+.link-st { display: inline-flex; flex-direction: column; gap: 1px; line-height: 1.2; }
+.link-st small { color: var(--text-muted); font-size: var(--fs-xs); white-space: nowrap; }
+.regua { display: inline-flex; gap: 3px; }
+.rg { display: inline-grid; place-items: center; min-width: 22px; height: 20px; padding: 0 3px; border-radius: 6px; font-size: 0.68rem; font-weight: 700; border: 1px solid var(--border); color: var(--text-muted); background: transparent; }
+.rg-feito { background: color-mix(in srgb, var(--success) 20%, transparent); color: var(--success); border-color: transparent; }
+.rg-atrasado { background: color-mix(in srgb, var(--danger) 20%, transparent); color: var(--danger); border-color: transparent; }
+.rg-pendente { color: var(--text); }
+.rg-next { border-color: var(--primary-bright); box-shadow: 0 0 0 1px var(--primary-bright) inset; }
+.rg-cancelado { text-decoration: line-through; opacity: 0.55; }
+.rg-none { border-style: dashed; opacity: 0.6; }
+.prop-table td, .prop-table th { vertical-align: middle; }
+.prop-table th small { font-weight: 400; }
+.prop-linkbar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: space-between; padding: 10px 12px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--pill-bg); }
+.prop-linkbar > div { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.link-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0 14px; }
+.link-row input { flex: 1 1 320px; min-width: 0; font-size: var(--fs-sm); }
+.link-kpis { margin-bottom: 12px; }
+.sub-h { margin: 14px 0 8px; font-size: var(--fs-md, 1rem); }
+.area-pick .area-card small { display: block; }
+
+/* Página da proposta para o cliente (link rastreável) */
+.proposal-page { max-width: 760px; gap: 14px; }
+.proposal-page .pp-head h1 { font-size: clamp(1.35rem, 2.4vw, 1.9rem); line-height: 1.25; margin: 4px 0 6px; text-wrap: balance; }
+.pp-kicker { margin: 0; color: var(--text-muted); font-size: var(--fs-sm); letter-spacing: 0.02em; }
+.pp-team { display: flex; gap: 8px; align-items: center; }
+.pp-hero { text-align: center; padding: 22px 18px; background: linear-gradient(160deg, color-mix(in srgb, var(--primary) 22%, var(--bg-card)), var(--bg-card)); }
+.pp-hero span { display: block; color: var(--text-muted); font-size: var(--fs-sm); }
+.pp-hero strong { display: block; font-size: clamp(2rem, 6vw, 2.8rem); line-height: 1.15; margin: 4px 0; letter-spacing: -0.01em; }
+.pp-hero small { color: var(--text-muted); }
+.pp-sec h2 { font-size: 1.05rem; margin: 0 0 12px; }
+.pp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 12rem), 1fr)); gap: 10px; }
+.pp-item { display: grid; gap: 2px; padding: 10px 12px; border-radius: 12px; background: var(--pill-bg); border: 1px solid var(--border-soft); }
+.pp-item span { color: var(--text-muted); font-size: var(--fs-xs); }
+.pp-item strong { font-size: 1.02rem; }
+.pp-item small { color: var(--text-muted); font-size: var(--fs-xs); }
+.pp-desc { margin: 12px 0 0; line-height: 1.55; }
+.pp-price { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: 10px; }
+.pp-price-card { display: grid; gap: 2px; padding: 14px 16px; border-radius: 14px; border: 1px solid var(--border); background: var(--pill-bg); }
+.pp-price-card.on { border-color: var(--primary-bright); box-shadow: 0 0 0 1px var(--primary-bright) inset; }
+.pp-price-card span { color: var(--text-muted); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.06em; }
+.pp-price-card strong { font-size: 1.6rem; }
+.pp-price-card small { color: var(--success); }
+.pp-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.pp-list li { display: flex; gap: 8px; align-items: flex-start; line-height: 1.45; }
+.pp-list .ico { color: var(--success); flex: none; margin-top: 2px; }
+.pp-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.pp-steps li { display: flex; gap: 12px; align-items: flex-start; }
+.pp-steps p { margin: 2px 0 0; color: var(--text-muted); line-height: 1.45; }
+.pp-n { flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: color-mix(in srgb, var(--primary) 25%, transparent); color: var(--primary-bright); font-weight: 700; font-size: var(--fs-sm); }
+.pp-cta { border-color: var(--primary-bright); }
+.pp-cta.ok { border-color: var(--success); }
+.pp-cta.ok h2 { color: var(--success); }
+.pp-cta form { display: grid; gap: 10px; margin-top: 8px; }
+.pp-cta .btn.big { min-height: 48px; font-size: 1.02rem; justify-content: center; }
+.pp-consultant { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+.pp-consultant > div { display: grid; }
+.pp-consultant .btn.wa { background: #1F9D6B; border-color: #1F9D6B; color: #fff; }
+.pp-foot { padding: 4px 4px 24px; line-height: 1.5; }
+@media print {
+  .proposal-page .pp-cta, .proposal-page .pp-team, .pp-consultant .btn, #pv-back { display: none !important; }
+  .proposal-page { max-width: none; padding: 0; }
+  .proposal-page .card { break-inside: avoid; box-shadow: none; }
+}
+.prop-table { min-width: 1180px; }
+.prop-table .nowrap, .prop-table .prop-opts { white-space: nowrap; }
+.prop-table th { white-space: nowrap; }
+@media (max-width: 760px) { .prop-table { min-width: 0; } .prop-table td[data-label="Opções"]::before { margin-bottom: 4px; } }
+.pp-desc.first { margin-top: 0; }
+.prop-feed-link { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin-top: 6px; } .prop-feed-link .prop-opts { margin-left: auto; }

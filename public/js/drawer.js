@@ -7,6 +7,7 @@ import { html, raw, render, $, $$, on, state, badge, relBadge, optLabel, K, fmtM
 import { activityForm, taskForm, lostDialog, completeTask, cancelTask, opportunityForm, proposalDetail, attemptDialog, qualifyDialog, newProposalFlow, CONTACT_CHANNELS, PROPOSAL_AREAS } from './forms.js';
 import { qualProgress, qualBlocks, tempBadge } from './qualification.js';
 import { scheduleMeetingDialog, meetingLinks, meetingCard, bindMeetingCards, R1_STAGES, MEETING_LABEL } from './meeting.js';
+import { linkBadge, readTime, optionButtons, bindOptionButtons } from './proposal-actions.js';
 import { renderAiTab, renderProductsTab, renderDiagTab, renderFilesTab, renderReferralsTab, bindLeadTabs, copyText } from './leadtabs.js';
 import { icon } from './icons.js';
 
@@ -300,7 +301,8 @@ export async function openLeadDrawer(contactId, { oppId = null, onChange = null,
       const areaL = (a) => PROPOSAL_AREAS.find((x) => x.value === (a || 'consorcio'))?.label || 'Consórcio';
       render(box, html`<div class="section-head"><h4>Propostas do lead</h4>${edit ? html`<button type="button" class="btn small primary" data-dact="prop-new">Gerar proposta</button>` : ''}</div>
         <p class="hint">Consórcio, seguros, planejamento financeiro ou investimentos. A proposta gerada libera a etapa Negociação.</p>
-        ${props.length ? html`<ul class="feed">${props.map((p) => html`<li><div><a href="#" data-prop="${p.id}"><strong>${p.code}</strong></a> <span class="chip-sm area area-${p.area || 'consorcio'}">${areaL(p.area)}</span> · ${fmtMoney(p.credit_value)}${p.term_months ? ` · ${p.term_months} meses` : ''} ${badge(K('proposal_status', p.status), `st-${p.status}`)}</div>${p.description ? html`<p class="small">${p.description}</p>` : ''}<small class="muted">${fmtDateTime(p.created_at)}${p.product_name ? ` · ${p.product_name}` : ''}${p.refusal_reason ? ` · recusa: ${optLabel('motivo_recusa_proposta', p.refusal_reason)}` : ''}</small></li>`)}</ul>` : empty('Nenhuma proposta gerada para este lead.')}`);
+        ${props.length ? html`<ul class="feed">${props.map((p) => html`<li><div><a href="#" data-prop="${p.id}"><strong>${p.code}</strong></a> <span class="chip-sm area area-${p.area || 'consorcio'}">${areaL(p.area)}</span> · ${fmtMoney(p.credit_value)}${p.term_months ? ` · ${p.term_months} meses` : ''} ${badge(K('proposal_status', p.status), `st-${p.status}`)}</div>${p.description ? html`<p class="small">${p.description}</p>` : ''}<small class="muted">${fmtDateTime(p.created_at)}${p.product_name ? ` · ${p.product_name}` : ''}${p.consortium_kind === 'contemplada' ? ' · carta contemplada' : ''}${p.refusal_reason ? ` · recusa: ${optLabel('motivo_recusa_proposta', p.refusal_reason)}` : ''}</small>
+          ${p.status !== 'substituida' ? html`<div class="prop-feed-link">${linkBadge(p)}${p.link_views ? html`<small class="muted">${p.link_views} acesso(s) · ${readTime(p.link_seconds)}</small>` : ''}${optionButtons(p)}</div>` : ''}</li>`)}</ul>` : empty('Nenhuma proposta gerada para este lead.')}`);
     } else if (tab === 'historico') {
       render(box, html`<p class="muted small">Carregando o histórico…</p>`);
       let audit = [];
@@ -372,6 +374,7 @@ export async function openLeadDrawer(contactId, { oppId = null, onChange = null,
       toastError(ex);
     }
   });
+  bindOptionButtons(el, (id) => current?.contact?.proposals?.find((p) => p.id === id), () => changed());
   bindLeadTabs(el, () => current, {
     redraw: (tab) => {
       if (!current) return;
