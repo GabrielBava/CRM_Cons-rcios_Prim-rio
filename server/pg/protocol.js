@@ -108,24 +108,32 @@ class PgConnection {
     const m = /^aws-(\d+)-([a-z0-9-]+\.pooler\.supabase\.com)$/i.exec(this.cfg.host);
     const hosts = m ? [this.cfg.host, ...[0, 1, 2].filter((n) => String(n) !== m[1]).map((n) => `aws-${n}-${m[2]}`)] : [this.cfg.host];
     const otherPooler = (e) => e.code === 'ENOTFOUND' || /tenant\s*(?:or|\/)\s*user\b.*not found/i.test(e.message);
-    let last;
+    const tried = [];
+    // Erro final com o que cada endereço respondeu (o endereço que não existe no DNS não esconde a resposta dos outros)
+    const detail = (e) => {
+      if (hosts.length > 1) {
+        e.message = `o pooler do Supabase não aceitou a conexão. ${tried.join(' | ')}. Copie o endereço exato em Supabase › Connect › Session pooler.`;
+      }
+      return e;
+    };
+    let main = null;
     for (const host of hosts) {
       try {
         await this.connectTo(host);
         this.cfg.host = host;
         return;
       } catch (e) {
-        last = e;
+        tried.push(`${host}: ${e.code === 'ENOTFOUND' && !e.severity ? 'endereço inexistente' : e.message}`);
         const old = this.socket;
         this.socket = null;
         if (old) old.destroy();
         this.buf = Buffer.alloc(0);
         this.waiters = [];
-        if (!otherPooler(e)) throw e;
+        if (!otherPooler(e)) throw detail(e);
+        if (!main || (main.code === 'ENOTFOUND' && !main.severity)) main = e;
       }
     }
-    if (hosts.length > 1) last.message = `${last.message} (endereços do pooler tentados: ${hosts.join(', ')}; confira o usuário postgres.<ref> e o endereço em Supabase › Connect › Session pooler)`;
-    throw last;
+    throw detail(main);
   }
 
   async connectTo(host) {
