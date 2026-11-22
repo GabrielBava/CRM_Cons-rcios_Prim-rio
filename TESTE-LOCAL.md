@@ -307,7 +307,9 @@ Financeiro (contas a pagar e a receber), Administradoras (senha do portal), Rela
 1. **Supabase** (projeto `vero-crm-teste`): em **Project Settings › Database**, defina a senha do banco (Reset database
    password) e guarde. Clique em **Connect** › **Session pooler** e copie o endereço
    `postgresql://postgres.<ref>:[YOUR-PASSWORD]@aws-…-sa-east-1.pooler.supabase.com:5432/postgres`, trocando
-   `[YOUR-PASSWORD]` pela senha.
+   `[YOUR-PASSWORD]` pela senha. Na senha, troque `@` por `%40`, `#` por `%23`, `/` por `%2F` e `:` por `%3A`. Se o
+   endereço for `aws-0-…` e o projeto estiver em `aws-1-…` (ou o contrário), o CRM tenta o outro sozinho. O pacote zip
+   traz `variaveis-vercel.txt` com todas as variáveis já preenchidas (fora do repositório, que é público).
 2. **GitHub:** a Vercel publica o branch principal (`main`). Leve o branch de trabalho para o `main` (pull request) ou, na
    Vercel, escolha o branch de trabalho em **Settings › Git › Production Branch**.
 3. **Vercel:** **Add New › Project**, importe `GabrielBava/CRM_Cons-rcios_Prim-rio`, Framework Preset **Other** (o

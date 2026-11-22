@@ -90,16 +90,44 @@ class PgConnection {
 
   attach(socket) {
     this.socket = socket;
+    // Eventos de um socket antigo (tentativa anterior em outro endereço) são ignorados
     socket.on('data', (d) => {
+      if (this.socket !== socket) return;
       this.buf = this.buf.length ? Buffer.concat([this.buf, d]) : d;
       this.pump();
     });
-    socket.on('error', (e) => this.fail(e));
-    socket.on('close', () => this.fail(new Error('Conexão com o Postgres encerrada.')));
+    socket.on('error', (e) => this.socket === socket && this.fail(e));
+    socket.on('close', () => this.socket === socket && this.fail(new Error('Conexão com o Postgres encerrada.')));
   }
 
+  /**
+   * Conecta. No pooler do Supabase o endereço é aws-0-<região> ou aws-1-<região> conforme o projeto: se o informado não
+   * existir ou não for do projeto ("Tenant or user not found"), tenta o outro.
+   */
   async connect() {
-    const { host, port, sslmode } = this.cfg;
+    const m = /^aws-(\d+)-([a-z0-9-]+\.pooler\.supabase\.com)$/i.exec(this.cfg.host);
+    const hosts = m ? [this.cfg.host, ...[0, 1, 2].filter((n) => String(n) !== m[1]).map((n) => `aws-${n}-${m[2]}`)] : [this.cfg.host];
+    let last;
+    for (const host of hosts) {
+      try {
+        await this.connectTo(host);
+        this.cfg.host = host;
+        return;
+      } catch (e) {
+        last = e;
+        const old = this.socket;
+        this.socket = null;
+        if (old) old.destroy();
+        this.buf = Buffer.alloc(0);
+        this.waiters = [];
+        if (!(e.code === 'ENOTFOUND' || /Tenant or user not found/i.test(e.message))) throw e;
+      }
+    }
+    throw last;
+  }
+
+  async connectTo(host) {
+    const { port, sslmode } = this.cfg;
     let socket = await new Promise((resolve, reject) => {
       const s = net.connect({ host, port });
       s.setNoDelay(true);
