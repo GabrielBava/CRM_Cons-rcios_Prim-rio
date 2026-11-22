@@ -139,6 +139,18 @@ function createApp({ dbFile = process.env.DATABASE_URL || process.env.CRM_DB || 
       }
       return serveStatic(req, res, url.pathname);
     }
+    // Verificação da publicação: confirma que o servidor do CRM está no ar e que o banco responde (sem login)
+    if (url.pathname === '/api/saude') {
+      let banco = 'ok';
+      try {
+        db.prepare('SELECT 1 AS ok').get();
+      } catch (e) {
+        banco = `erro: ${e.message}`;
+      }
+      const sha = process.env.VERCEL_GIT_COMMIT_SHA;
+      res.writeHead(banco === 'ok' ? 200 : 503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      return res.end(JSON.stringify({ ok: banco === 'ok', banco, tipo: db.isPostgres ? 'postgres' : 'sqlite', versao: sha ? sha.slice(0, 7) : null }));
+    }
     // Agendamento da Vercel (vercel.json › crons): roda todas as rotinas; protegido por CRON_SECRET
     if (url.pathname === '/api/cron') {
       const ok = process.env.CRON_SECRET && req.headers.authorization === `Bearer ${process.env.CRON_SECRET}`;

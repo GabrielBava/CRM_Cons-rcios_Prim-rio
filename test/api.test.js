@@ -1969,6 +1969,10 @@ test('Postgres (Supabase): tradução do SQL do SQLite, schema gerado e entrada 
   assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS "users_email_key" ON "users" \(lower\("email"\)\)/);
   const fresh = require('../scripts/pg-schema.js').buildSchema();
   assert.equal(fresh.sql, sql, 'server/pg/schema.sql atualizado (rode npm run pg:schema)');
+  // Verificação da publicação (sem login)
+  const saude = await (await fetch(`${base}/api/saude`)).json();
+  assert.equal(saude.ok, true);
+  assert.equal(saude.tipo, process.env.TEST_DATABASE_URL ? 'postgres' : 'sqlite');
   // Vercel: rotinas pelo /api/cron só com o segredo
   assert.equal((await fetch(`${base}/api/cron`)).status, 401);
 });

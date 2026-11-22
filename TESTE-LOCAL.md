@@ -322,6 +322,10 @@ Financeiro (contas a pagar e a receber), Administradoras (senha do portal), Rela
    - Google e e-mail: as variáveis `GOOGLE_*` e `SMTP_*` do `config.env`.
 4. **Deploy.** O primeiro acesso cria as tabelas (schema `crm` no Supabase) e os dados de demonstração — pode levar uns
    segundos. Entre com `admin@demo.local` e a `DEMO_PASSWORD`. No Supabase, **Table Editor › schema crm** mostra os dados.
+   **Conferência:** abra `/api/saude` no endereço do CRM. `{"ok":true,"tipo":"postgres"}` indica servidor e banco no
+   ar. A página 404 da Vercel (`NOT_FOUND`) ou "Erro 404" na tela de login indicam que a Vercel publicou um branch sem o
+   servidor (o `main` antigo, sem a pasta `api/` e o `vercel.json`): refaça o passo 2 e publique de novo
+   (**Deployments › ⋯ › Redeploy**). Um erro 503 traz a mensagem do banco (senha ou endereço do Supabase).
 5. **Domínio:** na Vercel, **Settings › Domains › Add** `crm.veroconsorciosbr.com.br`; no DNS do domínio, crie o registro
    **CNAME** `crm` com o valor que a Vercel mostrar. O HTTPS é automático.
 6. **Para valer (produção):** tire `CRM_DEMO`/`DEMO_PASSWORD`, apague o schema `crm` no Supabase (SQL Editor:
