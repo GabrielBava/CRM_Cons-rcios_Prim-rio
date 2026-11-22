@@ -3023,3 +3023,14 @@ test('Vercel: endereço do banco por DATABASE_URL ou POSTGRES_URL da integraçã
   assert.equal(databaseUrl({ POSTGRES_URL: url.replace(':5432', ':6543') }), url);
   assert.equal(databaseUrl({}), null);
 });
+
+test('LP: envio simples (text/plain, sem preflight) também cria o lead e libera o CORS', async () => {
+  const body = { nome: 'Lia Texto Simples', email: 'lia.texto@ex.com', celular: '11955559901', aceite_privacidade: true, lp: 'consorcios', area: 'consorcio', utm: { utm_source: 'teste' } };
+  const r = await fetch(`${base}/api/publico/lp/leads`, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8', Origin: 'https://lp.exemplo.com' }, body: JSON.stringify(body) });
+  const data = await r.json();
+  assert.equal(r.status, 200, JSON.stringify(data));
+  assert.equal(data.area, 'consorcio');
+  assert.equal(r.headers.get('access-control-allow-origin'), '*');
+  const tracker = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'lp', 'vero-rastreio.js'), 'utf8');
+  assert.match(tracker, /text\/plain;charset=UTF-8/, 'o rastreio envia sem preflight');
+});

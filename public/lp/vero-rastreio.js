@@ -21,6 +21,9 @@
   var DAYS = 90;
   var PARAMS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id', 'gclid', 'gbraid', 'wbraid', 'fbclid', 'ttclid', 'msclkid', 'li_fat_id'];
   var ENDPOINT_RE = /\/api\/publico\/lp\/leads(\?|$)/;
+  // Envio "simples" (sem preflight do navegador): o CRM lê o JSON mesmo com text/plain. Assim o lead chega também no
+  // Safari/iPhone e em navegadores que recusam keepalive com preflight, sem erro visível na LP.
+  var SIMPLE = { 'Content-Type': 'text/plain;charset=UTF-8' };
 
   function iso() { return new Date().toISOString(); }
   function load() {
@@ -120,7 +123,7 @@
       var b = complete(JSON.parse(JSON.stringify(dados || {})));
       b.pagina = b.pagina || location.href;
       b.data = b.data || iso();
-      return fetch(e, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b), keepalive: true })
+      return fetch(e, { method: 'POST', headers: SIMPLE, body: JSON.stringify(b), keepalive: true })
         .then(function (r) { return r.json().catch(function () { return { ok: r.ok }; }); });
     },
   };
@@ -137,6 +140,7 @@
             var copy = {};
             for (var k in init) if (Object.prototype.hasOwnProperty.call(init, k)) copy[k] = init[k];
             copy.body = JSON.stringify(complete(b));
+            copy.headers = SIMPLE;
             init = copy;
           }
         }
