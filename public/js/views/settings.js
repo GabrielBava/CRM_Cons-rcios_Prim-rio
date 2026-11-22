@@ -1,8 +1,9 @@
-import { get, post, patch } from '../api.js';
+import { get, post, patch, put } from '../api.js';
 import {
   html, render, $, $$, on, fresh, state, table, badge, field, modal, selectOptions, toItems, userItems, fmtDateTime, can, toast, toastError,
-  statusIntegration, K, empty, formData,
+  statusIntegration, K, empty, formData, confirmDialog,
 } from '../ui.js';
+import '../meeting.js';
 
 export async function refreshMeta() {
   state.meta = await get('/api/meta');
@@ -51,22 +52,21 @@ export function bindOptionList(root, reload) {
 /* ------------------------- Tela ------------------------- */
 
 const TABS = [
-  ['usuarios', 'Usuários e equipes', true],
   ['funil', 'Etapas do funil', true],
   ['listas', 'Listas', true],
   ['campos', 'Campos', true],
   ['integracoes', 'Integrações', false],
+  ['modelo-r1', 'Modelo da R1', true],
   ['geral', 'Geral', true],
   ['auditoria', 'Auditoria', true],
-  ['conta', 'Minha conta', false],
 ];
 
 export async function show(view, { id }) {
   const tabs = TABS.filter(([, , adminOnly]) => !adminOnly || can.admin());
   let tab = tabs.find(([k]) => k === id)?.[0] || tabs[0][0];
   render(view, html`<div class="page">
-    <div class="page-head"><h1>Configurações e usuários</h1></div>
-    ${!can.admin() ? html`<p class="hint">Seu perfil (${state.user.role_label}) pode consultar o status das integrações e alterar a própria senha. Demais configurações são exclusivas de administradores.</p>` : ''}
+    <div class="page-head"><h1>Configurações</h1></div>
+    ${can.admin() ? html`<p class="hint">Usuários, equipes e permissões ficam em <a href="#/usuarios">Usuários</a>.</p>` : ''}
     <nav class="tabs">${tabs.map(([k, l]) => html`<a href="#/configuracoes/${k}" data-tab="${k}" class="${tab === k ? 'active' : ''}">${l}</a>`)}</nav>
     <div id="tab"></div></div>`);
   const draw = async () => {
@@ -87,66 +87,171 @@ export async function show(view, { id }) {
   await draw();
 }
 
+/** Google Agenda: cliente OAuth do Google Cloud (administrador) e o endereço de retorno a cadastrar no Google. */
+function googleCard(g) {
+  return html`<section class="card integ">
+    <div class="section-head"><h3>Google Agenda (R1 com Google Meet)</h3>${badge(g.configured ? 'Configurado' : 'Não configurado', g.configured ? 'ok' : 'muted')}</div>
+    <p>Com o Google Agenda configurado, cada especialista conecta a própria agenda em <a href="#/meu-cadastro">Meu cadastro</a>. Ao agendar a R1, o CRM cria o evento na agenda dele com link do Google Meet e o Google envia o convite ao e-mail do cliente; o link fica salvo no CRM. Reagendar ou cancelar a R1 no CRM atualiza o evento.</p>
+    <ol class="small">
+      <li>No <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console</a>, ative a <strong>Google Calendar API</strong> e crie um <strong>ID do cliente OAuth</strong> do tipo "Aplicativo da Web".</li>
+      <li>Em "URIs de redirecionamento autorizados", cadastre: <code class="selectable">${g.redirect_uri}</code></li>
+      <li>Na tela de consentimento OAuth, inclua o escopo <code>calendar.events</code> e publique o app (ou adicione os e-mails dos especialistas como usuários de teste).</li>
+      <li>Cole abaixo o ID do cliente e a chave secreta.</li>
+    </ol>
+    ${can.admin() ? html`<form data-google-form class="grid" novalidate>
+      ${g.from_env ? html`<p class="hint full">Definido pelas variáveis GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET do servidor.</p>` : html`
+      ${field({ name: 'client_id', label: 'ID do cliente OAuth', value: g.client_id || '', placeholder: '1234-abc.apps.googleusercontent.com', full: true })}
+      ${field({ name: 'client_secret', label: g.has_secret ? 'Chave secreta (já salva; preencha só para trocar)' : 'Chave secreta do cliente', type: 'password', full: true })}`}
+      ${field({ name: 'public_url', label: 'Endereço público do CRM (opcional)', value: g.public_url, placeholder: 'https://crm.veroconsorcios.com.br', help: 'Use quando o CRM estiver atrás de um proxy e o endereço de retorno acima não for o endereço real.', full: true })}
+      <div class="inline-actions full"><button class="btn primary" type="submit">Salvar configuração</button></div>
+    </form>` : ''}
+  </section>`;
+}
+
+/** WhatsApp da empresa pela API oficial (Cloud API da Meta): número, token, webhook e modelo para iniciar conversa. */
+function whatsappCard(w) {
+  return html`<section class="card integ">
+    <div class="section-head"><h3>WhatsApp da empresa (API oficial)</h3>${badge(w.configured ? 'Conectado' : w.sandbox ? 'Modo de teste' : 'Não conectado', w.configured ? 'ok' : w.sandbox ? 'warn' : 'muted')}</div>
+    <p>Liga o número oficial da empresa ao CRM: as conversas aparecem em <a href="#/comunicacao/whatsapp">Comunicação › WhatsApp</a>, ligadas ao lead pelo telefone e ao especialista responsável, e entram no histórico do cliente.</p>
+    <ol class="small">
+      <li>No <a href="https://developers.facebook.com/apps" target="_blank" rel="noopener">Meta for Developers</a>, crie um app do tipo <strong>Empresa</strong> e adicione o produto <strong>WhatsApp</strong>, vinculado à conta do WhatsApp Business da Vero.</li>
+      <li>Em WhatsApp › Configuração da API, copie o <strong>Phone number ID</strong>. Gere um <strong>token de acesso permanente</strong> (Usuário do sistema no Gerenciador de Negócios, com a permissão whatsapp_business_messaging).</li>
+      <li>Em WhatsApp › Configuração › Webhook, informe a URL <code class="selectable">${w.webhook_url}</code> e o token de verificação <code class="selectable">${w.verify_token || '(salve para gerar)'}</code>; assine o campo <strong>messages</strong>.</li>
+      <li>Em Configurações do app › Básico, copie a <strong>Chave secreta do aplicativo</strong> (App Secret): o CRM confere a assinatura de cada evento.</li>
+      <li>Crie e aprove no Gerenciador do WhatsApp um <strong>modelo</strong> de mensagem para iniciar conversas (a Meta exige modelo fora da janela de 24 horas).</li>
+    </ol>
+    ${can.admin() ? html`<form data-wa-form class="grid" novalidate>
+      ${w.from_env ? html`<p class="hint full">Número e token definidos no config.env do servidor (WHATSAPP_PHONE_NUMBER_ID e WHATSAPP_TOKEN).</p>` : html`
+      ${field({ name: 'phone_number_id', label: 'Phone number ID', value: w.phone_number_id || '', placeholder: '1098765432101234' })}
+      ${field({ name: 'token', label: w.configured ? 'Token de acesso (já salvo; preencha só para trocar)' : 'Token de acesso permanente', type: 'password' })}`}
+      ${field({ name: 'app_secret', label: w.has_app_secret ? 'App Secret (já salvo; preencha só para trocar)' : 'App Secret (chave secreta do aplicativo)', type: 'password' })}
+      ${field({ name: 'verify_token', label: 'Token de verificação do webhook', value: w.verify_token || '' })}
+      ${field({ name: 'display_number', label: 'Número exibido', value: w.display_number || '', placeholder: '+55 (11) 9 0000-0000' })}
+      ${field({ name: 'template_name', label: 'Modelo para iniciar conversa', value: w.template?.name || '', placeholder: 'ex.: retomar_contato' })}
+      ${field({ name: 'template_lang', label: 'Idioma do modelo', value: w.template?.language || 'pt_BR' })}
+      ${field({ name: 'sandbox', label: 'Modo de teste enquanto a conta não está conectada (as mensagens ficam só no CRM)', type: 'checkbox', value: w.sandbox, full: true })}
+      <div class="inline-actions full"><button class="btn primary" type="submit">Salvar</button></div>
+    </form>` : ''}
+  </section>`;
+}
+
+/** IA Vero: motor interno (sempre ligado) e, opcionalmente, a IA generativa da Anthropic (Claude) com a chave da empresa. */
+function aiCard(a) {
+  return html`<section class="card integ">
+    <div class="section-head"><h3>IA Vero (assistente do painel do lead)</h3>${badge(a.generative ? 'IA generativa ligada' : 'Motor interno', a.generative ? 'ok' : 'muted')}</div>
+    <p>A aba <strong>IA Vero</strong> do painel do lead sugere o próximo passo, o canal, perguntas SPIN, o checklist BANT, respostas para objeções no WhatsApp e o score. O <strong>motor interno</strong> funciona sempre, sem custo e sem enviar dados para fora. A base de conhecimento fica em <a href="#/ferramentas/ia">Ferramentas › Base da IA Vero</a>.</p>
+    <p class="small">Opcional: com a <strong>IA generativa</strong> (Claude, da Anthropic) ligada, as perguntas livres do chat são respondidas pelo modelo ${a.model}, com os dados do lead como contexto (nome, etapa, atividades e qualificação — sem CPF). Se o modelo estiver indisponível, a resposta sai do motor interno. Requer a biblioteca oficial instalada no servidor (<code>npm install @anthropic-ai/sdk</code>) e a chave da API.</p>
+    <ul class="small"><li>Biblioteca no servidor: ${a.sdk_installed ? badge('instalada', 'ok') : badge('não instalada', 'warn')}</li><li>Chave da API: ${a.has_key ? badge(a.from_env ? 'definida no config.env' : 'salva (cifrada)', 'ok') : badge('não informada', 'muted')}</li></ul>
+    ${a.can_configure ? html`<form data-ai-form class="grid" novalidate>
+      ${a.from_env ? '' : field({ name: 'api_key', label: a.has_key ? 'Chave da API (já salva; preencha só para trocar)' : 'Chave da API da Anthropic', type: 'password', placeholder: 'sk-ant-…' })}
+      ${field({ name: 'enabled', label: 'Ligar a IA generativa nas perguntas do chat (dados do lead são enviados à Anthropic)', type: 'checkbox', value: a.enabled, full: true })}
+      <div class="inline-actions full"><button class="btn primary" type="submit">Salvar</button></div>
+    </form>` : ''}
+  </section>`;
+}
+
+/** E-mail (SMTP): a ficha de adesão sai do endereço da empresa (padrão noreply@veroconsorciosbr.com.br). */
+function emailCard(st) {
+  return html`<section class="card integ">
+    <div class="section-head"><h3>E-mail (envio da ficha de adesão)</h3>${badge(st.configured ? 'Configurado' : 'Não configurado', st.configured ? 'ok' : 'muted')}</div>
+    <p>O botão "Enviar por e-mail" da ficha manda um e-mail com o visual da Vero, o passo a passo e o botão "Acessar minha ficha", a partir de <strong>${st.from_email}</strong>. Sem SMTP, o CRM mostra o e-mail pronto para o especialista copiar ou abrir no programa de e-mail.</p>
+    ${can.admin() ? html`<form data-email-form class="grid" novalidate>
+      ${field({ name: 'host', label: 'Servidor SMTP', value: st.host || '', placeholder: 'smtp.seuprovedor.com.br' })}
+      ${field({ name: 'port', label: 'Porta', type: 'number', value: st.port || 465 })}
+      ${field({ name: 'security', label: 'Segurança', type: 'select', options: [{ value: 'tls', label: 'SSL/TLS (porta 465)' }, { value: 'starttls', label: 'STARTTLS (porta 587)' }, { value: 'none', label: 'Sem criptografia (só testes locais)' }], value: st.security || 'tls', allowEmpty: false })}
+      ${field({ name: 'user', label: 'Usuário', value: st.user || '', placeholder: 'noreply@veroconsorciosbr.com.br' })}
+      ${field({ name: 'password', label: st.has_password ? 'Senha (já salva; preencha só para trocar)' : 'Senha', type: 'password' })}
+      ${field({ name: 'from_email', label: 'Remetente', value: st.from_email, placeholder: 'noreply@veroconsorciosbr.com.br' })}
+      ${field({ name: 'from_name', label: 'Nome do remetente', value: st.from_name })}
+      <div class="inline-actions full"><button class="btn primary" type="submit">Salvar</button>${st.configured ? html`<button class="btn" type="button" data-email-test>Enviar e-mail de teste para mim</button>` : ''}</div>
+    </form>` : ''}
+  </section>`;
+}
+
 const RENDER = {
-  async usuarios(box, redraw) {
-    const [users, teams] = await Promise.all([get('/api/usuarios'), get('/api/equipes')]);
+  async 'modelo-r1'(box, redraw) {
+    const cfg = await get('/api/r1/modelo-config');
     render(box, html`<section class="card">
-      <div class="section-head"><h3>Usuários</h3><button class="btn primary" data-act="user-new">+ Novo usuário</button></div>
-      <div class="alert">Perfis: <strong>Administrador</strong> acessa tudo; <strong>Gestor</strong> acessa registros da própria equipe (e cadastros sem responsável); <strong>Consultor</strong> acessa apenas os próprios leads e oportunidades; <strong>Leitura</strong> consulta sem editar ou exportar dados pessoais. As permissões são verificadas no servidor.</div>
-      ${table(
-        [
-          { label: 'Nome', render: (u) => html`<strong>${u.name}</strong>${u.active ? '' : html` ${badge('Inativo', 'muted')}`}<br><small>${u.email}</small>` },
-          { label: 'Perfil', render: (u) => state.meta.roles[u.role] },
-          { label: 'Equipe', render: (u) => u.team_name || '—' },
-          { label: 'ID na discadora', render: (u) => u.dialer_agent_ref || '—' },
-          { label: 'Último acesso', render: (u) => fmtDateTime(u.last_login_at) },
-          { label: '', render: (u) => html`<button class="btn small" data-user="${u.id}">Editar</button>` },
-        ],
-        users,
-      )}</section>
-      <section class="card"><div class="section-head"><h3>Equipes</h3><button class="btn" data-act="team-new">+ Nova equipe</button></div>
-        ${table([{ label: 'Equipe', key: 'name' }, { label: 'Membros', key: 'members', cls: 'num' }, { label: '', render: (t) => html`<button class="btn small" data-team="${t.id}">Renomear</button>` }], teams, { emptyMsg: 'Nenhuma equipe. Gestores sem equipe veem apenas os próprios registros.' })}
-      </section>`);
-    const roleItems = Object.entries(state.meta.roles).map(([value, label]) => ({ value, label }));
-    const teamItems = teams.map((t) => ({ value: t.id, label: t.name }));
-    const userForm = (u = {}) =>
-      modal({
-        title: u.id ? `Editar ${u.name}` : 'Novo usuário',
-        body: html`<div class="grid">
-          ${field({ name: 'name', label: 'Nome', value: u.name, required: true })}
-          ${field({ name: 'email', label: 'E-mail (login)', type: 'email', value: u.email, required: true })}
-          ${field({ name: 'role', label: 'Perfil', type: 'select', options: roleItems, value: u.role || 'consultor', allowEmpty: false })}
-          ${field({ name: 'team_id', label: 'Equipe', type: 'select', options: teamItems, value: u.team_id, placeholder: 'Sem equipe' })}
-          ${field({ name: 'dialer_agent_ref', label: 'ID do agente na discadora', value: u.dialer_agent_ref, help: 'Usado para atribuir as ligações recebidas da discadora.' })}
-          ${field({ name: 'password', label: u.id ? 'Nova senha (deixe vazio para manter)' : 'Senha inicial', type: 'password', required: !u.id, help: 'Mínimo de 8 caracteres.' })}
-          ${u.id ? field({ name: 'active', label: 'Usuário ativo', type: 'checkbox', value: u.active }) : ''}
-        </div>`,
-        async onSubmit(d) {
-          await post('/api/usuarios', { ...d, id: u.id });
-          toast('Usuário salvo.');
-          await refreshMeta();
-          return true;
-        },
-      });
-    on(box, 'click', '[data-act=user-new]', async () => (await userForm()) && redraw());
-    on(box, 'click', '[data-user]', async (e, b) => (await userForm(users.find((u) => u.id === Number(b.dataset.user)))) && redraw());
-    const teamForm = (t = {}) => modal({ title: t.id ? 'Renomear equipe' : 'Nova equipe', body: field({ name: 'name', label: 'Nome', value: t.name, required: true, full: true }), onSubmit: (d) => post('/api/equipes', { ...d, id: t.id }) });
-    on(box, 'click', '[data-act=team-new]', async () => (await teamForm()) && redraw());
-    on(box, 'click', '[data-team]', async (e, b) => (await teamForm(teams.find((t) => t.id === Number(b.dataset.team)))) && redraw());
+      <div class="section-head"><h3>Modelo da R1</h3>${badge(cfg.custom ? 'Modelo personalizado' : 'Modelo padrão Vero', cfg.custom ? 'ok' : 'muted')}</div>
+      <p>É o roteiro único da reunião de diagnóstico: o especialista abre pelo botão "Modelo da R1" da reunião agendada, e o CRM preenche automaticamente o nome, a foto e o contato dele (Meu cadastro) e o nome do cliente.</p>
+      <p class="hint">Para usar o modelo da empresa, envie um arquivo .html com os campos abaixo onde os dados devem aparecer. O modelo padrão funciona sem JavaScript, permite anotações durante a reunião e imprime um slide por página.</p>
+      <div class="inline-actions">
+        <button type="button" class="btn" data-r1-model="preview=1">Pré-visualizar</button>
+        <button type="button" class="btn" data-act="r1-download">Baixar modelo atual (.html)</button>
+        <label class="btn primary">Enviar novo modelo (.html)<input type="file" accept=".html,.htm,text/html" data-r1-upload hidden></label>
+        ${cfg.custom ? html`<button type="button" class="btn ghost" data-act="r1-reset">Voltar ao modelo padrão</button>` : ''}
+      </div>
+      <h4>Campos disponíveis</h4>
+      ${table([{ label: 'Campo', render: (f) => html`<code class="selectable">${f.key}</code>` }, { label: 'Conteúdo', key: 'label' }], cfg.fields)}
+    </section>`);
+    on(box, 'click', '[data-act=r1-download]', () => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([cfg.template], { type: 'text/html' }));
+      a.download = 'modelo-r1.html';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    });
+    on(box, 'change', '[data-r1-upload]', async (e, input) => {
+      const file = input.files[0];
+      if (!file) return;
+      try {
+        if (file.size > 3e6) throw new Error('Modelo muito grande (máximo de 3 MB).');
+        await put('/api/r1/modelo-config', { html: await file.text() });
+        toast('Modelo da R1 atualizado para toda a equipe.');
+        redraw();
+      } catch (ex) {
+        toastError(ex);
+      }
+    });
+    on(box, 'click', '[data-act=r1-reset]', async () => {
+      if (!(await confirmDialog('Voltar ao modelo padrão', 'O modelo personalizado será removido e a equipe passa a usar o modelo padrão da Vero.'))) return;
+      try {
+        await put('/api/r1/modelo-config', { html: '' });
+        redraw();
+      } catch (ex) {
+        toastError(ex);
+      }
+    });
   },
 
   async funil(box, redraw) {
-    const stages = await get('/api/etapas');
+    const [stages, rules] = await Promise.all([get('/api/etapas'), get('/api/funil/regras')]);
     const active = stages.filter((s) => s.active);
     const KIND = { aberta: 'Aberta', ganho: 'Venda concluída', perdido: 'Perda', nutricao: 'Nutrição' };
+    const ruleLabel = (k) => rules.rules.find((r) => r.key === k)?.label || k;
     render(box, html`<section class="card">
       <div class="section-head"><h3>Etapas do funil</h3><button class="btn primary" data-act="stage-new">+ Nova etapa</button></div>
       <p class="hint">Renomeie, reordene ou crie etapas. As etapas de "venda concluída" e "perda" são obrigatórias (a perda exige motivo). Etapas com oportunidades não podem ser desativadas.</p>
       <ol class="stage-admin">${stages.map(
-        (s) => html`<li class="${s.active ? '' : 'inactive'}"><span><strong>${s.name}</strong> ${badge(KIND[s.kind])} <small class="muted">${s.opp_count} oportunidade(s)</small>${s.active ? '' : html` ${badge('inativa', 'muted')}`}</span>
+        (s) => html`<li class="${s.active ? '' : 'inactive'}"><span><strong>${s.name}</strong> ${badge(KIND[s.kind])} <small class="muted">${s.opp_count} oportunidade(s)${s.rot_days ? ` · parada após ${s.rot_days} dia(s)` : ''}</small>${s.active ? '' : html` ${badge('inativa', 'muted')}`}
+          ${s.key && rules.stage_rules[s.key]?.length ? html`<br><small>Para entrar: ${rules.stage_rules[s.key].map(ruleLabel).join(' · ')}</small>` : ''}</span>
           <span>${s.active ? html`<button class="btn small ghost" data-up="${s.id}" ${active[0]?.id === s.id ? 'disabled' : ''}>↑</button><button class="btn small ghost" data-down="${s.id}" ${active[active.length - 1]?.id === s.id ? 'disabled' : ''}>↓</button>` : ''}
           <button class="btn small" data-stage="${s.id}">Editar</button></span></li>`,
-      )}</ol></section>`);
+      )}</ol></section>
+      <form class="card" id="rules"><h3>Regras de passagem entre etapas</h3>
+        <p class="hint">Como nos CRMs de mercado (Pipedrive, RD Station), o negócio só entra numa etapa quando cumpre os critérios marcados. Assim um lead não pula direto para a venda: a etapa Venda só é alcançada pela confirmação do pagamento em Vendas.</p>
+        ${field({ name: 'funnel_sequential', label: 'Avançar uma etapa por vez (o administrador pode forçar, com justificativa registrada na auditoria)', type: 'checkbox', value: rules.sequential, full: true })}
+        <div class="table-wrap"><table class="matrix compact"><thead><tr><th>Critério</th>${active.filter((s) => s.key && !['prospect', 'perdido', 'nutricao'].includes(s.key)).map((s) => html`<th class="center">${s.name}</th>`)}</tr></thead>
+          <tbody>${rules.rules.map((r) => html`<tr><td>${r.label}<br><small class="muted">${r.hint}</small></td>
+            ${active.filter((s) => s.key && !['prospect', 'perdido', 'nutricao'].includes(s.key)).map((s) => html`<td class="center"><input type="checkbox" data-rule="${s.key}:${r.key}" aria-label="${r.label} em ${s.name}" ${(rules.stage_rules[s.key] || []).includes(r.key) ? 'checked' : ''} ${s.key === 'venda' ? 'disabled' : ''}></td>`)}</tr>`)}</tbody></table></div>
+        <button class="btn primary" type="submit">Salvar regras</button></form>`);
+    $('#rules', box).addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const sr = {};
+      for (const c of $$('[data-rule]', e.target)) {
+        const [st, r] = c.dataset.rule.split(':');
+        sr[st] = sr[st] || [];
+        if (c.checked) sr[st].push(r);
+      }
+      try {
+        await patch('/api/configuracoes', { stage_rules: sr, funnel_sequential: e.target.funnel_sequential.checked });
+        await refreshMeta();
+        toast('Regras do funil salvas.');
+        redraw();
+      } catch (ex) {
+        toastError(ex);
+      }
+    });
     const move = async (id, dir) => {
       const ids = active.map((s) => s.id);
       const i = ids.indexOf(Number(id));
@@ -162,8 +267,11 @@ const RENDER = {
     const form = (s = {}) =>
       modal({
         title: s.id ? `Editar etapa` : 'Nova etapa',
+        wide: true,
         body: html`<div class="grid">${field({ name: 'name', label: 'Nome', value: s.name, required: true, full: true })}
           ${!s.id ? field({ name: 'kind', label: 'Tipo', type: 'select', options: [{ value: 'aberta', label: 'Aberta (em andamento)' }, { value: 'nutricao', label: 'Nutrição / pausa' }], allowEmpty: false }) : ''}
+          ${!['ganho', 'perdido'].includes(s.kind) ? field({ name: 'rot_days', label: 'Considerar parado após (dias sem atividade)', type: 'number', min: 1, step: '1', value: s.rot_days }) : ''}
+          ${field({ name: 'playbook', label: 'Roteiro da etapa (o que o especialista deve fazer aqui)', type: 'textarea', rows: 4, value: s.playbook, full: true })}
           ${s.id && !['ganho', 'perdido'].includes(s.kind) ? field({ name: 'active', label: 'Ativa', type: 'checkbox', value: s.active }) : ''}</div>`,
         async onSubmit(d) {
           await post('/api/etapas', { ...d, id: s.id });
@@ -186,17 +294,24 @@ const RENDER = {
   async campos(box, redraw) {
     const cfg = structuredClone(state.meta.settings.field_config || {});
     const STD = {
-      contact_pf: { label: 'Pessoa física', fields: { doc: 'CPF', birth_date: 'Data de nascimento', profession: 'Profissão', phone1: 'Telefone principal', phone2: 'Telefone secundário', whatsapp: 'WhatsApp', email: 'E-mail', city: 'Cidade', state: 'UF', origin: 'Origem', campaign: 'Campanha', pref_channel: 'Canal preferido', owner_id: 'Responsável' } },
-      contact_pj: { label: 'Pessoa jurídica', fields: { legal_name: 'Razão social', trade_name: 'Nome fantasia', doc: 'CNPJ', state_registration: 'Inscrição estadual', segment: 'Segmento', company_size: 'Porte', website: 'Site', phone1: 'Telefone principal', phone2: 'Telefone secundário', whatsapp: 'WhatsApp', email: 'E-mail', city: 'Cidade', state: 'UF', origin: 'Origem', company_contact: 'Contato da empresa' } },
+      contact_pf: { label: 'Pessoa física', fields: { doc: 'CPF', rg: 'RG', birth_date: 'Data de nascimento', sex: 'Sexo', marital_status: 'Estado civil', property_regime: 'Regime de bens', spouse: 'Dados do cônjuge', birthplace: 'Naturalidade', nationality: 'Nacionalidade', mother_name: 'Nome da mãe', profession: 'Profissão', income_range: 'Renda mensal', net_worth_range: 'Patrimônio', phone1: 'Telefone 1', phone2: 'Telefone 2', whatsapp: 'WhatsApp', email: 'E-mail', address: 'Endereço completo', city: 'Cidade', state: 'UF', origin: 'Origem', temperature: 'Temperatura', pref_channel: 'Canal preferido', owner_id: 'Responsável' } },
+      contact_pj: { label: 'Pessoa jurídica', fields: { legal_name: 'Razão social', trade_name: 'Nome fantasia', doc: 'CNPJ', state_registration: 'Inscrição estadual', opening_date: 'Data de abertura', main_activity: 'Atividade / CNAE', revenue_range: 'Faturamento', segment: 'Segmento', company_size: 'Porte', website: 'Site', legal_rep: 'Representante legal', phone1: 'Telefone 1', phone2: 'Telefone 2', whatsapp: 'WhatsApp', email: 'E-mail', address: 'Endereço completo', city: 'Cidade', state: 'UF', origin: 'Origem', temperature: 'Temperatura', company_contact: 'Contato da empresa' } },
     };
-    const DEF_REC = { contact_pf: ['phone1', 'email', 'city', 'state', 'origin', 'pref_channel'], contact_pj: ['phone1', 'email', 'legal_name', 'doc', 'city', 'state', 'origin', 'company_contact'] };
+    const DEF_REC = { contact_pf: ['phone1', 'email', 'city', 'state', 'origin', 'pref_channel', 'temperature'], contact_pj: ['phone1', 'email', 'legal_name', 'doc', 'city', 'state', 'origin', 'company_contact', 'temperature'] };
+    const DEF_SALE = {
+      contact_pf: ['doc', 'rg', 'phone1', 'email', 'birthplace', 'nationality', 'sex', 'marital_status', 'birth_date', 'mother_name', 'profession', 'income_range', 'property_regime', 'spouse', 'address'],
+      contact_pj: ['legal_name', 'doc', 'phone1', 'email', 'opening_date', 'main_activity', 'revenue_range', 'legal_rep', 'address'],
+    };
     const isRec = (e, f) => (cfg[e]?.[f]?.recommended ?? DEF_REC[e].includes(f)) && cfg[e]?.[f]?.visible !== false;
     const isVis = (e, f) => cfg[e]?.[f]?.visible !== false;
+    const isSale = (e, f) => DEF_SALE[e].includes(f) && cfg[e]?.[f]?.sale_required !== false;
+    const NO_HIDE = ['phone1', 'origin', 'owner_id', 'company_contact', 'address', 'spouse', 'legal_rep'];
     const custom = state.meta.custom_fields;
     render(box, html`<form class="card" id="fcfg"><h3>Campos padrão do cadastro</h3>
-        <p class="hint">Oculte campos que não são necessários para a operação (minimização de dados) e defina quais aparecem como "recomendados" para completar depois. O nome é sempre obrigatório.</p>
-        <div class="cols">${Object.entries(STD).map(([e, g]) => html`<div><h4>${g.label}</h4><table class="compact"><thead><tr><th>Campo</th><th>Exibir</th><th>Recomendado</th></tr></thead><tbody>
-          ${Object.entries(g.fields).map(([f, l]) => html`<tr><td>${l}</td><td><input type="checkbox" name="${e}.${f}.visible" ${isVis(e, f) ? 'checked' : ''} ${['phone1', 'origin', 'owner_id', 'company_contact'].includes(f) ? 'disabled' : ''}></td><td><input type="checkbox" name="${e}.${f}.recommended" ${isRec(e, f) ? 'checked' : ''}></td></tr>`)}
+        <p class="hint">Oculte campos que não são necessários para a operação (minimização de dados), defina quais aparecem como "recomendados" para completar depois e quais são obrigatórios para concluir a venda (ficha de pré-venda). O nome é sempre obrigatório.</p>
+        <div class="cols">${Object.entries(STD).map(([e, g]) => html`<div><h4>${g.label}</h4><table class="compact"><thead><tr><th>Campo</th><th>Exibir</th><th>Recomendado</th><th>Obrigatório na venda</th></tr></thead><tbody>
+          ${Object.entries(g.fields).map(([f, l]) => html`<tr><td>${l}</td><td><input type="checkbox" name="${e}.${f}.visible" ${isVis(e, f) ? 'checked' : ''} ${NO_HIDE.includes(f) ? 'disabled' : ''}></td><td><input type="checkbox" name="${e}.${f}.recommended" ${isRec(e, f) ? 'checked' : ''} ${['address', 'spouse', 'legal_rep'].includes(f) ? 'disabled' : ''}></td>
+            <td>${DEF_SALE[e].includes(f) ? html`<input type="checkbox" name="${e}.${f}.sale_required" ${isSale(e, f) ? 'checked' : ''}>` : '—'}</td></tr>`)}
         </tbody></table></div>`)}</div>
         <button class="btn primary" type="submit">Salvar configuração</button></form>
       <section class="card"><div class="section-head"><h3>Campos adicionais</h3><button class="btn" data-act="cf-new">+ Novo campo</button></div>
@@ -216,7 +331,8 @@ const RENDER = {
         for (const f of Object.keys(g.fields)) {
           const vis = e.target.elements[`${ent}.${f}.visible`];
           const rec = e.target.elements[`${ent}.${f}.recommended`];
-          out[ent][f] = { visible: vis.disabled ? true : vis.checked, recommended: rec.checked };
+          const sale = e.target.elements[`${ent}.${f}.sale_required`];
+          out[ent][f] = { visible: vis.disabled ? true : vis.checked, recommended: rec.disabled ? false : rec.checked, ...(sale ? { sale_required: sale.checked } : {}) };
         }
       }
       try {
@@ -257,8 +373,14 @@ const RENDER = {
       api_leads: [['POST', `${base}/api/integracoes/leads`]],
       whatsapp: [['POST', `${base}/api/integracoes/whatsapp/mensagens`]],
       meta_ads: [],
+      agenda_externa: [],
+      bi: [['GET', `${base}/api/bi`], ['GET', `${base}/api/bi/vendas`], ['GET', `${base}/api/bi/financeiro?formato=csv`]],
     };
-    render(box, html`<div class="alert">Nenhuma integração é considerada conectada sem validação: o status "Ativa" só pode ser marcado após o recebimento de ao menos um evento real processado com sucesso. Detalhes técnicos em <code>docs/INTEGRACOES.md</code>.</div>
+    const g = await get('/api/google/status').catch(() => null);
+    const em = await get('/api/email/status').catch(() => null);
+    const wa = await get('/api/whatsapp/status').catch(() => null);
+    const ai = await get('/api/ia/status').catch(() => null);
+    render(box, html`${g ? googleCard(g) : ''}${wa ? whatsappCard(wa) : ''}${em ? emailCard(em) : ''}${ai ? aiCard(ai) : ''}<div class="alert">Nenhuma integração é considerada conectada sem validação: o status "Ativa" só pode ser marcado após o recebimento de ao menos um evento real processado com sucesso. Detalhes técnicos em <code>docs/INTEGRACOES.md</code>.</div>
       ${list.map((i) => html`<section class="card integ" data-key="${i.key}">
         <div class="section-head"><h3>${i.name}</h3>${statusIntegration(i.effective_status, i.effective_status_label)}</div>
         <p>${i.description}</p>
@@ -278,6 +400,57 @@ const RENDER = {
           ${i.key === 'discadora' ? html`<button class="btn small ghost" data-int-preview>Testar mapeamento</button>` : ''}
         </div>` : ''}
       </section>`)}`);
+    on(box, 'submit', '[data-email-form]', async (e, f) => {
+      e.preventDefault();
+      try {
+        await put('/api/email/config', formData(f));
+        toast('Envio de e-mails configurado.');
+        redraw();
+      } catch (ex) {
+        toastError(ex);
+      }
+    });
+    on(box, 'click', '[data-email-test]', async () => {
+      try {
+        const r = await post('/api/email/teste', { base: location.href.split('#')[0], logo_url: new URL('img/vero-logo-dark.png', document.baseURI).href });
+        if (r.sent) toast(`E-mail de teste enviado para ${r.to}.`);
+        else toastError(new Error(r.reason === 'nao_configurado' ? 'Configure o servidor SMTP primeiro.' : `Falha no envio: ${r.error}`));
+      } catch (ex) {
+        toastError(ex);
+      }
+    });
+    on(box, 'submit', '[data-ai-form]', async (e, f) => {
+      e.preventDefault();
+      try {
+        const d = formData(f);
+        await put('/api/ia/config', { api_key: d.api_key || undefined, enabled: !!f.enabled.checked });
+        toast('IA Vero configurada.');
+        redraw();
+      } catch (ex) {
+        toastError(ex);
+      }
+    });
+    on(box, 'submit', '[data-wa-form]', async (e, f) => {
+      e.preventDefault();
+      try {
+        const d = formData(f);
+        await put('/api/whatsapp/config', { ...d, sandbox: !!f.sandbox.checked });
+        toast('WhatsApp da empresa configurado.');
+        redraw();
+      } catch (ex) {
+        toastError(ex);
+      }
+    });
+    on(box, 'submit', '[data-google-form]', async (e, f) => {
+      e.preventDefault();
+      try {
+        await put('/api/google/config', formData(f));
+        toast('Google Agenda configurado. Cada especialista conecta a própria agenda em Meu cadastro.');
+        redraw();
+      } catch (ex) {
+        toastError(ex);
+      }
+    });
     const byKey = Object.fromEntries(list.map((i) => [i.key, i]));
     on(box, 'click', '[data-int-token]', async (e, b) => {
       const key = b.dataset.intToken;
@@ -377,8 +550,58 @@ const RENDER = {
     render(box, html`<form class="card" id="gen"><h3>Parâmetros gerais</h3><div class="grid">
       ${field({ name: 'stalled_days', label: 'Dias sem atividade para considerar um lead parado', type: 'number', value: s.stalled_days, min: 1 })}
       ${field({ name: 'simulation_link_hours', label: 'Validade do link do simulador (horas)', type: 'number', value: s.simulation_link_hours, min: 1 })}
+      ${field({ name: 'client_link_days', label: 'Validade do link para o cliente atualizar os dados (dias)', type: 'number', value: s.client_link_days, min: 1 })}
+      ${field({ name: 'finance_user_id', label: 'Responsável financeiro (recebe os alertas de parcelas em atraso)', type: 'select', options: userItems(), value: s.finance_user_id, placeholder: 'Responsável pelo cliente' })}
+      ${field({ name: 'company_name', label: 'Nome da empresa (usado na pesquisa de satisfação)', value: s.company_name })}
+      ${field({ name: 'logout_url', label: 'Site da empresa (para onde o usuário vai ao sair do sistema)', type: 'url', value: s.logout_url, placeholder: 'https://www.suaempresa.com.br', help: 'Em branco, o usuário volta para a tela de login.' })}
+      ${field({ name: 'postsale_user_id', label: 'Responsável pós-venda padrão dos novos clientes', type: 'select', options: userItems(), value: s.postsale_user_id, placeholder: 'O especialista da venda' })}
+      ${field({ name: 'nps_link_days', label: 'Validade do link da pesquisa de satisfação (dias)', type: 'number', value: s.nps_link_days, min: 1 })}
+      ${field({ name: 'proposal_simulator_url', label: 'Endereço do simulador de propostas', type: 'url', value: s.proposal_simulator_url, full: true, help: 'O botão "Gerar proposta" abre este endereço com o nome completo e o contato do cliente (parâmetros nome e contato).' })}
+      ${field({ name: 'presale_alert_hours', label: 'Alertar pré-venda sem acesso ou sem preenchimento após (horas)', type: 'number', value: s.presale_alert_hours, min: 1, help: 'Cria a tarefa urgente "Revisar pré-venda" para o especialista.' })}
+      ${field({ name: 'cash_reserve_min', label: 'Reserva mínima de caixa', type: 'money', value: s.cash_reserve_min, help: 'Relatório "Saldos, projeção e excedente de caixa": o que passar disso é excedente.' })}
+      ${field({ name: 'require_sale_checklist', label: 'Exigir a ficha de pré-venda completa para concluir a venda', type: 'checkbox', value: s.require_sale_checklist, full: true })}
     </div><button class="btn primary" type="submit">Salvar</button></form>
+    <form class="card" id="flow"><h3>Pré-venda, venda e pós-venda</h3><div class="grid">
+      ${field({ name: 'presale_payment_first', label: 'Ordem depois do termo de adesão', type: 'select', options: [{ value: 'false', label: 'Contrato assinado → pagamento → comprovante (padrão)' }, { value: 'true', label: 'Pagamento → comprovante → contrato assinado' }], value: String(!!s.presale_payment_first), allowEmpty: false, full: true, help: 'Vale para as novas pré-vendas; as que estão em andamento mantêm a ordem em que começaram.' })}
+      ${field({ name: 'formalization_sla_days', label: 'Prazo da formalização pelo especialista (dias após o pagamento)', type: 'number', value: s.formalization_sla_days, min: 1, help: 'Comprovante anexado e alocação da cota informada.' })}
+      ${field({ name: 'formalization_bonus_pct', label: 'Bônus de formalização (% do crédito)', type: 'number', value: s.formalization_bonus_pct, min: 0, step: '0.01', help: '0 = sem bônus. Pago ao especialista que fez a formalização no prazo.' })}
+      ${field({ name: 'postsale_referral_min_nps', label: 'Pedir indicações a partir da nota NPS', type: 'number', value: s.postsale_referral_min_nps, min: 0, help: '9 = só promotores.' })}
+      <h4 class="full">Linha do tempo do pós-venda (dias após a confirmação da venda)</h4>
+      ${(state.meta.options.etapa_pos_venda || []).filter((o) => o.active !== 0).map((o) => field({ name: `pd.${o.value}`, label: `D+ · ${o.label}`, type: 'number', value: s.postsale_days?.[o.value] ?? 0, min: 0 }))}
+    </div><button class="btn primary" type="submit">Salvar fluxo</button></form>
+    <form class="card" id="docs"><h3>Documentos obrigatórios para a venda</h3>
+      <p class="hint">Marque os tipos de documento exigidos na ficha de pré-venda de cada tipo de pessoa. Os tipos podem ser editados em Listas › Tipos de documento.</p>
+      <div class="cols">${['PF', 'PJ'].map((k) => html`<div><h4>${k === 'PF' ? 'Pessoa física' : 'Pessoa jurídica'}</h4>${(state.meta.options.tipo_documento || []).filter((o) => o.active).map((o) => html`<label class="check"><input type="checkbox" name="${k}.${o.value}" ${(s.doc_checklist?.[k] || []).includes(o.value) ? 'checked' : ''}> ${o.label}</label>`)}</div>`)}</div>
+      <button class="btn primary" type="submit">Salvar documentos</button></form>
     <section class="card"><h3>Importações recentes</h3><div id="imports"></div><p><a href="#/importar">Nova importação →</a></p></section>`);
+    $('#flow', box).addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const d = formData(e.target);
+      const body = { postsale_days: {} };
+      for (const [k, v] of Object.entries(d)) {
+        if (k.startsWith('pd.')) body.postsale_days[k.slice(3)] = Number(v || 0);
+        else body[k] = k === 'presale_payment_first' ? v === 'true' : v;
+      }
+      try {
+        await patch('/api/configuracoes', body);
+        await refreshMeta();
+        toast('Fluxo de venda e pós-venda salvo.');
+      } catch (ex) {
+        toastError(ex);
+      }
+    });
+    $('#docs', box).addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const dc = { PF: [], PJ: [] };
+      for (const el of e.target.elements) if (el.type === 'checkbox' && el.checked) dc[el.name.split('.')[0]].push(el.name.split('.')[1]);
+      try {
+        await patch('/api/configuracoes', { doc_checklist: dc });
+        await refreshMeta();
+        toast('Documentos obrigatórios salvos.');
+      } catch (ex) {
+        toastError(ex);
+      }
+    });
     $('#gen', box).addEventListener('submit', async (e) => {
       e.preventDefault();
       try {
@@ -410,22 +633,5 @@ const RENDER = {
       { label: 'Ação', key: 'action' },
       { label: 'Detalhes', render: (r) => (r.changes ? html`<code class="clip">${JSON.stringify(r.changes)}</code>` : '—') },
     ], rows)}</section>`);
-  },
-
-  async conta(box) {
-    render(box, html`<form class="card narrow" id="pw"><h3>Alterar minha senha</h3>
-      ${field({ name: 'current', label: 'Senha atual', type: 'password', required: true })}
-      ${field({ name: 'password', label: 'Nova senha (mín. 8 caracteres)', type: 'password', required: true })}
-      <button class="btn primary" type="submit">Alterar senha</button></form>`);
-    $('#pw', box).addEventListener('submit', async (e) => {
-      e.preventDefault();
-      try {
-        await post('/api/me/senha', formData(e.target));
-        toast('Senha alterada.');
-        e.target.reset();
-      } catch (ex) {
-        toastError(ex);
-      }
-    });
   },
 };

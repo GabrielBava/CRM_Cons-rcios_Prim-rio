@@ -1,5 +1,5 @@
 'use strict';
-const { TASK_TYPES, MEETING_OUTCOMES } = require('../constants');
+const { TASK_TYPES, MEETING_OUTCOMES, TASK_PRIORITIES } = require('../constants');
 const { loadContact, visibleOwnerIds, childScope, assertAssignable, audit, requireWrite, paging } = require('../core');
 const { badRequest, notFound, clean, toIso, nowIso } = require('../util');
 const { tx } = require('../db');
@@ -27,15 +27,20 @@ function createTask(db, user, data) {
   if (contactId) loadContact(db, user, contactId, { write: true });
   const assigned = data.assigned_to ? Number(data.assigned_to) : user.id;
   assertAssignable(db, user, assigned);
+  const priority = data.priority || 'normal';
+  if (!TASK_PRIORITIES[priority]) throw badRequest('Prioridade inválida.');
   return tx(db, () => {
     const now = nowIso();
     const r = db
       .prepare(
-        `INSERT INTO tasks (contact_id, opportunity_id, type, title, notes, due_at, assigned_to, created_by, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tasks (contact_id, opportunity_id, type, title, notes, due_at, assigned_to, priority, created_by, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(contactId, oppId, type, title, clean(data.notes) ?? null, due, assigned, user.id, now, now);
+      .run(contactId, oppId, type, title, clean(data.notes) ?? null, due, assigned, priority, user.id, now, now);
     const id = Number(r.lastInsertRowid);
+    if (assigned && assigned !== user.id) {
+      require('./notifications').notify(db, assigned, { kind: 'tarefa', level: priority === 'urgente' ? 'danger' : 'info', title: `Nova tarefa de ${user.name}: ${title}`, body: `Prazo: ${new Date(due).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' })}`, link: contactId ? `#/leads/${contactId}` : '#/agenda' });
+    }
     if (contactId) {
       insertActivity(db, {
         contact_id: contactId,
@@ -72,6 +77,13 @@ function updateTask(db, user, id, data) {
   const now = nowIso();
   if (data.action === 'concluir' || data.action === 'cancelar') {
     if (t.status !== 'pendente') throw badRequest('Esta tarefa já foi encerrada.');
+    // Tarefa de aproximação (criada pela próxima ação de uma atividade): só pode ser concluída
+    if (data.action === 'cancelar' && t.source_activity_id) throw badRequest('Tarefa de aproximação: não pode ser cancelada. Conclua registrando o que foi feito (e a próxima ação, se não houve contato).');
+    // Concluir registrando a atividade feita (canal, resultado, observação e a próxima ação, que vira uma nova tarefa)
+    if (data.action === 'concluir' && data.activity && typeof data.activity === 'object' && t.contact_id && t.type !== 'reuniao') {
+      const act = require('./activities').createActivity(db, user, { ...data.activity, contact_id: t.contact_id, opportunity_id: t.opportunity_id || data.activity.opportunity_id });
+      data = { ...data, notes: clean(data.notes) || `Concluída com a atividade #${act}${data.activity.notes ? `: ${clean(data.activity.notes)}` : ''}` };
+    }
     const status = data.action === 'concluir' ? 'concluida' : 'cancelada';
     let outcome = clean(data.outcome);
     if (t.type === 'reuniao' && status === 'concluida') {
@@ -115,10 +127,16 @@ function updateTask(db, user, id, data) {
   if (data.due_at !== undefined) {
     upd.due_at = toIso(data.due_at);
     if (!upd.due_at) throw badRequest('Data inválida.');
+    // Reunião reagendada mantém a duração
+    if (t.ends_at) upd.ends_at = new Date(Date.parse(upd.due_at) + Math.max(0, Date.parse(t.ends_at) - Date.parse(t.due_at))).toISOString();
   }
   if (data.assigned_to !== undefined) {
     assertAssignable(db, user, Number(data.assigned_to));
     upd.assigned_to = Number(data.assigned_to);
+  }
+  if (data.priority !== undefined) {
+    if (!TASK_PRIORITIES[data.priority]) throw badRequest('Prioridade inválida.');
+    upd.priority = data.priority;
   }
   const keys = Object.keys(upd);
   if (!keys.length) return;
@@ -153,8 +171,13 @@ function listTasks(db, user, q) {
     params.push(Number(q.assigned_to));
   }
   if (q.type) {
-    where.push('t.type = ?');
-    params.push(q.type);
+    const types = String(q.type).split(',');
+    where.push(`t.type IN (${types.map(() => '?').join(',')})`);
+    params.push(...types);
+  }
+  if (q.priority) {
+    where.push('t.priority = ?');
+    params.push(q.priority);
   }
   if (q.contact_id) {
     where.push('t.contact_id = ?');
@@ -176,7 +199,7 @@ function listTasks(db, user, q) {
   const rows = db
     .prepare(
       `SELECT t.*, c.name AS contact_name, c.code AS contact_code, c.optouts AS contact_optouts, u.name AS assigned_name, o.code AS opportunity_code
-       ${base} ORDER BY t.status = 'pendente' DESC, t.due_at ${q.status && q.status !== 'pendente' ? 'DESC' : 'ASC'} LIMIT ? OFFSET ?`,
+       ${base} ORDER BY t.status = 'pendente' DESC, ${q.status === 'pendente' ? "t.priority = 'urgente' DESC, " : ''}t.due_at ${q.status && q.status !== 'pendente' ? 'DESC' : 'ASC'} LIMIT ? OFFSET ?`,
     )
     .all(...params, limit, offset);
   rows.forEach((r) => (r.contact_optouts = JSON.parse(r.contact_optouts || '[]')));

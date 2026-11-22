@@ -4,3 +4,6 @@ data/
 *.db-wal
 *.db-shm
 .env
+dist/
+*.db.key
+config.env

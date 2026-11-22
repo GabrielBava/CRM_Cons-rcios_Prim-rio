@@ -27,8 +27,46 @@ export function html(strings, ...vals) {
   });
   return new Raw(out);
 }
+/**
+ * Plural correto (manual, tom de voz): "1 tarefa", "2 tarefas" em vez de "tarefa(s)".
+ * Usa o número mais próximo antes da palavra, no mesmo bloco de texto; sem número, mantém como está.
+ */
+const PLURAL_RE = /(?<![\wÀ-ÿ])(\d[\d.,]*)|([A-Za-zÀ-ÿ-]+)\((s|es|ões|eis|ns)\)/g;
+const BLOCK_TAG = /^<\/?(li|div|p|td|th|tr|h\d|section|article|ul|ol|button|label|option|header|footer|br|hr|dt|dd)\b/i;
+function pluralWord(base, suf, n) {
+  if (n === 1) return base;
+  if (suf === 'ões') return base.endsWith('ão') ? `${base.slice(0, -2)}ões` : `${base}ões`;
+  if (suf === 'eis') return base.endsWith('il') ? `${base.slice(0, -2)}eis` : `${base}eis`;
+  if (suf === 'ns') return base.endsWith('m') ? `${base.slice(0, -1)}ns` : `${base}ns`;
+  return base + suf;
+}
+export function fixPlurals(str) {
+  if (!str || str.indexOf('(') === -1) return str;
+  let last = null;
+  let skip = false;
+  return String(str)
+    .split(/(<[^>]*>)/)
+    .map((part) => {
+      if (part.startsWith('<')) {
+        if (/^<(textarea|pre|code)\b/i.test(part)) skip = true;
+        else if (/^<\/(textarea|pre|code)>/i.test(part)) skip = false;
+        if (BLOCK_TAG.test(part)) last = null;
+        return part;
+      }
+      if (skip) return part;
+      return part.replace(PLURAL_RE, (m, num, base, suf) => {
+        if (num) {
+          last = Number(num.replace(/\./g, '').replace(',', '.'));
+          return m;
+        }
+        return last == null || Number.isNaN(last) ? m : pluralWord(base, suf, last);
+      });
+    })
+    .join('');
+}
+
 export const render = (el, tpl) => {
-  el.innerHTML = val(tpl);
+  el.innerHTML = fixPlurals(val(tpl));
   return el;
 };
 export const $ = (sel, root = document) => root.querySelector(sel);
@@ -53,6 +91,11 @@ const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 export const fmtDate = (v) => (v ? new Date(v.length === 10 ? `${v}T12:00:00` : v).toLocaleDateString('pt-BR') : '—');
 export const fmtDateTime = (v) =>
   v ? new Date(v).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: tz }) : '—';
+/** Data de hoje (AAAA-MM-DD) no fuso do navegador — toISOString() usaria UTC e viraria "amanhã" à noite. */
+export const todayLocal = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
 export const fmtMoney = (v) => (v == null || v === '' ? '—' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
 export const fmtNum = (v) => (v == null || v === '' ? '—' : Number(v).toLocaleString('pt-BR'));
 export const fmtPct = (v) => (v == null ? '—' : `${Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%`);
@@ -151,13 +194,50 @@ export function field(f) {
       input = html`<input type="datetime-local" ${common} value="${toLocalInput(f.value)}">`;
       break;
     case 'money':
+      // Valor em reais com máscara (R$ 1.234,56); formData devolve o número
+      input = html`<div class="money-input"><span aria-hidden="true">R$</span><input type="text" inputmode="decimal" autocomplete="off" data-money ${common} value="${fmtMoneyInput(f.value)}"></div>`;
+      break;
     case 'number':
-      input = html`<input type="number" step="${f.step || (f.type === 'money' ? '0.01' : 'any')}" min="${f.min ?? ''}" ${common} value="${f.value ?? ''}">`;
+      input = html`<input type="number" step="${f.step || 'any'}" min="${f.min ?? ''}" ${common} value="${f.value ?? ''}">`;
       break;
     default:
       input = html`<input type="${f.type || 'text'}" ${common} value="${f.value ?? ''}" ${f.maxlength ? html`maxlength="${f.maxlength}"` : ''}>`;
   }
-  return html`<div class="${cls}"><label for="${id}">${f.label}${f.required ? html` <span class="req">*</span>` : ''}${f.recommended ? html` <span class="rec" title="Campo recomendado">recomendado</span>` : ''}</label>${input}${f.help ? html`<small>${f.help}</small>` : ''}</div>`;
+  return html`<div class="${cls}"><label for="${id}">${f.label}${f.required ? html` <span class="req">*</span>` : ''}${f.recommended ? html` <span class="rec" title="Campo recomendado">recomendado</span>` : ''}${f.sale ? html` <span class="rec sale" title="Obrigatório para concluir a venda">venda</span>` : ''}</label>${input}${f.help ? html`<small>${f.help}</small>` : ''}</div>`;
+}
+
+/* ---------------- Valores em reais (máscara dos campos de valor) ---------------- */
+/** "R$ 250.000,00", "250000", "250.000" ou "1.234,5" → número; '' quando vazio; NaN quando inválido. */
+export function parseMoneyBR(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return '';
+  let t = s.replace(/[R$\s]/g, '');
+  if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.');
+  else if (/^-?\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, '');
+  const n = Number(t);
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : NaN;
+}
+export const fmtMoneyInput = (v) => (v == null || v === '' || Number.isNaN(Number(v)) ? '' : Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+/** Número de um campo com máscara (0 quando vazio ou inválido). */
+export const moneyValue = (el) => {
+  const n = parseMoneyBR(el?.value);
+  return n === '' || Number.isNaN(n) ? 0 : n;
+};
+if (typeof document !== 'undefined' && !window.__moneyMask) {
+  window.__moneyMask = true;
+  // Só dígitos, vírgula e ponto enquanto digita; formata ao sair do campo
+  document.addEventListener('input', (e) => {
+    const el = e.target;
+    if (!el.matches?.('input[data-money]')) return;
+    const clean = el.value.replace(/[^\d.,-]/g, '');
+    if (clean !== el.value) el.value = clean;
+  });
+  document.addEventListener('focusout', (e) => {
+    const el = e.target;
+    if (!el.matches?.('input[data-money]')) return;
+    const n = parseMoneyBR(el.value);
+    if (n !== '' && !Number.isNaN(n)) el.value = fmtMoneyInput(n);
+  });
 }
 
 /** Lê um formulário para objeto. Campos datetime-local são convertidos para ISO. */
@@ -170,7 +250,10 @@ export function formData(form) {
       if (el.checked) out[el.name] = el.value;
     }
     else if (el.type === 'datetime-local') out[el.name] = fromLocalInput(el.value);
-    else out[el.name] = el.value;
+    else if (el.dataset.money !== undefined) {
+      const n = parseMoneyBR(el.value);
+      out[el.name] = n === '' ? '' : Number.isNaN(n) ? el.value : String(n);
+    } else out[el.name] = el.value;
   }
   return out;
 }
@@ -186,7 +269,7 @@ export function toast(msg, kind = 'ok') {
   const t = document.createElement('div');
   t.className = `toast ${kind}`;
   t.setAttribute('role', 'status');
-  t.textContent = msg;
+  t.textContent = fixPlurals(msg);
   box.appendChild(t);
   setTimeout(() => t.classList.add('hide'), kind === 'error' ? 6000 : 3500);
   setTimeout(() => t.remove(), kind === 'error' ? 6600 : 4000);
@@ -202,7 +285,7 @@ export function modal({ title, body, submitLabel = 'Salvar', onSubmit, wide = fa
   return new Promise((resolve) => {
     const wrap = document.createElement('div');
     wrap.className = 'modal-backdrop';
-    wrap.innerHTML = val(html`<div class="modal ${wide ? 'wide' : ''}" role="dialog" aria-modal="true" aria-label="${title}">
+    wrap.innerHTML = fixPlurals(val(html`<div class="modal ${wide ? 'wide' : ''}" role="dialog" aria-modal="true" aria-label="${title}">
       <form novalidate>
         <header><h2>${title}</h2><button type="button" class="icon" data-close aria-label="Fechar">×</button></header>
         <div class="modal-body">${body}</div>
@@ -211,7 +294,7 @@ export function modal({ title, body, submitLabel = 'Salvar', onSubmit, wide = fa
           <button type="button" class="btn ghost" data-close>${onSubmit ? cancelLabel : 'Fechar'}</button>
           ${onSubmit ? html`<button type="submit" class="btn ${danger ? 'danger' : 'primary'}">${submitLabel}</button>` : ''}
         </footer>
-      </form></div>`);
+      </form></div>`));
     document.body.appendChild(wrap);
     const form = wrap.querySelector('form');
     const errBox = wrap.querySelector('.modal-error');
@@ -249,7 +332,7 @@ export function modal({ title, body, submitLabel = 'Salvar', onSubmit, wide = fa
       }
     });
     if (onMount) onMount(form, close);
-    const first = form.querySelector('input:not([type=hidden]),select,textarea');
+    const first = form.querySelector('input:not([type=hidden]):not([data-nofocus]),select:not([data-nofocus]),textarea:not([data-nofocus])');
     if (first) setTimeout(() => first.focus(), 30);
   });
 }
@@ -264,7 +347,7 @@ export function table(columns, rows, { rowAttr, emptyMsg = 'Nenhum registro enco
   if (!rows.length) return empty(emptyMsg);
   return html`<div class="table-wrap"><table>
     <thead><tr>${columns.map((c) => html`<th class="${c.cls || ''}">${c.label}</th>`)}</tr></thead>
-    <tbody>${rows.map((r) => html`<tr ${rowAttr ? raw(rowAttr(r)) : ''}>${columns.map((c) => html`<td class="${c.cls || ''}" data-label="${c.label}">${c.render ? c.render(r) : r[c.key] ?? '—'}</td>`)}</tr>`)}</tbody>
+    <tbody>${rows.map((r) => html`<tr ${rowAttr ? raw(rowAttr(r)) : ''}>${columns.map((c) => html`<td class="${c.cls || ''}" data-label="${typeof c.label === 'string' ? c.label : ''}">${c.render ? c.render(r) : r[c.key] ?? '—'}</td>`)}</tr>`)}</tbody>
   </table></div>`;
 }
 
@@ -340,4 +423,39 @@ export function readFilters(form) {
   $$('.custom-range', form).forEach((el) => (el.hidden = d.period !== 'custom'));
   const range = d.period ? periodRange(d.period, { from: d.cfrom, to: d.cto }) : {};
   return { values: d, query: { ...range, owner_id: d.owner_id, origin: d.origin, stage_id: d.stage_id, product_id: d.product_id, status: d.status } };
+}
+
+/** Subnavegação dentro de um item do menu (ex.: CRM › Funil | Leads | Atividades). items: [[href, rótulo, chave]] */
+export function subnav(items, active) {
+  return html`<nav class="subnav">${items.map(([href, label, key]) => html`<a href="${href}" class="${key === active ? 'active' : ''}">${label}</a>`)}</nav>`;
+}
+export const crmTabs = (active) =>
+  subnav(
+    [
+      ['#/funil', 'Pipeline', 'funil'],
+      ['#/leads', 'Leads e prospects', 'leads'],
+      ['#/atividades', 'Ligações e atividades', 'atividades'],
+    ],
+    active,
+  );
+export const hasModule = (m) => (state.user?.modules || []).includes(m);
+/** Mês atual no formato AAAA-MM e rótulo por extenso. */
+export const monthLabel = (m) => new Date(`${m}-15T12:00:00`).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+
+/** Foto do usuário (ou iniciais, quando não houver foto). size: px. */
+export function avatar(u, size = 32) {
+  const initials = String(u?.name || '?').trim().split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]).join('').toUpperCase();
+  const hue = [...String(u?.name || '')].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
+  if (u?.photo) return html`<img class="avatar" src="${u.photo}" alt="" width="${size}" height="${size}" style="width:${size}px;height:${size}px">`;
+  return html`<span class="avatar initials" aria-hidden="true" style="width:${size}px;height:${size}px;font-size:${Math.round(size * 0.4)}px;background:hsl(${hue} 45% 42%)">${initials}</span>`;
+}
+
+/** Valor curto para espaços pequenos (manual, tom de voz): R$ 1,4 mi · R$ 247,9 mil. */
+export function fmtMoneyShort(v) {
+  if (v == null || v === '') return '—';
+  const n = Number(v);
+  const f = (x) => x.toLocaleString('pt-BR', { maximumFractionDigits: 1 });
+  if (Math.abs(n) >= 1e6) return `R$ ${f(n / 1e6)} mi`;
+  if (Math.abs(n) >= 1e4) return `R$ ${f(n / 1e3)} mil`;
+  return fmtMoney(n);
 }

@@ -11,7 +11,16 @@
     "start": "node --disable-warning=ExperimentalWarning server/index.js",
     "dev": "node --disable-warning=ExperimentalWarning --watch server/index.js",
     "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js",
-    "demo": "node --disable-warning=ExperimentalWarning scripts/demo-data.js"
+    "demo": "node --disable-warning=ExperimentalWarning scripts/demo-data.js",
+    "build:preview": "node scripts/build-preview.js",
+    "local": "node --disable-warning=ExperimentalWarning scripts/local.js",
+    "supabase": "node --disable-warning=ExperimentalWarning scripts/supabase-sync.js",
+    "pg:schema": "node --disable-warning=ExperimentalWarning scripts/pg-schema.js",
+    "test:pg": "node --disable-warning=ExperimentalWarning --test --test-concurrency=1 test/*.test.js",
+    "teste:online": "node scripts/teste-online.js"
   },
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "sql.js": "^1.14.2"
+  }
 }

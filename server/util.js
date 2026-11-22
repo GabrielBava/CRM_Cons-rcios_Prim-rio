@@ -96,6 +96,40 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(ba, bb);
 }
 
+/**
+ * Segredos guardados no banco (ex.: senha do portal da administradora): AES-256-GCM com a chave CRM_SECRET_KEY
+ * (o servidor cria o arquivo <banco>.key quando a variável não é informada).
+ */
+function secretKey() {
+  if (!secretKey.k) {
+    const raw = process.env.CRM_SECRET_KEY;
+    secretKey.k = raw ? crypto.createHash('sha256').update(String(raw)).digest() : crypto.randomBytes(32);
+  }
+  return secretKey.k;
+}
+function sealSecret(text) {
+  if (text == null || text === '') return null;
+  // Versão de teste no navegador (sem AES síncrono): só codifica, nunca use com senhas reais
+  if (typeof crypto.createCipheriv !== 'function') return `p0:${Buffer.from(String(text)).toString('base64')}`;
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv('aes-256-gcm', secretKey(), iv);
+  const enc = Buffer.concat([c.update(String(text), 'utf8'), c.final()]);
+  return `g1:${iv.toString('base64')}:${c.getAuthTag().toString('base64')}:${enc.toString('base64')}`;
+}
+function openSecret(blob) {
+  if (!blob) return null;
+  const [v, a, b, c] = String(blob).split(':');
+  if (v === 'p0') return Buffer.from(a, 'base64').toString('utf8');
+  if (v !== 'g1' || typeof crypto.createDecipheriv !== 'function') return null;
+  try {
+    const d = crypto.createDecipheriv('aes-256-gcm', secretKey(), Buffer.from(a, 'base64'));
+    d.setAuthTag(Buffer.from(b, 'base64'));
+    return Buffer.concat([d.update(Buffer.from(c, 'base64')), d.final()]).toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
 /** Converte valores vazios em null e remove espaços. */
 function clean(v) {
   if (v === undefined) return undefined;
@@ -203,6 +237,8 @@ function toCSV(columns, rows) {
 
 module.exports = {
   nowIso,
+  sealSecret,
+  openSecret,
   HttpError,
   badRequest,
   forbidden,

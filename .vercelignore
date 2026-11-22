@@ -1,0 +1,11 @@
+# Não vai para a Vercel (a função usa só server/, api/ e public/)
+dist/
+data/
+test/
+docs/
+deploy/
+supabase/
+scripts/
+*.db
+*.db-*
+config.env

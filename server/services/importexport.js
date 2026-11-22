@@ -1,6 +1,6 @@
 'use strict';
 const { requireWrite, assertAssignable, audit, isManager, contactScope } = require('../core');
-const { badRequest, forbidden, parseCSV, toCSV, normalizePhone, normalizeEmail, digits, clean, nowIso, maskDoc } = require('../util');
+const { badRequest, forbidden, parseCSV, toCSV, toNumber, normalizePhone, normalizeEmail, digits, clean, nowIso, maskDoc } = require('../util');
 const { tx } = require('../db');
 const { createContact, normalizeInput, findDuplicates, insertOrigin, listContacts } = require('./contacts');
 const { insertActivity, optouts } = require('./activities');
@@ -44,6 +44,7 @@ const IMPORT_FIELDS = {
   utm_content: ['utm_content'],
   utm_term: ['utm_term'],
   received_at: ['created_time', 'data', 'data de recebimento', 'data de criacao'],
+  credit_value: ['credito desejado', 'crédito desejado', 'valor do credito', 'credito', 'crédito', 'valor da carta'],
 };
 
 const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
@@ -93,6 +94,7 @@ function recordToContact(db, rec, defaults) {
     campaign: rec.campaign || defaults.campaign,
     initial_notes: rec.initial_notes,
     contact_name: kind === 'PJ' ? rec.contact_name : undefined,
+    credit_value: rec.credit_value || undefined,
   };
 }
 
@@ -116,6 +118,14 @@ function analyze(db, user, body) {
     try {
       normalized = normalizeInput(db, data, data.kind);
       if (!normalized.name) errors.push('Nome ausente.');
+      if (!normalized.phone1_norm && !normalized.phone2_norm && !normalized.whatsapp_norm && !normalized.email) errors.push('Informe ao menos um telefone ou e-mail.');
+      if (data.credit_value) {
+        try {
+          data.credit_value = toNumber(data.credit_value);
+        } catch {
+          errors.push(`Crédito desejado inválido: "${data.credit_value}".`);
+        }
+      }
     } catch (e) {
       errors.push(e.message);
     }
@@ -175,14 +185,21 @@ function preview(db, user, body) {
       duplicate_in_file: r.duplicate_in_file,
     })),
     row_errors: a.rows.filter((r) => r.errors.length).map((r) => ({ line: r.line, errors: r.errors })),
+    // Linhas que já existem no CRM ou se repetem no arquivo: ficam fora da importação (só os cadastros novos sobem para o funil)
+    duplicate_rows: a.rows.filter((r) => !r.errors.length && (r.duplicate || r.duplicate_in_file)).slice(0, 2000).map((r) => ({
+      line: r.line, name: r.data.name, phone1: r.data.phone1, email: r.data.email,
+      reason: r.duplicate_in_file ? `repetido no arquivo (igual à linha ${r.duplicate_in_file})` : `já existe no CRM: ${r.duplicate.code}${r.duplicate.name ? ` — ${r.duplicate.name}` : ' (outro responsável)'} · ${(r.duplicate.reasons || []).join(', ')}`,
+    })),
   };
 }
 
 function commit(db, user, body) {
   requireWrite(user);
   const policy = body.duplicate_policy === 'adicionar_origem' ? 'adicionar_origem' : 'ignorar';
-  const ownerDefault = body.owner_id ? Number(body.owner_id) : user.id;
-  assertAssignable(db, user, ownerDefault);
+  // "roleta": cada cadastro novo entra sem responsável e é distribuído na hora pela roleta
+  const byRoleta = body.owner_id === 'roleta' && isManager(user);
+  const ownerDefault = byRoleta ? null : body.owner_id ? Number(body.owner_id) : user.id;
+  if (ownerDefault) assertAssignable(db, user, ownerDefault);
   const a = analyze(db, user, body);
   const now = nowIso();
   const imp = db
@@ -227,14 +244,15 @@ function commit(db, user, body) {
     try {
       let owner = r.data.owner_id || ownerDefault;
       if (user.role === 'consultor') owner = user.id;
-      assertAssignable(db, user, owner);
-      createContact(
+      if (owner) assertAssignable(db, user, owner);
+      const created = createContact(
         db,
         user,
         { ...r.data, owner_id: owner, origin_details: originDetails, create_opportunity: body.create_opportunity !== false },
         { skipDuplicateCheck: true, source: 'importacao', sourceLabel: `importação #${importId}`, sourceRef: `importacao:${importId}` },
       );
       result.created++;
+      if (!owner && require('./distribution').autoDistribute(db, created.id)) result.distributed = (result.distributed || 0) + 1;
     } catch (e) {
       result.errors.push({ line: r.line, message: e.message });
     }
@@ -265,6 +283,8 @@ const optLabel = (db) => {
 
 function exportData(db, user, entity, q) {
   if (user.role === 'leitura') throw forbidden('Perfis de leitura não exportam dados pessoais. Use os relatórios agregados.');
+  // Exportação em CSV é exclusiva do administrador (a lista da discadora segue liberada para líderes e especialistas)
+  if (entity !== 'lista_discadora' && user.role !== 'admin') throw forbidden('A exportação em CSV é exclusiva do administrador.');
   const L = optLabel(db);
   const all = { ...q, all: true };
   let columns;
@@ -339,8 +359,22 @@ function exportData(db, user, entity, q) {
         { label: 'Cota', key: 'quota_code' }, { label: 'Crédito', key: 'credit_value' }, { label: 'Prazo', key: 'term_months' }, { label: 'Cotas', key: 'quotas' },
         { label: 'Contratação', key: 'contracted_at' }, { label: 'Status', get: (r) => L('status_contrato', r.status) }, { label: 'Modalidade', get: (r) => L('modalidade_pagamento', r.payment_modality) },
         { label: 'Estratégia', get: (r) => L('estrategia', r.strategy) }, { label: 'Proposta', key: 'proposal_code' }, { label: 'Responsável', key: 'owner_name' },
+        { label: 'Nº contrato administradora', key: 'contract_number' }, { label: 'Valor da parcela', key: 'installment_value' }, { label: 'Dia de vencimento', key: 'due_day' },
+        { label: 'Contemplado em', key: 'contemplated_at' }, { label: 'Vendedor', key: 'seller_name' }, { label: 'Valor de venda (carta)', key: 'sale_value' },
       ];
       break;
+    case 'financeiro': {
+      const { listEntries, STATUS_LABEL } = require('./finance');
+      rows = listEntries(db, user, all).rows;
+      columns = [
+        { label: 'Código', key: 'code' }, { label: 'Cadastro', key: 'contact_code' }, { label: 'Cliente', key: 'contact_name' }, { label: 'Contrato', key: 'contract_code' },
+        { label: 'Nº contrato administradora', key: 'contract_number' }, { label: 'Tipo', get: (r) => L('tipo_lancamento', r.type) }, { label: 'Parcela', key: 'installment_number' },
+        { label: 'Vencimento', key: 'due_date' }, { label: 'Valor', key: 'amount' }, { label: 'Situação', get: (r) => STATUS_LABEL[r.display_status] },
+        { label: 'Dias em atraso', key: 'days_late' }, { label: 'Pago em', key: 'paid_at' }, { label: 'Valor pago', key: 'paid_amount' },
+        { label: 'Forma de pagamento', get: (r) => L('forma_pagamento', r.payment_method) }, { label: 'Responsável', key: 'owner_name' }, { label: 'Observações', key: 'notes' },
+      ];
+      break;
+    }
     case 'lista_discadora': {
       // Lista para campanhas da discadora: exclui quem se opôs a ligações e cadastros sem telefone
       const list = listContacts(db, user, all).rows.filter((r) => !r.optouts.includes('todos') && !r.optouts.includes('ligacao') && (r.phone1 || r.whatsapp) && !r.anonymized_at);

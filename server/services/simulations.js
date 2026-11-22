@@ -245,6 +245,32 @@ function createManual(db, user, data) {
   });
 }
 
+/**
+ * "Gerar simulação" na ficha: registra apenas quando e por quem a simulação foi feita.
+ * Os valores ficam no simulador; quando ele for integrado, o retorno completa este registro.
+ */
+function registerQuick(db, user, data) {
+  const c = loadContact(db, user, data.contact_id, { write: true });
+  if (c.anonymized_at) throw badRequest('Cadastro anonimizado.');
+  let oppId = null;
+  if (data.opportunity_id) {
+    const o = db.prepare('SELECT id FROM opportunities WHERE id = ? AND contact_id = ?').get(Number(data.opportunity_id), c.id);
+    if (!o) throw badRequest('Oportunidade não pertence a este cadastro.');
+    oppId = o.id;
+  }
+  return tx(db, () => {
+    const now = nowIso();
+    const code = nextCode(db, 'simulation', 'SIM');
+    const r = db
+      .prepare("INSERT INTO simulations (code, contact_id, opportunity_id, source, status, user_id, created_at, updated_at) VALUES (?, ?, ?, 'crm', 'salva', ?, ?, ?)")
+      .run(code, c.id, oppId, user.id, now, now);
+    const id = Number(r.lastInsertRowid);
+    insertActivity(db, { contact_id: c.id, opportunity_id: oppId, type: 'simulacao', notes: `Simulação ${code} gerada por ${user.name}.`, user_id: user.id, source: 'manual', ref_type: 'simulation', ref_id: id });
+    audit(db, user, 'simulation', id, 'gerada', { code }, c.id);
+    return { id, code, created_at: now };
+  });
+}
+
 function updateManual(db, user, id, data) {
   const s = db.prepare('SELECT * FROM simulations WHERE id = ?').get(Number(id));
   if (!s) throw notFound('Simulação não encontrada.');
@@ -317,4 +343,4 @@ function listSimulations(db, user, q) {
   return { total, page, limit, rows };
 }
 
-module.exports = { simulatorAvailability, createLink, context, receiveFromSimulator, createManual, updateManual, getSimulation, listSimulations, resolveToken };
+module.exports = { simulatorAvailability, createLink, context, receiveFromSimulator, createManual, registerQuick, updateManual, getSimulation, listSimulations, resolveToken };

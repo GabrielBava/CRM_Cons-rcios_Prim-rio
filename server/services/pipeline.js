@@ -1,0 +1,221 @@
+'use strict';
+/**
+ * Regras de passagem do funil (modelo semelhante ao Pipedrive: critérios de entrada por etapa).
+ * - A passagem é sequencial: para avançar, o negócio vai para a próxima etapa, sem pular.
+ * - Cada etapa tem critérios de entrada verificados no servidor (configuráveis em Configurações › Funil).
+ * - Voltar etapas é permitido com justificativa. Nutrição e Perdido podem ser usados a qualquer momento, com motivo.
+ * - "Venda" só é alcançada pela confirmação do pagamento na tela de Vendas.
+ * - Prospect → Lead é livre. Lead → Tentativa exige uma tentativa de contato registrada (registrar a atividade no
+ *   painel do lead já avança). Tentativa → Qualificação exige a qualificação concluída. Qualificação → R1 exige a R1
+ *   agendada; R1 → R2, a R2 agendada (com a R1 feita); R2 → Negociação, uma proposta gerada (qualquer área).
+ * - Pipeline geral para todas as áreas (consórcio, planejamento, seguros, investimentos):
+ *   0 Prospect · 1 Lead · 2 Tentativa de contato · 3 Qualificação · 4 R1 · 5 R2 · 6 Negociação · 7 Venda;
+ *   Nutrição futura e Perdido são arquivados. O cliente que faltou à R1 fica na coluna R1 marcado como NS (no-show).
+ * - Perdido exige ao menos uma atividade registrada (ligação, WhatsApp, e-mail, direct…) e o motivo (MP).
+ */
+const { ATTEMPT_TYPES } = require('../constants');
+const { getSetting } = require('../db');
+
+const RULES = {
+  contato_valido: {
+    label: 'Telefone, WhatsApp ou e-mail cadastrado',
+    hint: 'Complete o contato na aba Cadastro.',
+    check: (db, o, c) => !!(c.phone1 || c.phone2 || c.whatsapp || c.email),
+  },
+  origem: {
+    label: 'Origem do lead informada',
+    hint: 'Informe a origem na aba Origem.',
+    check: (db, o, c) => !!c.origin,
+  },
+  tentativa_registrada: {
+    label: 'Ao menos uma tentativa de contato registrada (telefone, WhatsApp, e-mail, direct ou LinkedIn)',
+    hint: 'Registre a tentativa em Atividades: ao salvar, o lead avança para Tentativa de contato.',
+    check: (db, o, c) => !!db.prepare(`SELECT 1 FROM activities WHERE contact_id = ? AND type IN (${CONTACT_TYPES.map(() => '?').join(',')}) LIMIT 1`).get(c.id, ...CONTACT_TYPES),
+  },
+  triagem_concluida: {
+    label: 'Triagem concluída (interesse, dor, impacto, decisor, faixa de investimento e de renda)',
+    hint: 'Responda as 6 perguntas da Triagem na aba Qualificação do lead.',
+    check: (db, o) => !!o.triaged_at && (() => {
+      try {
+        return JSON.parse(o.triage || '{}').interesse === 'sim';
+      } catch {
+        return false;
+      }
+    })(),
+  },
+  qualificacao_concluida: {
+    label: 'Qualificação do cliente concluída',
+    hint: 'Preencha a qualificação (ao menos um campo) e clique em "Concluir qualificação".',
+    check: (db, o) => !!o.qualified_at,
+  },
+  proposta_gerada: {
+    label: 'Proposta gerada para o cliente (consórcio, seguros, planejamento ou investimentos)',
+    hint: 'Gere a proposta: ela aparece em Propostas e libera a Negociação.',
+    check: (db, o) => !!db.prepare("SELECT 1 FROM proposals WHERE opportunity_id = ? AND status NOT IN ('substituida') LIMIT 1").get(o.id),
+  },
+  contato_efetivo: {
+    label: 'Conversa efetiva com o lead registrada',
+    hint: 'Registre uma ligação atendida, mensagem recebida ou conversa.',
+    check: (db, o, c) => {
+      const efetivos = db.prepare("SELECT value, flags FROM options WHERE list = 'resultado_ligacao'").all().filter((r) => JSON.parse(r.flags || '{}').efetivo).map((r) => r.value);
+      const types = ['ligacao_recebida', 'mensagem_recebida', 'email_recebido', 'conversa_presencial', 'conversa_video', 'reuniao_realizada'];
+      const byType = db.prepare(`SELECT 1 FROM activities WHERE contact_id = ? AND type IN (${types.map(() => '?').join(',')}) LIMIT 1`).get(c.id, ...types);
+      const byResult = efetivos.length && db.prepare(`SELECT 1 FROM activities WHERE contact_id = ? AND result IN (${efetivos.map(() => '?').join(',')}) LIMIT 1`).get(c.id, ...efetivos);
+      return !!(byType || byResult);
+    },
+  },
+  qualificacao: {
+    label: 'Qualificação: objetivo, valor estimado e prioridade (curto, médio ou longo prazo); no consórcio, também a categoria',
+    hint: 'Preencha em "Detalhes" ou "Qualificação" no painel do lead.',
+    check: (db, o) => !!(o.objective_type && o.credit_value && o.urgency && (o.business_area !== 'consorcio' || o.credit_category)),
+  },
+  r1_agendada: {
+    label: 'R1 agendada',
+    hint: 'Clique em "Agendar R1" e escolha data e horário da reunião.',
+    // Reunião pendente ou já realizada (uma R1 em que o cliente faltou não conta: remarque)
+    check: (db, o, c) => !!meeting(db, c.id, 'r1', "(status = 'pendente' OR (status = 'concluida' AND outcome = 'realizada'))"),
+  },
+  r1_realizada: {
+    label: 'R1 realizada',
+    hint: 'No bloco da R1, clique em "Concluir" (ou conclua a tarefa com o resultado "Realizada").',
+    check: (db, o, c) => !!(meeting(db, c.id, 'r1', "status = 'concluida' AND outcome = 'realizada'") || db.prepare("SELECT 1 FROM activities WHERE contact_id = ? AND type = 'reuniao_realizada' LIMIT 1").get(c.id)),
+  },
+  r2_agendada: {
+    label: 'R2 agendada',
+    hint: 'Clique em "Agendar R2" e escolha data e horário da reunião.',
+    check: (db, o, c) => !!meeting(db, c.id, 'r2', "(status = 'pendente' OR (status = 'concluida' AND outcome = 'realizada'))"),
+  },
+  r2_realizada: {
+    label: 'R2 realizada',
+    hint: 'No bloco da R2, clique em "Concluir".',
+    check: (db, o, c) => !!meeting(db, c.id, 'r2', "status = 'concluida' AND outcome = 'realizada'"),
+  },
+  dados_r1: {
+    label: 'Dados da R1: fator decisor, momento financeiro e experiência com consórcio',
+    hint: 'Complete os blocos Capacidade e Decisão em "4. Negócio" › Editar qualificação.',
+    check: (db, o) => !!(o.decision_maker && o.financial_moment && (o.had_consortium || o.existing_products)),
+  },
+  proposta_apresentada: {
+    label: 'Proposta registrada e enviada ao cliente',
+    hint: 'Em Propostas, registre a proposta e marque como "Enviada ao cliente".',
+    check: (db, o) => !!db.prepare("SELECT 1 FROM proposals WHERE opportunity_id = ? AND status IN ('apresentada','em_analise','aprovada') LIMIT 1").get(o.id),
+  },
+  venda_confirmada: {
+    label: 'Venda com pagamento confirmado',
+    hint: 'A etapa Venda é preenchida automaticamente quando o pagamento é confirmado em Vendas.',
+    check: (db, o) => !!db.prepare("SELECT 1 FROM sales WHERE opportunity_id = ? AND status = 'confirmada' LIMIT 1").get(o.id),
+  },
+};
+
+/** Reunião R1/R2 do cadastro (tarefas antigas sem tipo contam como R1). */
+function meeting(db, contactId, kind, cond) {
+  return db.prepare(`SELECT 1 FROM tasks WHERE contact_id = ? AND type = 'reuniao' AND COALESCE(meeting_kind, 'r1') = ? AND ${cond} LIMIT 1`).get(contactId, kind);
+}
+
+/** Critérios de entrada padrão de cada etapa. */
+const DEFAULT_STAGE_RULES = {
+  prospect: [],
+  lead: [],
+  tentativa: ['tentativa_registrada'],
+  qualificado: ['triagem_concluida'],
+  r1: ['r1_agendada'],
+  r2: ['r1_realizada', 'r2_agendada'],
+  negociacao: ['proposta_gerada'],
+  venda: ['venda_confirmada'],
+  nutricao: [],
+  perdido: [],
+};
+
+/** Atividades de contato com o lead (qualquer canal): liberam a Tentativa de contato. */
+const CONTACT_TYPES = ['ligacao_realizada', 'tentativa_sem_atendimento', 'ligacao_recebida', 'mensagem_enviada', 'mensagem_recebida', 'email_enviado', 'email_recebido',
+  'direct_enviado', 'direct_recebido', 'linkedin_enviado', 'linkedin_recebido', 'conversa_presencial', 'conversa_video', 'reuniao_realizada'];
+/** Atividades que contam para poder dar o lead como perdido (o que o especialista fez de fato). */
+const WORK_TYPES = [...CONTACT_TYPES, 'reuniao_nao_realizada', 'observacao'];
+const hasWork = (db, contactId) => !!db.prepare(`SELECT 1 FROM activities WHERE contact_id = ? AND type IN (${WORK_TYPES.map(() => '?').join(',')}) LIMIT 1`).get(contactId, ...WORK_TYPES);
+
+function stageRules(db) {
+  const custom = getSetting(db, 'stage_rules');
+  const out = {};
+  for (const [k, v] of Object.entries(DEFAULT_STAGE_RULES)) {
+    out[k] = Array.isArray(custom?.[k]) ? custom[k].filter((r) => RULES[r]) : v;
+  }
+  out.venda = ['venda_confirmada'];
+  return out;
+}
+
+/** Avalia os critérios de uma etapa para o negócio. */
+function evaluate(db, opp, contact, stage) {
+  const keys = stage?.key ? stageRules(db)[stage.key] || [] : [];
+  return keys.map((k) => ({ key: k, label: RULES[k].label, hint: RULES[k].hint, ok: RULES[k].check(db, opp, contact) }));
+}
+
+const openStages = (db) => db.prepare("SELECT * FROM pipeline_stages WHERE active = 1 AND kind = 'aberta' ORDER BY position").all();
+/** Etapas que podem ser puladas sem critérios (Prospect → Tentativa de contato direto). */
+const SKIPPABLE = new Set(['lead']);
+/** Sequência do funil (etapas abertas, na ordem). */
+const mainStages = (db) => openStages(db);
+/** Posição do negócio na sequência principal. */
+function seqIndex(db, seq, stage) {
+  if (!stage) return -1;
+  return seq.findIndex((s) => s.id === stage.id);
+}
+
+/** Próxima etapa aberta depois da atual (ou null). */
+function nextStage(db, opp) {
+  const seq = mainStages(db);
+  const cur = db.prepare('SELECT * FROM pipeline_stages WHERE id = ?').get(opp.stage_id);
+  const i = seqIndex(db, seq, cur);
+  if (i >= 0 && i < seq.length - 1) return seq[i + 1];
+  if (i === seq.length - 1) return db.prepare("SELECT * FROM pipeline_stages WHERE active = 1 AND kind = 'ganho' LIMIT 1").get();
+  return null;
+}
+
+/**
+ * Valida a movimentação. Lança erro com a lista do que falta quando a regra não é atendida.
+ * Retorna { forced } quando o administrador força a passagem com justificativa.
+ */
+function validateMove(db, user, opp, from, to, data = {}, opts = {}) {
+  const { badRequest } = require('../util');
+  if (opts.fromSale) return {};
+  const contact = db.prepare('SELECT * FROM contacts WHERE id = ?').get(opp.contact_id);
+  if (to.kind === 'ganho') {
+    throw badRequest('A etapa "Venda" é preenchida automaticamente quando o pagamento da venda é confirmado na tela de Vendas.');
+  }
+  const force = !!data.force && user.role === 'admin';
+  if (force && !String(data.reason || '').trim()) throw badRequest('Para forçar a passagem, informe a justificativa.');
+  // Perdido: só depois de trabalhar o lead (ao menos uma atividade registrada)
+  if (to.kind === 'perdido') {
+    if (!force && !hasWork(db, contact.id)) throw badRequest('Para dar o lead como perdido, registre antes ao menos uma atividade (ligação, WhatsApp, e-mail ou direct).', { needs_activity: true });
+    return {};
+  }
+  if (to.kind === 'nutricao') return {};
+  const seq = mainStages(db);
+  const iTo = seq.findIndex((s) => s.id === to.id);
+  const iFrom = seqIndex(db, seq, from);
+  const sequential = getSetting(db, 'funnel_sequential') !== false;
+  // Voltar etapas: permitido, com justificativa
+  if (iFrom >= 0 && iTo < iFrom) {
+    if (!String(data.reason || '').trim()) throw badRequest(`Para voltar o negócio para "${to.name}", informe o motivo.`, { needs_reason: true });
+    return {};
+  }
+  // Etapas a verificar: a de destino e, quando o negócio é retomado (nutrição/perdido) ou pula etapas, as anteriores
+  let toCheck = [to];
+  if (iFrom >= 0 && iTo > iFrom + 1) {
+    const skipped = seq.slice(iFrom + 1, iTo);
+    const free = skipped.every((s) => SKIPPABLE.has(s.key));
+    if (sequential && !force && !free && !opts.allowSkip) {
+      throw badRequest(`Não é possível pular etapas. A próxima etapa deste negócio é "${seq[iFrom + 1].name}".`, { next_stage_id: seq[iFrom + 1].id });
+    }
+    toCheck = seq.slice(iFrom + 1, iTo + 1).filter((s) => !SKIPPABLE.has(s.key) || !(free || opts.allowSkip));
+  } else if (iFrom < 0) {
+    toCheck = seq.slice(0, iTo + 1);
+  }
+  const missing = [];
+  for (const st of toCheck) for (const r of evaluate(db, opp, contact, st)) if (!r.ok) missing.push({ ...r, stage: st.name });
+  if (missing.length && !force) {
+    throw badRequest(`Para entrar em "${to.name}", falta: ${missing.map((m) => m.label).join('; ')}.`, { missing, stage: to.name, contact_id: contact.id });
+  }
+  return { forced: force && missing.length > 0 };
+}
+
+module.exports = { RULES, DEFAULT_STAGE_RULES, stageRules, evaluate, nextStage, validateMove, openStages, mainStages, hasWork, WORK_TYPES, CONTACT_TYPES };

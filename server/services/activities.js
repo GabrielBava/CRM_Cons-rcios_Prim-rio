@@ -128,9 +128,11 @@ function createActivity(db, user, data) {
     if (reason) throw conflict(`${reason} A atividade não foi registrada.`);
   }
   const result = clean(data.result);
-  if (def.call && result) {
-    const ok = db.prepare("SELECT 1 FROM options WHERE list = 'resultado_ligacao' AND value = ?").get(result);
-    if (!ok) throw badRequest('Resultado de ligação inválido.');
+  if (result) {
+    // Ligação: resultado da ligação; mensagens (WhatsApp, e-mail, direct, LinkedIn): resultado do contato
+    const list = def.call ? 'resultado_ligacao' : 'resultado_mensagem';
+    const ok = db.prepare('SELECT 1 FROM options WHERE list = ? AND value = ?').get(list, result) || (!def.call && db.prepare("SELECT 1 FROM options WHERE list = 'resultado_ligacao' AND value = ?").get(result));
+    if (!ok) throw badRequest(def.call ? 'Resultado de ligação inválido.' : 'Resultado do contato inválido.');
   }
   const occurred = toIso(data.occurred_at) || nowIso();
   if (new Date(occurred).getTime() > Date.now() + 5 * 60 * 1000) {
@@ -139,7 +141,7 @@ function createActivity(db, user, data) {
   const returnAt = toIso(data.return_at);
   const nextAction = clean(data.next_action);
 
-  return tx(db, () => {
+  const id = tx(db, () => {
     const id = insertActivity(db, {
       contact_id: contact.id,
       company_contact_id: companyContact?.id,
@@ -162,10 +164,10 @@ function createActivity(db, user, data) {
       const now = nowIso();
       const tr = db
         .prepare(
-          `INSERT INTO tasks (contact_id, opportunity_id, type, title, notes, due_at, assigned_to, created_by, created_at, updated_at)
-           VALUES (?, ?, 'retorno', ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO tasks (contact_id, opportunity_id, type, title, notes, due_at, assigned_to, created_by, created_at, updated_at, source_activity_id)
+           VALUES (?, ?, 'retorno', ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(contact.id, data.opportunity_id ? Number(data.opportunity_id) : null, nextAction || 'Retorno ao contato', `Criada a partir da atividade #${id}`, due, user.id, user.id, now, now);
+        .run(contact.id, data.opportunity_id ? Number(data.opportunity_id) : null, nextAction || 'Retorno ao contato', `Criada a partir da atividade #${id} (aproximação: conclua registrando o que foi feito)`, due, user.id, user.id, now, now, id);
       if (data.opportunity_id) {
         db.prepare('UPDATE opportunities SET next_action = ?, next_action_at = ?, updated_at = ? WHERE id = ?').run(
           nextAction || 'Retorno ao contato',
@@ -178,7 +180,19 @@ function createActivity(db, user, data) {
     }
     return id;
   });
+  // Regra de fluxo: registrar o contato com um lead na etapa "Lead" já o leva para "Tentativa de contato"
+  const { CONTACT_TYPES } = require('./pipeline');
+  if (CONTACT_TYPES.includes(type)) {
+    const opps = require('./opportunities');
+    const open = db.prepare("SELECT o.id FROM opportunities o JOIN pipeline_stages s ON s.id = o.stage_id WHERE o.contact_id = ? AND o.status = 'aberta' AND s.key IN ('prospect', 'lead')").all(contact.id);
+    for (const o of open) opps.advanceTo(db, user, o.id, 'tentativa', ['prospect', 'lead'], `Tentativa de contato registrada (${ACTIVITY_TYPES[type].label})`);
+  }
+  return id;
 }
+
+// Fase do relacionamento em que a atividade ocorreu: pré-venda (antes da 1ª proposta), venda (até a conversão) e pós-venda
+const PHASE_SQL = `(CASE WHEN c.converted_at IS NOT NULL AND a.occurred_at >= c.converted_at THEN 'pos_venda'
+  WHEN EXISTS (SELECT 1 FROM proposals px WHERE px.contact_id = a.contact_id AND px.created_at <= a.occurred_at) THEN 'venda' ELSE 'pre_venda' END)`;
 
 function listActivities(db, user, q) {
   const where = [];
@@ -215,6 +229,10 @@ function listActivities(db, user, q) {
     where.push('a.result = ?');
     params.push(q.result);
   }
+  if (q.phase) {
+    where.push(`${PHASE_SQL} = ?`);
+    params.push(q.phase);
+  }
   if (q.from) {
     where.push('a.occurred_at >= ?');
     params.push(toIso(q.from));
@@ -233,7 +251,7 @@ function listActivities(db, user, q) {
   const total = db.prepare(`SELECT COUNT(*) AS n ${base}`).get(...params).n;
   const rows = db
     .prepare(
-      `SELECT a.*, c.name AS contact_name, c.code AS contact_code, u.name AS user_name, cc.name AS company_contact_name, o.code AS opportunity_code
+      `SELECT a.*, ${PHASE_SQL} AS phase, c.name AS contact_name, c.code AS contact_code, u.name AS user_name, cc.name AS company_contact_name, o.code AS opportunity_code
        ${base} ORDER BY a.occurred_at DESC, a.id DESC LIMIT ? OFFSET ?`,
     )
     .all(...params, limit, offset);

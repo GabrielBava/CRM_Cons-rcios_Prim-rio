@@ -1,9 +1,11 @@
 import { get, download } from '../api.js';
 import {
   html, render, $, on, state, selectOptions, opts, toItems, userItems, stageItems, productItems, table, pager, relBadge, badge, optoutBadge,
-  fmtDateTime, relTime, optLabel, K, can, toastError,
+  fmtDateTime, relTime, optLabel, K, can, toastError, crmTabs,
 } from '../ui.js';
 import { quickCreateContact } from '../forms.js';
+import { tempBadge } from '../qualification.js';
+import { bindDrawerLinks } from '../drawer.js';
 
 let saved = { sort: 'recentes' };
 
@@ -13,13 +15,15 @@ export function nextActionCell(na) {
   return html`<div class="${late ? 'overdue' : ''}"><strong>${na.title}</strong><br><small>${na.due_at ? `${fmtDateTime(na.due_at)} · ${relTime(na.due_at)}` : 'sem data'}</small></div>`;
 }
 
+export const recordHref = (r) => `#/${r.relationship === 'cliente' ? 'clientes' : 'leads'}/${r.id}`;
+
 export function contactsTable(rows) {
   return table(
     [
-      { label: 'Código', render: (r) => html`<a href="#/leads/${r.id}">${r.code}</a>` },
+      { label: 'Código', render: (r) => html`<a href="${recordHref(r)}">${r.code}</a>` },
       {
         label: 'Nome',
-        render: (r) => html`<a href="#/leads/${r.id}"><strong>${r.name}</strong></a> <small class="muted">${r.kind}</small><br>${relBadge(r.relationship)} ${r.relationship !== 'cliente' ? badge(K('lead_status', r.lead_status)) : badge(K('client_status', r.client_status), 'ok')} ${optoutBadge(r.optouts)}`,
+        render: (r) => html`<a href="${recordHref(r)}" data-drawer="${r.id}"><strong>${r.name}</strong></a> <small class="muted">${r.kind}</small>${r.active === 0 ? html` ${badge('Inativo', 'muted')}` : ''}<br>${relBadge(r.relationship)} ${r.temperature ? tempBadge(r.temperature) : ''} ${r.relationship !== 'cliente' ? badge(K('lead_status', r.lead_status)) : badge(K('client_status', r.client_status), 'ok')} ${optoutBadge(r.optouts)}`,
       },
       { label: 'Contato', render: (r) => html`${r.phone1 || r.whatsapp || html`<span class="warn-text">sem telefone</span>`}<br><small>${r.email || ''}</small>` },
       { label: 'Cidade/UF', render: (r) => [r.city, r.state].filter(Boolean).join('/') || '—' },
@@ -37,11 +41,12 @@ export async function show(view, { params }, preset = {}) {
   const fixed = preset.relationship;
   const s = { ...saved, ...params, ...preset };
   render(view, html`<div class="page">
+    ${fixed ? '' : crmTabs('leads')}
     <div class="page-head">
-      <h1>${preset.title || 'Prospects e leads'}</h1>
+      <h1>${preset.title || 'Leads e prospects'}</h1>
       <div class="actions">
         ${can.write() && !fixed ? html`<button class="btn primary" data-act="new">+ Novo lead</button><a class="btn" href="#/importar">Importar CSV</a>` : ''}
-        ${state.user.role !== 'leitura' ? html`<button class="btn" data-act="export">Exportar CSV</button>` : ''}
+        ${can.admin() ? html`<button class="btn" data-act="export">Exportar CSV</button>` : ''}
         ${state.user.role !== 'leitura' && !fixed ? html`<button class="btn" data-act="export-dialer" title="Exclui automaticamente quem se opôs a ligações">Lista para discadora</button>` : ''}
       </div>
     </div>
@@ -50,9 +55,11 @@ export async function show(view, { params }, preset = {}) {
       ${fixed ? '' : html`<label>Tipo de registro<select name="relationship">${selectOptions(toItems(state.meta.constants.relationships), s.relationship, { placeholder: 'Todos' })}</select></label>`}
       ${fixed ? html`<label>Status do cliente<select name="client_status">${selectOptions(toItems(state.meta.constants.client_status), s.client_status, { placeholder: 'Todos' })}</select></label>`
         : html`<label>Status do lead<select name="lead_status">${selectOptions(toItems(state.meta.constants.lead_status), s.lead_status, { placeholder: 'Todos' })}</select></label>`}
+      <label>Situação<select name="active">${selectOptions([{ value: '1', label: 'Ativos' }, { value: '0', label: 'Inativos' }], s.active, { placeholder: 'Todos' })}</select></label>
       <label>PF/PJ<select name="kind">${selectOptions([{ value: 'PF', label: 'Pessoa física' }, { value: 'PJ', label: 'Pessoa jurídica' }], s.kind, { placeholder: 'Todos' })}</select></label>
       <label>Responsável<select name="owner_id">${selectOptions([...userItems(), ...(can.manage() ? [{ value: 'none', label: 'Sem responsável' }] : [])], s.owner_id, { placeholder: 'Todos' })}</select></label>
       <label>Origem<select name="origin">${selectOptions(opts('origem'), s.origin, { placeholder: 'Todas' })}</select></label>
+      <label>Temperatura<select name="temperature">${selectOptions(opts('temperatura'), s.temperature, { placeholder: 'Todas' })}</select></label>
       <label>Campanha<input name="campaign" value="${s.campaign || ''}" placeholder="nome ou ID"></label>
       <label>Etapa<select name="stage_id">${selectOptions(stageItems(), s.stage_id, { placeholder: 'Todas' })}</select></label>
       <label>Produto<select name="product_id">${selectOptions(productItems(), s.product_id, { placeholder: 'Todos' })}</select></label>
@@ -99,6 +106,7 @@ export async function show(view, { params }, preset = {}) {
     load();
   });
   on(view, 'click', '[data-act=new]', () => quickCreateContact());
+  bindDrawerLinks(view);
   on(view, 'click', '[data-act=export]', () => download('/api/exportar/cadastros', { ...query(), page: undefined, limit: undefined }).catch(toastError));
   on(view, 'click', '[data-act=export-dialer]', () => download('/api/exportar/lista_discadora', { ...query(), page: undefined, limit: undefined }).catch(toastError));
   await load();

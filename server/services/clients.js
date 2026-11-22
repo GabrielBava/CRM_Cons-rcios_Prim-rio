@@ -1,5 +1,5 @@
 'use strict';
-const { loadContact, childScope, audit, diff, buildUpdate, paging } = require('../core');
+const { loadContact, childScope, contactScope, audit, diff, buildUpdate, paging } = require('../core');
 const { badRequest, notFound, clean, toNumber, toDateOnly, toIso, nowIso } = require('../util');
 const { tx, nextCode } = require('../db');
 const { insertActivity } = require('./activities');
@@ -7,7 +7,9 @@ const { assertOption } = require('./opportunities');
 
 const CONTRACT_FIELDS = [
   'product_id', 'category', 'administrator', 'group_code', 'quota_code', 'credit_value', 'term_months', 'contracted_at', 'quotas',
-  'status', 'payment_modality', 'strategy', 'notes', 'proposal_id',
+  'status', 'payment_modality', 'strategy', 'notes', 'proposal_id', 'contract_number', 'installment_value', 'due_day', 'first_due_date',
+  'contemplated_at', 'contemplation_type', 'bid_value', 'acquired_asset', 'seller_id', 'sale_value',
+  'installment_initial', 'adhesion_date', 'next_readjustment_date', 'available_credit', 'contemplation_credit', 'net_to_pay', 'client_choice',
 ];
 
 function normalizeContract(db, data, contactId) {
@@ -34,6 +36,31 @@ function normalizeContract(db, data, contactId) {
     assertOption(db, 'estrategia', o.strategy, 'estratégia');
   }
   if (data.credit_value !== undefined) o.credit_value = toNumber(data.credit_value);
+  for (const f of ['contract_number', 'acquired_asset']) if (data[f] !== undefined) o[f] = clean(data[f]);
+  for (const f of ['installment_value', 'installment_initial', 'bid_value', 'sale_value', 'available_credit', 'contemplation_credit', 'net_to_pay']) {
+    if (data[f] !== undefined) {
+      o[f] = toNumber(data[f]);
+      if (o[f] != null && o[f] < 0) throw badRequest('Valores não podem ser negativos.');
+    }
+  }
+  if (data.due_day !== undefined) {
+    const n = toNumber(data.due_day);
+    if (n != null && (!Number.isInteger(n) || n < 1 || n > 31)) throw badRequest('Dia de vencimento deve estar entre 1 e 31.');
+    o.due_day = n;
+  }
+  for (const f of ['first_due_date', 'contemplated_at', 'adhesion_date', 'next_readjustment_date']) if (data[f] !== undefined) o[f] = toDateOnly(data[f]);
+  if (data.client_choice !== undefined) {
+    o.client_choice = clean(data.client_choice);
+    assertOption(db, 'escolha_contemplacao', o.client_choice, 'escolha do cliente na contemplação');
+  }
+  if (data.contemplation_type !== undefined) {
+    o.contemplation_type = clean(data.contemplation_type);
+    assertOption(db, 'tipo_contemplacao', o.contemplation_type, 'tipo de contemplação');
+  }
+  if (data.seller_id !== undefined) {
+    o.seller_id = data.seller_id ? Number(data.seller_id) : null;
+    if (o.seller_id && !db.prepare('SELECT 1 FROM users WHERE id = ?').get(o.seller_id)) throw badRequest('Vendedor inválido.');
+  }
   for (const f of ['term_months', 'quotas']) {
     if (data[f] !== undefined) {
       const n = toNumber(data[f]);
@@ -66,9 +93,13 @@ function createContractRow(db, user, data) {
     }
   }
   if (o.product_id && !o.administrator) o.administrator = db.prepare('SELECT administrator FROM products WHERE id = ?').get(o.product_id)?.administrator ?? null;
+  // Parcela inicial = a da contratação; a parcela atual (installment_value) é ajustada depois pelo pós-venda
+  if (o.installment_initial == null && o.installment_value != null) o.installment_initial = o.installment_value;
+  if (o.installment_value == null && o.installment_initial != null) o.installment_value = o.installment_initial;
+  if (o.available_credit == null && o.credit_value != null) o.available_credit = o.credit_value;
   const now = nowIso();
   const code = nextCode(db, 'contract', 'CT');
-  const row = { status: 'em_formalizacao', ...o, code, contact_id: contactId, opportunity_id: opp?.id ?? null, owner_id: opp?.owner_id ?? user.id, created_by: user.id, created_at: now, updated_at: now };
+  const row = { status: 'em_formalizacao', seller_id: opp?.owner_id ?? user.id, ...o, code, contact_id: contactId, opportunity_id: opp?.id ?? null, owner_id: opp?.owner_id ?? user.id, created_by: user.id, created_at: now, updated_at: now };
   const cols = Object.keys(row);
   const r = db.prepare(`INSERT INTO contracts (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...cols.map((c) => row[c] ?? null));
   const id = Number(r.lastInsertRowid);
@@ -120,6 +151,10 @@ function listContracts(db, user, q) {
     where.push('k.owner_id = ?');
     params.push(Number(q.owner_id));
   }
+  if (q.seller_id) {
+    where.push('k.seller_id = ?');
+    params.push(Number(q.seller_id));
+  }
   if (q.contact_id) {
     where.push('k.contact_id = ?');
     params.push(Number(q.contact_id));
@@ -138,10 +173,90 @@ function listContracts(db, user, q) {
     WHERE ${where.join(' AND ')}`;
   const total = db.prepare(`SELECT COUNT(*) AS n ${base}`).get(...params).n;
   const rows = db
-    .prepare(`SELECT k.*, c.name AS contact_name, c.code AS contact_code, p.name AS product_name, u.name AS owner_name, pr.code AS proposal_code, o.code AS opportunity_code
+    .prepare(`SELECT k.*, c.name AS contact_name, c.code AS contact_code, p.name AS product_name, u.name AS owner_name, (SELECT name FROM users su WHERE su.id = k.seller_id) AS seller_name, pr.code AS proposal_code, o.code AS opportunity_code
       ${base} ORDER BY k.created_at DESC LIMIT ? OFFSET ?`)
     .all(...params, limit, offset);
   return { total, page, limit, rows };
 }
 
-module.exports = { createContract, createContractRow, updateContract, listContracts };
+/**
+ * Lista de clientes (menu Clientes): código, nome, situação, contato, responsável pós-venda, especialista da venda,
+ * quantidade de cartas (produtos), crédito contratado, próxima ação e última atividade.
+ * Filtros: busca, situação, PF/PJ, responsável pós-venda, especialista e categoria (só imóvel, só veículo, só serviço ou mais de uma).
+ */
+function listClients(db, user, q = {}) {
+  const sc = contactScope(db, user, 'c');
+  const where = ["c.relationship = 'cliente'", 'c.merged_into_id IS NULL', 'c.anonymized_at IS NULL', sc.sql];
+  const params = [...sc.params];
+  const ACTIVE_K = "k.status <> 'cancelado'";
+  if (q.q) {
+    const term = String(q.q).trim();
+    const d = term.replace(/\D/g, '');
+    const or = ['c.name LIKE ?', 'c.trade_name LIKE ?', 'c.code = ?', 'c.email_norm LIKE ?'];
+    params.push(`%${term}%`, `%${term}%`, term.toUpperCase(), `%${term.toLowerCase()}%`);
+    if (d.length >= 4) {
+      or.push('c.phone1_norm LIKE ?', 'c.phone2_norm LIKE ?', 'c.whatsapp_norm LIKE ?', 'c.doc = ?');
+      params.push(`%${d}%`, `%${d}%`, `%${d}%`, d);
+    }
+    where.push(`(${or.join(' OR ')})`);
+  }
+  if (q.active === '1' || q.active === '0') {
+    where.push('COALESCE(c.active, 1) = ?');
+    params.push(Number(q.active));
+  }
+  if (q.kind === 'PF' || q.kind === 'PJ') {
+    where.push('c.kind = ?');
+    params.push(q.kind);
+  }
+  if (q.postsale_owner_id) {
+    where.push('COALESCE(c.postsale_owner_id, c.owner_id) = ?');
+    params.push(Number(q.postsale_owner_id));
+  }
+  const SELLER = `COALESCE((SELECT k.seller_id FROM contracts k WHERE k.contact_id = c.id AND k.seller_id IS NOT NULL ORDER BY k.created_at DESC LIMIT 1), c.owner_id)`;
+  if (q.seller_id) {
+    where.push(`${SELLER} = ?`);
+    params.push(Number(q.seller_id));
+  }
+  const CATS = `(SELECT GROUP_CONCAT(DISTINCT COALESCE(k.category, p.category)) FROM contracts k LEFT JOIN products p ON p.id = k.product_id WHERE k.contact_id = c.id AND ${ACTIVE_K})`;
+  if (q.category) {
+    const only = { so_imovel: 'imovel', so_veiculo: 'veiculo', so_servico: 'servico' }[q.category];
+    if (only) {
+      where.push(`${CATS} = ?`);
+      params.push(only);
+    } else if (q.category === 'ambas') where.push(`instr(COALESCE(${CATS}, ''), ',') > 0`);
+  }
+  const base = `FROM contacts c WHERE ${where.join(' AND ')}`;
+  const { limit, offset, page } = paging(q);
+  const total = db.prepare(`SELECT COUNT(*) AS n ${base}`).get(...params).n;
+  const order = { nome: 'c.name COLLATE NOCASE', credito: 'credit_total DESC', recentes: 'c.converted_at DESC' }[q.sort] || 'c.name COLLATE NOCASE';
+  const rows = db
+    .prepare(`SELECT c.id, c.code, c.name, c.kind, COALESCE(c.active, 1) AS active, c.phone1, c.whatsapp, c.email, c.owner_id, c.converted_at,
+      COALESCE(c.postsale_owner_id, c.owner_id) AS postsale_id, ${SELLER} AS seller_id,
+      (SELECT COUNT(*) FROM contracts k WHERE k.contact_id = c.id AND ${ACTIVE_K}) AS cartas,
+      (SELECT COALESCE(SUM(k.credit_value), 0) FROM contracts k WHERE k.contact_id = c.id AND ${ACTIVE_K}) AS credit_total,
+      ${CATS} AS categories,
+      (SELECT t.title || '|' || t.due_at FROM tasks t WHERE t.contact_id = c.id AND t.status = 'pendente' ORDER BY t.due_at LIMIT 1) AS next_task,
+      (SELECT a.type || '|' || COALESCE(a.occurred_at, a.created_at) FROM activities a WHERE a.contact_id = c.id ORDER BY COALESCE(a.occurred_at, a.created_at) DESC LIMIT 1) AS last_act
+      ${base} ORDER BY ${order} LIMIT ? OFFSET ?`)
+    .all(...params, limit, offset);
+  const name = db.prepare('SELECT name FROM users WHERE id = ?');
+  const split = (v) => {
+    if (!v) return null;
+    const i = v.indexOf('|');
+    return [v.slice(0, i), v.slice(i + 1)];
+  };
+  for (const r of rows) {
+    r.postsale_name = r.postsale_id ? name.get(r.postsale_id)?.name || null : null;
+    r.seller_name = r.seller_id ? name.get(r.seller_id)?.name || null : null;
+    r.categories = r.categories ? r.categories.split(',') : [];
+    const t = split(r.next_task);
+    r.next_action = t ? { title: t[0], due_at: t[1] } : null;
+    const a = split(r.last_act);
+    r.last_activity = a ? { type: a[0], at: a[1] } : null;
+    delete r.next_task;
+    delete r.last_act;
+  }
+  return { total, page, limit, rows };
+}
+
+module.exports = { createContract, createContractRow, updateContract, listContracts, listClients };

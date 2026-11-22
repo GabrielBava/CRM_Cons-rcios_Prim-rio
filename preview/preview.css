@@ -1,0 +1,36 @@
+/* Barra exclusiva da versão de teste no navegador */
+.preview-bar {
+  position: sticky;
+  top: 0;
+  z-index: 70;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  padding: 7px 16px;
+  background: var(--glass-shell);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+  color: var(--text);
+  border-bottom: 1px solid var(--glass-border);
+  font-size: var(--fs-xs);
+}
+.preview-bar .pv-muted { color: var(--muted); }
+.preview-bar .pv-muted .warn { color: var(--danger); font-weight: 600; }
+.preview-bar code { background: var(--pill-bg); padding: 1px 6px; border-radius: 6px; }
+.preview-bar strong { font-family: var(--font-display); font-weight: 600; }
+.preview-bar label { display: inline-flex; align-items: center; gap: 6px; }
+.preview-bar select { width: auto; min-height: 28px; padding: 2px 6px; }
+.preview-bar button { font: inherit; font-size: var(--fs-xs); padding: 4px 12px; border-radius: var(--radius-pill); border: 1px solid var(--glass-border); background: var(--pill-bg); color: var(--text); cursor: pointer; }
+.preview-bar select { border-radius: var(--radius-pill); font-size: var(--fs-xs); min-height: 28px; }
+.preview-bar button.armed { background: color-mix(in srgb, var(--danger) 20%, transparent); border-color: var(--danger); color: var(--danger); }
+.preview-bar + #app .sidebar { top: calc(var(--pv-h, 0px) + 28px); height: calc(100vh - var(--pv-h, 0px) - 56px); }
+.preview-bar + #app .topbar { top: var(--pv-h, 0px); }
+/* Painel do lead abaixo da barra da versão de teste */
+.drawer-wrap .drawer { top: var(--pv-h, 0px); }
+@media (max-width: 900px) {
+  .preview-bar { position: static; }
+  :root { --pv-h: 0px !important; }
+  .preview-bar + #app .sidebar { top: 0; height: auto; }
+}
+.preview-msg { position: fixed; left: 16px; bottom: 16px; z-index: 300; background: var(--bg-card); color: var(--text); border: 1px solid var(--glass-border); border-left: 3px solid var(--danger); padding: 10px 14px; border-radius: var(--radius); box-shadow: var(--shadow-lg); max-width: calc(100vw - 32px); }

@@ -2,180 +2,88 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
-const { openDb } = require('./db');
-const { HttpError, toCSV } = require('./util');
-const auth = require('./auth');
-const contacts = require('./services/contacts');
-const opps = require('./services/opportunities');
-const activities = require('./services/activities');
-const tasks = require('./services/tasks');
-const clients = require('./services/clients');
-const sims = require('./services/simulations');
-const proposals = require('./services/proposals');
-const dialer = require('./services/dialer');
-const inbound = require('./services/inbound');
-const integrations = require('./services/integrations');
-const reports = require('./services/reports');
-const io = require('./services/importexport');
-const admin = require('./services/admin');
+const { openDb, getSetting, setSetting, isPgUrl } = require('./db');
+const { HttpError } = require('./util');
+const { createRouter } = require('./router');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.json': 'application/json' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.json': 'application/json', '.woff2': 'font/woff2', '.woff': 'font/woff', '.png': 'image/png', '.webp': 'image/webp' };
+const MAX_BODY = 15e6;
 
-function createApp({ dbFile = process.env.CRM_DB || path.join(__dirname, '..', 'data', 'crm.db') } = {}) {
+/**
+ * Versão de teste no Supabase: com CRM_DEMO=1 e DEMO_PASSWORD, um banco sem usuários recebe os dados de demonstração
+ * (uma vez só; o bloqueio evita duas instâncias da Vercel fazendo isso juntas).
+ */
+function seedDemoIfEmpty(db) {
+  if (process.env.CRM_DEMO !== '1') return;
+  const password = process.env.DEMO_PASSWORD;
+  if (!password) {
+    console.warn('CRM_DEMO=1 sem DEMO_PASSWORD: os dados de demonstração não foram criados.');
+    return;
+  }
+  const empty = () => db.prepare('SELECT COUNT(*) AS n FROM users').get().n === 0;
+  if (!empty()) return;
+  if (db.isPostgres) db.queryRaw('SELECT pg_advisory_lock(7203912)');
+  try {
+    if (empty()) {
+      require('./demo').seedDemo(db, password);
+      console.log('Dados de demonstração criados (versão de teste).');
+    }
+  } finally {
+    if (db.isPostgres) db.queryRaw('SELECT pg_advisory_unlock(7203912)');
+  }
+}
+
+/**
+ * Endereço do banco Postgres: DATABASE_URL ou, com a integração do Supabase na Vercel, POSTGRES_URL (a porta 6543 do
+ * pooler, modo transação, vira 5432, modo sessão, que o CRM precisa). Aspas e espaços colados por engano são removidos.
+ */
+function databaseUrl(env = process.env) {
+  const clean = (v) => String(v).trim().replace(/^(["'])(.*)\1$/, '$2').trim();
+  if (env.DATABASE_URL && clean(env.DATABASE_URL)) return clean(env.DATABASE_URL);
+  const alt = env.POSTGRES_URL || env.SUPABASE_DB_URL;
+  if (alt && clean(alt)) return clean(alt).replace(/(\.pooler\.supabase\.com):6543\b/i, '$1:5432');
+  return null;
+}
+
+// Rotinas periódicas: [nome no router, intervalo]
+const ROUTINES = [['sweep', 60 * 60 * 1000], ['queueSweep', 15 * 60 * 1000], ['meetSweep', 5 * 60 * 1000]];
+
+/**
+ * serverless (Vercel): sem processo fixo, as rotinas periódicas rodam quando vencem, no primeiro acesso à API depois do
+ * prazo (e pelo /api/cron da Vercel). Fora da Vercel, rodam por timer como antes.
+ */
+function createApp({ dbFile = databaseUrl() || process.env.CRM_DB || path.join(__dirname, '..', 'data', 'crm.db'), serverless = !!process.env.VERCEL } = {}) {
+  // Na Vercel não há disco para o SQLite: sem o endereço do Postgres, explica o que falta em vez de tentar criar data/
+  if (process.env.VERCEL && !isPgUrl(dbFile)) {
+    const env = process.env.VERCEL_ENV === 'preview' ? 'Preview' : process.env.VERCEL_ENV === 'production' ? 'Production' : process.env.VERCEL_ENV || '?';
+    const bad = process.env.DATABASE_URL ? ' (a DATABASE_URL existe, mas não começa com postgresql://)' : '';
+    throw new Error(`a variável DATABASE_URL não está nesta publicação (ambiente ${env} da Vercel)${bad}. Em Settings › Environment Variables, cadastre DATABASE_URL marcando Production e Preview e faça Redeploy do último deploy.`);
+  }
   const db = openDb(dbFile);
-  const routes = [];
-  const add = (method, pattern, handler, opts = {}) => {
-    const keys = [];
-    const re = new RegExp(`^${pattern.replace(/:([a-z_]+)/g, (_, k) => (keys.push(k), '([^/]+)'))}$`);
-    routes.push({ method, re, keys, handler, opts });
-  };
+  seedDemoIfEmpty(db);
+  const router = createRouter(db);
 
-  /* ---------- Público / sessão ---------- */
-  add('GET', '/api/setup', () => ({ needs_setup: auth.needsSetup(db) }), { public: true });
-  add('POST', '/api/setup', ({ req, res, body }) => auth.setup(db, req, res, body), { public: true });
-  add('POST', '/api/login', ({ req, res, body }) => auth.login(db, req, res, body), { public: true });
-  add('POST', '/api/logout', ({ req, res }) => auth.logout(db, req, res), { public: true });
-
-  /* ---------- Integrações externas (autenticação por token da integração) ---------- */
-  add('POST', '/api/integracoes/discadora/eventos', ({ req, body }) => {
-    const integ = integrations.authenticate(db, 'discadora', req);
-    return { resultados: dialer.ingest(db, integ, body) };
-  }, { integration: true });
-  add('GET', '/api/integracoes/simulador/contexto', ({ req, query }) => {
-    integrations.authenticate(db, 'simulador', req);
-    return sims.context(db, query.token);
-  }, { integration: true });
-  add('POST', '/api/integracoes/simulador/simulacoes', ({ req, body }) => {
-    const integ = integrations.authenticate(db, 'simulador', req);
-    return sims.receiveFromSimulator(db, integ, body);
-  }, { integration: true });
-  add('POST', '/api/integracoes/leads', ({ req, body }) => {
-    const integ = integrations.authenticate(db, 'api_leads', req);
-    return { resultados: inbound.receiveLeads(db, integ, body) };
-  }, { integration: true });
-  add('POST', '/api/integracoes/whatsapp/mensagens', ({ req, body }) => {
-    const integ = integrations.authenticate(db, 'whatsapp', req);
-    return { resultados: inbound.receiveMessages(db, integ, body) };
-  }, { integration: true });
-
-  /* ---------- Usuário ---------- */
-  add('GET', '/api/me', ({ user }) => user);
-  add('POST', '/api/me/senha', ({ user, body }) => (auth.changePassword(db, user, body), { ok: true }));
-  add('GET', '/api/meta', ({ user }) => admin.meta(db, user));
-  add('GET', '/api/busca', ({ user, query }) => contacts.globalSearch(db, user, query.q));
-  add('GET', '/api/dashboard', ({ user, query }) => reports.dashboard(db, user, query));
-
-  /* ---------- Cadastros ---------- */
-  add('GET', '/api/cadastros', ({ user, query }) => contacts.listContacts(db, user, query));
-  add('POST', '/api/cadastros', ({ user, body }) => contacts.createContact(db, user, body));
-  add('POST', '/api/cadastros/verificar-duplicidade', ({ user, body }) => ({ duplicates: contacts.checkDuplicates(db, user, body, body.exclude_id ? Number(body.exclude_id) : undefined) }));
-  add('GET', '/api/cadastros/:id', ({ user, params }) => contacts.getContact(db, user, params.id));
-  add('PATCH', '/api/cadastros/:id', ({ user, params, body }) => contacts.updateContact(db, user, params.id, body));
-  add('GET', '/api/cadastros/:id/historico', ({ user, params, query }) => activities.listActivities(db, user, { ...query, contact_id: params.id, limit: query.limit || 300 }));
-  add('GET', '/api/cadastros/:id/auditoria', ({ user, params }) => contacts.contactAudit(db, user, params.id));
-  add('POST', '/api/cadastros/:id/contatos', ({ user, params, body }) => ({ id: contacts.addCompanyContact(db, user, params.id, body) }));
-  add('PATCH', '/api/contatos-empresa/:id', ({ user, params, body }) => contacts.updateCompanyContact(db, user, params.id, body));
-  add('POST', '/api/cadastros/:id/consentimentos', ({ user, params, body }) => contacts.recordConsent(db, user, params.id, body));
-  add('POST', '/api/cadastros/:id/solicitacoes', ({ user, params, body }) => ({ id: contacts.createDataRequest(db, user, params.id, body) }));
-  add('PATCH', '/api/solicitacoes/:id', ({ user, params, body }) => (contacts.resolveDataRequest(db, user, params.id, body), { ok: true }));
-  add('POST', '/api/cadastros/:id/anonimizar', ({ user, params, body }) => (contacts.anonymizeContact(db, user, params.id, body.reason), { ok: true }));
-  add('POST', '/api/cadastros/:id/mesclar', ({ user, params, body }) => contacts.mergeContacts(db, user, params.id, body.source_id));
-  add('POST', '/api/cadastros/:id/origens', ({ user, params, body }) => {
-    const c = require('./core').loadContact(db, user, params.id, { write: true });
-    const id = contacts.insertOrigin(db, user, c.id, body);
-    require('./core').audit(db, user, 'contact', c.id, 'origem_adicionada', body, c.id);
-    return { id };
-  });
-
-  /* ---------- Oportunidades e funil ---------- */
-  add('GET', '/api/funil', ({ user, query }) => opps.board(db, user, query));
-  add('GET', '/api/oportunidades', ({ user, query }) => opps.listOpportunities(db, user, query));
-  add('POST', '/api/oportunidades', ({ user, body }) => opps.createOpportunity(db, user, body));
-  add('GET', '/api/oportunidades/:id', ({ user, params }) => opps.getOpportunity(db, user, params.id));
-  add('PATCH', '/api/oportunidades/:id', ({ user, params, body }) => opps.updateOpportunity(db, user, params.id, body));
-  add('POST', '/api/oportunidades/:id/etapa', ({ user, params, body }) => opps.moveStage(db, user, params.id, body));
-  add('POST', '/api/oportunidades/:id/validar-estrategia', ({ user, params }) => (opps.validateStrategy(db, user, params.id), { ok: true }));
-
-  /* ---------- Atividades e tarefas ---------- */
-  add('GET', '/api/atividades', ({ user, query }) => activities.listActivities(db, user, query));
-  add('POST', '/api/atividades', ({ user, body }) => ({ id: activities.createActivity(db, user, body) }));
-  add('GET', '/api/tarefas', ({ user, query }) => tasks.listTasks(db, user, query));
-  add('POST', '/api/tarefas', ({ user, body }) => ({ id: tasks.createTask(db, user, body) }));
-  add('PATCH', '/api/tarefas/:id', ({ user, params, body }) => (tasks.updateTask(db, user, params.id, body), { ok: true }));
-
-  /* ---------- Simulações, propostas e contratos ---------- */
-  add('GET', '/api/simulacoes', ({ user, query }) => sims.listSimulations(db, user, query));
-  add('POST', '/api/simulacoes', ({ user, body }) => sims.createManual(db, user, body));
-  add('POST', '/api/simulacoes/link', ({ user, body }) => sims.createLink(db, user, body));
-  add('GET', '/api/simulacoes/:id', ({ user, params }) => sims.getSimulation(db, user, params.id));
-  add('PATCH', '/api/simulacoes/:id', ({ user, params, body }) => (sims.updateManual(db, user, params.id, body), { ok: true }));
-  add('GET', '/api/propostas', ({ user, query }) => proposals.listProposals(db, user, query));
-  add('POST', '/api/propostas', ({ user, body }) => proposals.createProposal(db, user, body));
-  add('GET', '/api/propostas/:id', ({ user, params }) => proposals.getProposal(db, user, params.id));
-  add('PATCH', '/api/propostas/:id', ({ user, params, body }) => (proposals.updateProposal(db, user, params.id, body), { ok: true }));
-  add('POST', '/api/propostas/:id/status', ({ user, params, body }) => (proposals.changeStatus(db, user, params.id, body), { ok: true }));
-  add('POST', '/api/propostas/:id/nova-versao', ({ user, params, body }) => proposals.newVersion(db, user, params.id, body));
-  add('GET', '/api/contratos', ({ user, query }) => clients.listContracts(db, user, query));
-  add('POST', '/api/contratos', ({ user, body }) => clients.createContract(db, user, body));
-  add('PATCH', '/api/contratos/:id', ({ user, params, body }) => (clients.updateContract(db, user, params.id, body), { ok: true }));
-
-  /* ---------- Filas de integração ---------- */
-  add('GET', '/api/discadora/eventos', ({ user, query }) => dialer.listEvents(db, user, query));
-  add('POST', '/api/discadora/previa', ({ user, body }) => dialer.preview(db, user, body));
-  add('POST', '/api/discadora/eventos/:id/vincular', ({ user, params, body }) => dialer.linkManually(db, user, params.id, body.contact_id, body.company_contact_id));
-  add('POST', '/api/discadora/eventos/:id/reprocessar', ({ user, params }) => dialer.reprocess(db, user, params.id));
-  add('POST', '/api/discadora/eventos/:id/descartar', ({ user, params, body }) => (dialer.discard(db, user, params.id, body.reason), { ok: true }));
-  add('GET', '/api/entradas', ({ user, query }) => inbound.listInbound(db, user, query));
-  add('POST', '/api/entradas/:id/reprocessar', ({ user, params, body }) => inbound.reprocessInbound(db, user, params.id, body.contact_id));
-  add('POST', '/api/entradas/:id/descartar', ({ user, params, body }) => (inbound.discardInbound(db, user, params.id, body.reason), { ok: true }));
-
-  /* ---------- Relatórios, importação e exportação ---------- */
-  add('GET', '/api/relatorios', () => reports.REPORTS);
-  add('GET', '/api/relatorios/:key', ({ user, params, query }) => reports.report(db, user, params.key, query));
-  add('GET', '/api/relatorios/:key/csv', ({ user, params, query, res }) => {
-    const r = reports.report(db, user, params.key, query);
-    const csv = toCSV(r.columns, r.totals ? [...r.rows, r.totals] : r.rows);
-    return sendFile(res, `relatorio-${params.key}.csv`, csv);
-  });
-  add('GET', '/api/exportar/:entity', ({ user, params, query, res }) => {
-    const { filename, content } = io.exportData(db, user, params.entity, query);
-    return sendFile(res, filename, content);
-  });
-  add('POST', '/api/importacao/previa', ({ user, body }) => io.preview(db, user, body), { bodyLimit: 15e6 });
-  add('POST', '/api/importacao', ({ user, body }) => io.commit(db, user, body), { bodyLimit: 15e6 });
-  add('GET', '/api/importacoes', ({ user }) => io.listImports(db, user));
-
-  /* ---------- Administração ---------- */
-  add('GET', '/api/usuarios', ({ user }) => admin.listUsers(db, user));
-  add('POST', '/api/usuarios', ({ user, body }) => ({ id: admin.saveUser(db, user, body) }));
-  add('GET', '/api/equipes', () => admin.listTeams(db));
-  add('POST', '/api/equipes', ({ user, body }) => ({ id: admin.saveTeam(db, user, body) }));
-  add('POST', '/api/opcoes', ({ user, body }) => ({ id: admin.saveOption(db, user, body) }));
-  add('GET', '/api/produtos', () => admin.listProducts(db));
-  add('POST', '/api/produtos', ({ user, body }) => ({ id: admin.saveProduct(db, user, body) }));
-  add('POST', '/api/campos', ({ user, body }) => ({ id: admin.saveCustomField(db, user, body) }));
-  add('GET', '/api/etapas', () => opps.listStages(db, true));
-  add('POST', '/api/etapas', ({ user, body }) => ({ id: opps.saveStage(db, user, body) }));
-  add('POST', '/api/etapas/ordem', ({ user, body }) => (opps.reorderStages(db, user, body.ids), { ok: true }));
-  add('PATCH', '/api/configuracoes', ({ user, body }) => (admin.saveSettings(db, user, body), { ok: true }));
-  add('GET', '/api/integracoes', ({ user }) => integrations.listIntegrations(db, user));
-  add('PATCH', '/api/integracoes/:key', ({ user, params, body }) => (integrations.updateIntegration(db, user, params.key, body), { ok: true }));
-  add('POST', '/api/integracoes/:key/token', ({ user, params }) => ({ token: integrations.rotateToken(db, user, params.key) }));
-  add('GET', '/api/integracoes/:key/logs', ({ user, params, query }) => integrations.listLogs(db, user, params.key, query));
-  add('GET', '/api/auditoria', ({ user, query }) => admin.globalAudit(db, user, query));
-
-  function sendFile(res, filename, content) {
-    res.writeHead(200, {
-      'Content-Type': 'text/csv; charset=utf-8',
-      'Content-Disposition': `attachment; filename="${filename}"`,
-      'Cache-Control': 'no-store',
-    });
-    res.end(content);
-    return undefined;
+  /** Roda as rotinas vencidas (ou todas, com force); a data da última execução fica no banco, comum às instâncias. */
+  async function dueRoutines(force = false) {
+    const ran = [];
+    for (const [name, every] of ROUTINES) {
+      const key = `rotina_${name}`;
+      const last = Number(getSetting(db, key)) || 0;
+      if (!force && Date.now() - last < every) continue;
+      setSetting(db, key, Date.now());
+      await router[name]();
+      ran.push(name);
+    }
+    return ran;
   }
 
   function readBody(req, limit) {
+    // Na Vercel o corpo pode já ter sido lido pela plataforma (req.body)
+    if (req.readableEnded && req.body !== undefined) {
+      const b = req.body;
+      return Promise.resolve(Buffer.isBuffer(b) ? b.toString('utf8') : typeof b === 'string' ? b : b == null ? '' : JSON.stringify(b));
+    }
     return new Promise((resolve, reject) => {
       let size = 0;
       const chunks = [];
@@ -188,12 +96,7 @@ function createApp({ dbFile = process.env.CRM_DB || path.join(__dirname, '..', '
       });
       req.on('end', () => {
         const raw = Buffer.concat(chunks).toString('utf8');
-        if (!raw) return resolve({});
-        try {
-          resolve(JSON.parse(raw));
-        } catch {
-          reject(new HttpError(400, 'JSON inválido.'));
-        }
+        resolve(raw);
       });
       req.on('error', reject);
     });
@@ -203,14 +106,32 @@ function createApp({ dbFile = process.env.CRM_DB || path.join(__dirname, '..', '
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Referrer-Policy', 'no-referrer');
+    // O CRM (crm.veroconsorciosbr.com.br) não aparece em buscadores; as LPs oficiais ficam no site da Vero
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
     res.setHeader(
       'Content-Security-Policy',
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; frame-src 'self' blob: https://www.youtube-nocookie.com https://player.vimeo.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
     );
   }
 
+  // Landing page e simulador: páginas independentes com script embutido (sem acesso à sessão do CRM)
+  const SITE_CSP = "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://www.googletagmanager.com https://connect.facebook.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https:; frame-src https://www.youtube-nocookie.com https://www.youtube.com https://player.vimeo.com; frame-ancestors 'self'; base-uri 'none'; form-action 'self'";
+
+  // Ferramentas (diagnóstico financeiro e simulador de consórcio): HTML com script embutido, mesma origem do CRM (a ponte
+  // do diagnóstico lê e grava pelo /api com a sessão). O diagnóstico pode chamar a IA da Anthropic com a chave do usuário.
+  const TOOLS_CSP = "default-src 'self'; script-src 'self' 'unsafe-inline' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://api.anthropic.com; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'none'; form-action 'self'";
+
   function serveStatic(req, res, pathname) {
-    let p = pathname === '/' ? '/index.html' : pathname;
+    if (pathname === '/lp' || pathname === '/simulador') {
+      res.writeHead(301, { Location: `${pathname}/` });
+      return res.end();
+    }
+    if (/^\/(lp|simulador)\//.test(pathname)) res.setHeader('Content-Security-Policy', SITE_CSP);
+    if (/^\/ferramentas\//.test(pathname)) {
+      res.setHeader('Content-Security-Policy', TOOLS_CSP);
+      res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    }
+    let p = pathname === '/' ? '/index.html' : pathname.endsWith('/') ? `${pathname}index.html` : pathname;
     const file = path.normalize(path.join(PUBLIC_DIR, p));
     if (!file.startsWith(PUBLIC_DIR)) {
       res.writeHead(403);
@@ -236,68 +157,58 @@ function createApp({ dbFile = process.env.CRM_DB || path.join(__dirname, '..', '
       }
       return serveStatic(req, res, url.pathname);
     }
-    const json = (status, data) => {
-      res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-      res.end(JSON.stringify(data));
-    };
-    try {
-      let route = null;
-      let match = null;
-      for (const r of routes) {
-        if (r.method !== req.method) continue;
-        match = url.pathname.match(r.re);
-        if (match) {
-          route = r;
-          break;
-        }
+    // Verificação da publicação: confirma que o servidor do CRM está no ar e que o banco responde (sem login)
+    if (url.pathname === '/api/saude') {
+      let banco = 'ok';
+      try {
+        db.prepare('SELECT 1 AS ok').get();
+      } catch (e) {
+        banco = `erro: ${e.message}`;
       }
-      if (!route) {
-        const exists = routes.some((r) => r.re.test(url.pathname));
-        throw new HttpError(exists ? 405 : 404, exists ? 'Método não permitido.' : 'Rota não encontrada.');
-      }
-      const params = {};
-      route.keys.forEach((k, i) => (params[k] = decodeURIComponent(match[i + 1])));
-      const query = Object.fromEntries(url.searchParams.entries());
-      let user = null;
-      if (!route.opts.public && !route.opts.integration) {
-        user = auth.currentUser(db, req);
-        if (!user) throw new HttpError(401, 'Sessão expirada. Entre novamente.');
-      }
-      // Proteção CSRF: requisições de sessão que alteram dados exigem cabeçalho próprio da aplicação
-      if (!route.opts.integration && req.method !== 'GET' && req.headers['x-requested-with'] !== 'crm') {
-        throw new HttpError(403, 'Requisição recusada (cabeçalho de segurança ausente).');
-      }
-      const body = ['POST', 'PATCH', 'PUT'].includes(req.method) ? await readBody(req, route.opts.bodyLimit || 2e6) : {};
-      const result = await route.handler({ req, res, user, params, query, body });
-      if (res.headersSent) return;
-      json(200, result === undefined ? { ok: true } : result);
-    } catch (e) {
-      if (res.headersSent) return;
-      if (e instanceof HttpError) return json(e.status, { error: e.message, details: e.details });
-      if (e && /UNIQUE constraint failed/.test(e.message || '')) return json(409, { error: 'Registro duplicado: já existe um item com esse identificador.' });
-      console.error(e);
-      json(500, { error: 'Erro interno. A operação não foi concluída.' });
+      const sha = process.env.VERCEL_GIT_COMMIT_SHA;
+      res.writeHead(banco === 'ok' ? 200 : 503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      return res.end(JSON.stringify({ ok: banco === 'ok', banco, tipo: db.isPostgres ? 'postgres' : 'sqlite', versao: sha ? sha.slice(0, 7) : null }));
     }
+    // Agendamento da Vercel (vercel.json › crons): roda todas as rotinas; protegido por CRON_SECRET
+    if (url.pathname === '/api/cron') {
+      const ok = process.env.CRON_SECRET && req.headers.authorization === `Bearer ${process.env.CRON_SECRET}`;
+      res.writeHead(ok ? 200 : 401, { 'Content-Type': 'application/json; charset=utf-8' });
+      if (!ok) return res.end(JSON.stringify({ error: 'Não autorizado.' }));
+      return res.end(JSON.stringify({ ok: true, rotinas: await dueRoutines(true) }));
+    }
+    try {
+      req.rawBody = ['POST', 'PATCH', 'PUT'].includes(req.method) ? await readBody(req, MAX_BODY) : '';
+    } catch (e) {
+      res.writeHead(e.status || 400, { 'Content-Type': 'application/json; charset=utf-8' });
+      return res.end(JSON.stringify({ error: e.message }));
+    }
+    if (serverless) {
+      try {
+        await dueRoutines();
+      } catch (e) {
+        console.error('Falha nas rotinas periódicas:', e.message);
+      }
+    }
+    return router.dispatch(req, res);
   }
 
   const server = http.createServer((req, res) => {
     handle(req, res);
   });
 
-  // Rotina periódica: expiração de propostas vencidas
-  const sweep = () => {
-    try {
-      proposals.expireSweep(db);
-    } catch (e) {
-      console.error('Falha ao expirar propostas:', e.message);
-    }
-  };
-  sweep();
-  const timer = setInterval(sweep, 60 * 60 * 1000);
-  timer.unref();
-  server.on('close', () => clearInterval(timer));
+  // Rotinas periódicas (servidor fixo): manutenção a cada hora, fila de leads (roleta) a cada 15 minutos e presença na
+  // R1 pelo Google Meet a cada 5 minutos
+  if (!serverless) {
+    router.sweep();
+    const timers = ROUTINES.map(([name, every]) => {
+      const t = setInterval(router[name], every);
+      t.unref();
+      return t;
+    });
+    server.on('close', () => timers.forEach(clearInterval));
+  }
 
-  return { server, db };
+  return { server, db, handle, dueRoutines };
 }
 
-module.exports = { createApp };
+module.exports = { databaseUrl, createApp };
