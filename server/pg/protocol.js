@@ -102,11 +102,12 @@ class PgConnection {
 
   /**
    * Conecta. No pooler do Supabase o endereço é aws-0-<região> ou aws-1-<região> conforme o projeto: se o informado não
-   * existir ou não for do projeto ("Tenant or user not found"), tenta o outro.
+   * existir ou não for do projeto ("Tenant or user not found" ou "(ENOTFOUND) tenant/user … not found"), tenta o outro.
    */
   async connect() {
     const m = /^aws-(\d+)-([a-z0-9-]+\.pooler\.supabase\.com)$/i.exec(this.cfg.host);
     const hosts = m ? [this.cfg.host, ...[0, 1, 2].filter((n) => String(n) !== m[1]).map((n) => `aws-${n}-${m[2]}`)] : [this.cfg.host];
+    const otherPooler = (e) => e.code === 'ENOTFOUND' || /tenant\s*(?:or|\/)\s*user\b.*not found/i.test(e.message);
     let last;
     for (const host of hosts) {
       try {
@@ -120,9 +121,10 @@ class PgConnection {
         if (old) old.destroy();
         this.buf = Buffer.alloc(0);
         this.waiters = [];
-        if (!(e.code === 'ENOTFOUND' || /Tenant or user not found/i.test(e.message))) throw e;
+        if (!otherPooler(e)) throw e;
       }
     }
+    if (hosts.length > 1) last.message = `${last.message} (endereços do pooler tentados: ${hosts.join(', ')}; confira o usuário postgres.<ref> e o endereço em Supabase › Connect › Session pooler)`;
     throw last;
   }
 
