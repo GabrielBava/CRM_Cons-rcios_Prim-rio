@@ -191,7 +191,7 @@ docs/
 - **Painel do lead:** uma coluna, com Ganho (verde) e Perdido (vermelho), telefone que copia, WhatsApp da empresa e abas IA Vero, Detalhes (ingresso, primeiro contato, prazo da R1 e previsão de fechamento), Atividades (registro por canal e totais), Qualificação (Concluir qualificação), Agendas (R1/R2 e contadores), Produtos, Diagnóstico, Tarefas, Notas, Propostas e Histórico.
 - **Regras do funil:** Lead → Tentativa com uma tentativa registrada; Tentativa → Qualificação com a qualificação concluída; Qualificação → R1 com a R1 agendada; R1 → R2 com a R2 agendada; R2 → Negociação com proposta gerada (consórcio, seguros, planejamento ou investimentos). **Pipeline › Perdidos** (líder e administrador) mostra onde e por que (MP) os leads foram perdidos.
 - **Produtos (cross-sell/up-sell)**, **Diagnóstico financeiro** (ferramenta da Vero Planejamento ligada ao CRM) e **IA Vero** (motor interno + IA generativa opcional): detalhes em `docs/ESPECIFICACAO.md` §20 e `docs/INTEGRACOES.md` §11–12.
-- **Ferramentas por área:** `public/ferramentas/` (simulador de consórcio e diagnóstico financeiro na marca Vero), geradas por `node scripts/build-tools.js --diag <Diagnostico.html> --sim <Simulador.html>`.
+- **Ferramentas por área:** Consórcio só com o **Simulador de consórcio** (abre ligado ao cliente, com nome e contato preenchidos) e Planejamento só com o **Diagnóstico financeiro** (ligado ao lead e salvo no CRM). Arquivos em `public/ferramentas/`, gerados por `node scripts/build-tools.js --diag <Diagnostico-Vero.html> --sim <Simulador_Consorcio_Vero.html>` (as versões Vero v1 são copiadas com a trava e a ponte do CRM). Detalhes em `docs/INTEGRACOES.md` §12.
 
 ## Tela responsiva, filtros e painel do lead v5
 

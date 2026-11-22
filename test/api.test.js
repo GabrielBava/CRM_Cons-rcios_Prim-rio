@@ -3034,3 +3034,50 @@ test('LP: envio simples (text/plain, sem preflight) também cria o lead e libera
   const tracker = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'lp', 'vero-rastreio.js'), 'utf8');
   assert.match(tracker, /text\/plain;charset=UTF-8/, 'o rastreio envia sem preflight');
 });
+
+test('Ferramentas Vero v1: simulador recebe nome e contato do cliente; diagnóstico novo envia o resumo (Nota, Estrela, matriz, precificação)', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Simulação', phone1: '11 93817-5601', email: 'cliente.sim@ex.com', origin: 'indicacao', relationship: 'lead' });
+  assert.equal(c.status, 200, JSON.stringify(c.data));
+  // Simulador: dados do cliente para preencher (só quem enxerga o lead)
+  const sim = await call('c1', 'GET', `/api/simulador/cliente/${c.data.id}`);
+  assert.equal(sim.status, 200, JSON.stringify(sim.data));
+  assert.equal(sim.data.nome, 'Cliente Simulação');
+  assert.equal(sim.data.email, 'cliente.sim@ex.com');
+  assert.equal(sim.data.telefone, '(11) 93817-5601');
+  assert.ok(sim.data.consultor.nome);
+  assert.equal((await call('c2', 'GET', `/api/simulador/cliente/${c.data.id}`)).status, 404, 'fora do escopo');
+  assert.equal((await call(null, 'GET', `/api/simulador/cliente/${c.data.id}`)).status, 401, 'exige sessão');
+  // Diagnóstico Vero v1: PUT { data, resumo } vira resultado e precificação do CRM
+  const s = await call('c1', 'POST', '/api/diagnosticos', { contact_id: c.data.id });
+  const resumo = {
+    versao: 1, nota: { valor: 58, maximo: 100, faixa: 'atencao' },
+    estrela: [{ id: 'reserva', nome: 'Reserva', nota: 4, maximo: 10, pct: 40, status: 'critico' }, { id: 'protecao', nome: 'Proteção', nota: 8, maximo: 10, pct: 80, status: 'ok' }],
+    oportunidades: [{ id: 'vida', titulo: 'Seguro de vida', area: 'Proteção', produto: 'Seguro', prioridade: 'alta', prazo: 'curto', potencial: 80, valor: 1200 }],
+    precificacao: { valor: 4800, base: 'renda', percentual: 4, condicao: 'cartao', parcelas: 12, pixTotal: 4560, cartaoTotal: 4800, cartaoParcela: 400, validadeDias: 7 },
+  };
+  const put = await call('c1', 'PUT', `/api/diagnosticos/${s.data.id}/dados`, { data: { id: `crm-${s.data.id}`, coletaFinalizada: true, plano: [{ acao: 'Montar a reserva', prazo: 'curto' }] }, resumo });
+  assert.equal(put.status, 200, JSON.stringify(put.data));
+  const cur = (await call('c1', 'GET', `/api/cadastros/${c.data.id}/diagnostico`)).data.current;
+  assert.equal(cur.summary.resultado.estrela.nota, 58);
+  assert.deepEqual(cur.summary.resultado.estrela.pilares.map((p) => [p.id, p.pct, p.status]), [['reserva', 40, 'critico'], ['protecao', 80, 'ok']]);
+  assert.equal(cur.summary.resultado.matriz[0].titulo, 'Seguro de vida');
+  assert.match(cur.summary.resultado.matriz[0].detalhe, /1\.200/);
+  assert.equal(cur.summary.plano[0].titulo, 'Montar a reserva', 'ação do plano novo (campo acao)');
+  assert.equal(cur.pricing.valor, 4800);
+  assert.equal(cur.pricing.pix_total, 4560);
+  assert.equal(cur.pricing.parcelas, 12);
+  // Resumo de versão desconhecida é ignorado (mantém o último)
+  await call('c1', 'PUT', `/api/diagnosticos/${s.data.id}/dados`, { data: { id: `crm-${s.data.id}`, coletaFinalizada: true, x: 1 }, resumo: { versao: 9, nota: { valor: 1 } } });
+  assert.equal((await call('c1', 'GET', `/api/cadastros/${c.data.id}/diagnostico`)).data.current.summary.resultado.estrela.nota, 58);
+  // Páginas das ferramentas: diagnóstico com a trava (abre pelo lead) e simulador com a ponte do cliente
+  const diag = await fetch(`${base}/ferramentas/diagnostico-financeiro.html`);
+  if (diag.status === 200) {
+    const txt = await diag.text();
+    assert.ok(txt.includes('content="ponte-crm-1"') && txt.includes('id="vero-trava"'));
+  }
+  const page = await fetch(`${base}/ferramentas/simulador-consorcio.html`);
+  if (page.status === 200) {
+    const txt = await page.text();
+    assert.ok(txt.includes('id="vero-crm"') && txt.includes('/api/simulador/cliente/'));
+  }
+});

@@ -3,17 +3,20 @@
 import { get, post, patch, put } from '../api.js';
 import { html, render, on, state, can, hasModule, modal, field, toast, toastError, $, empty, fmtDateTime, formData } from '../ui.js';
 import { icon } from '../icons.js';
-import { openR1Model, downloadR1Model } from '../meeting.js';
-import { downloadR1Template } from '../r1.js';
 import { openLeadDrawer } from '../drawer.js';
+import { openSimulator } from '../leadtabs.js';
 
-const SIM_URL = 'ferramentas/simulador-consorcio.html';
+const PICK = {
+  diagnostico: { title: 'Diagnóstico financeiro — para qual cliente?', hint: 'O diagnóstico é gerado pelo lead: escolha o cliente e o painel dele abre na aba Diagnóstico.' },
+  simulador: { title: 'Simulador de consórcio — para qual cliente?', hint: 'Escolha o cliente: o simulador abre numa nova guia com o nome e o contato dele já preenchidos.' },
+};
 
-/** Escolha do cliente para abrir o diagnóstico financeiro (busca por nome, código, telefone ou e-mail). */
-function pickClient() {
+/** Escolha do cliente para abrir uma ferramenta (busca por nome, código, telefone ou e-mail). */
+function pickClient(kind = 'diagnostico') {
+  const k = PICK[kind];
   return modal({
-    title: 'Diagnóstico financeiro — para qual cliente?',
-    body: html`<p class="hint">O diagnóstico é gerado pelo lead: escolha o cliente e o painel dele abre na aba Diagnóstico.</p>
+    title: k.title,
+    body: html`<p class="hint">${k.hint}</p>
       <div class="field full"><label>Buscar cadastro</label><input type="search" name="q" placeholder="Nome, código (C-…), telefone ou e-mail" autocomplete="off"></div>
       <div class="pick-list" role="listbox"></div>`,
     onMount(form, close) {
@@ -50,28 +53,25 @@ const card = (t) => (t.href
 export async function show(view, { id } = {}) {
   if (id === 'ia') return knowledgeView(view);
   if (id === 'lps') return can.manage() ? lpsView(view) : render(view, html`<div class="page"><h1>Acesso não liberado</h1><p class="muted">LPs e rastreio são do líder e do administrador.</p></div>`);
-  if (id === 'diagnostico') {
+  if (id === 'diagnostico' || id === 'simulador') {
     await show(view);
-    const cid = await pickClient();
-    if (cid) openLeadDrawer(cid, { tab: 'diagnostico' });
+    const cid = await pickClient(id);
+    if (cid && id === 'diagnostico') openLeadDrawer(cid, { tab: 'diagnostico' });
+    if (cid && id === 'simulador') openSimulator(cid);
     return undefined;
   }
-  const company = state.meta.settings.company_name || 'Vero Consórcios';
   const lead = can.manage();
   const clusters = [
     {
-      key: 'consorcio', title: 'Consórcio', ic: 'consorcio', text: 'Simulação, proposta e reunião de apresentação.',
+      key: 'consorcio', title: 'Consórcio', ic: 'consorcio', text: 'Simulação de consórcio para o cliente.',
       tools: [
-        { href: SIM_URL, external: true, ic: 'simulador', title: 'Simulador de consórcio', text: 'Simulador da Vero Consórcios (acesso com a senha da equipe). Abre numa nova guia.' },
-        hasModule('simulador') && { href: '#/simulador', ic: 'propostas', title: 'Simulador de propostas', text: 'Simule cartas, parcelas e lances e gere a proposta que volta para o CRM.' },
-        { act: 'r1-open', ic: 'propostas', title: 'Modelo da R1', text: `Apresentação oficial da ${company} com o seu nome, foto e contato.`, extra: html`<button type="button" class="btn small" data-act="r1-download">Baixar</button>` },
-        { act: 'r1-template', ic: 'baixar', title: 'Modelo da transcrição da R1', text: 'Planilha para registrar o que foi dito na R1 e completar a qualificação.' },
+        { act: 'sim', ic: 'simulador', title: 'Simulador de consórcio', text: 'Escolha o cliente: o simulador da Vero abre numa nova guia com o nome e o contato dele (acesso com a senha da equipe).' },
       ],
     },
     {
-      key: 'planejamento', title: 'Planejamento financeiro', ic: 'planejamento', text: 'Diagnóstico, Estrela Vero e plano de ação.',
+      key: 'planejamento', title: 'Planejamento financeiro', ic: 'planejamento', text: 'Diagnóstico financeiro, Estrela Vero e plano de ação.',
       tools: [
-        { act: 'diag', ic: 'diagnostico', title: 'Diagnóstico financeiro', text: 'Gerado pelo lead: escolha o cliente e o painel dele abre na aba Diagnóstico.' },
+        { act: 'diag', ic: 'diagnostico', title: 'Diagnóstico financeiro', text: 'Escolha o cliente: o diagnóstico abre ligado a ele e fica salvo no CRM (aba Diagnóstico do lead).' },
       ],
     },
     { key: 'seguros', title: 'Seguros', ic: 'seguros', text: 'Proteção da renda, da família e do patrimônio.', tools: [{ soon: true, ic: 'seguros', title: 'Cotação de seguros', text: 'Vida, automóvel/frota, residencial/empresarial e saúde.' }] },
@@ -92,11 +92,12 @@ export async function show(view, { id } = {}) {
     ${clusters.map((c) => html`<section class="tool-cluster area-${c.key}"><header>${icon(c.ic, 20)}<div><h2>${c.title}</h2><small class="muted">${c.text}</small></div></header>
       <div class="tool-grid">${c.tools.filter(Boolean).map(card)}</div></section>`)}
   </div>`);
-  on(view, 'click', '[data-act=r1-open]', () => openR1Model(''));
-  on(view, 'click', '[data-act=r1-download]', () => downloadR1Model(''));
-  on(view, 'click', '[data-act=r1-template]', () => downloadR1Template());
+  on(view, 'click', '[data-act=sim]', async () => {
+    const id = await pickClient('simulador');
+    if (id) openSimulator(id);
+  });
   on(view, 'click', '[data-act=diag]', async () => {
-    const id = await pickClient();
+    const id = await pickClient('diagnostico');
     if (id) openLeadDrawer(id, { tab: 'diagnostico' });
   });
   return undefined;

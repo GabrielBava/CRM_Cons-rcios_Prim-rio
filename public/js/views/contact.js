@@ -403,7 +403,7 @@ const TAB_RENDER = {
     const w = can.write() && !c.anonymized_at;
     render(box, html`<section class="card">
       <div class="section-head"><h3>Simulações</h3>${w ? html`<button class="btn primary" data-act="sim-quick">Gerar simulação</button>` : ''}</div>
-      <p class="hint">Cada simulação registra a data, a hora e quem a gerou. Quando o simulador for conectado, os valores simulados passam a aparecer aqui (a simulação não gera proposta nem PDF).</p>
+      <p class="hint">"Gerar simulação" abre o Simulador de consórcio da Vero numa nova guia, já com o nome e o contato do cliente, e registra aqui a data, a hora e quem gerou (os valores ficam no simulador; a simulação não gera proposta nem PDF).</p>
       ${table(
         [
           { label: 'Código', render: (s) => (s.source === 'crm' ? html`<strong>${s.code}</strong>` : html`<a href="#" data-sim="${s.id}">${s.code}</a>`) },

@@ -367,6 +367,8 @@ export function startDiagnostic(contactId, { opportunityId = null } = {}) {
   });
 }
 export const openDiagnostic = (id) => window.open(absUrl(`ferramentas/diagnostico-financeiro.html?crm=${id}#/clientes/crm-${id}`), '_blank', 'noopener');
+/** Simulador de consórcio ligado ao cliente: a página busca no CRM o nome e o contato dele (?crm=<id do cadastro>). */
+export const openSimulator = (contactId) => window.open(absUrl(`ferramentas/simulador-consorcio.html?crm=${Number(contactId)}`), '_blank', 'noopener');
 
 /* ------------------------- Arquivos do lead ------------------------- */
 

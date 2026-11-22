@@ -238,6 +238,12 @@ cliques em `iniciar-windows.bat`. Ao fechar a área restrita, tudo é apagado.
    Organograma, Dashboard, BI e Distribuição de leads.
 8. **BI:** No-show R1 e R2 separados, TMA (tempo na etapa) e TME (sem atividade) em horas, taxa de conversão e receita com
    planejamento. Aceite uma proposta de planejamento e veja a receita subir.
+9. **Ferramentas (Simulador e Diagnóstico Vero v1):** em **Ferramentas**, Consórcio mostra só o **Simulador de consórcio** e
+   Planejamento só o **Diagnóstico financeiro**. No simulador, escolha o cliente: a nova guia mostra "Simulação para
+   <cliente>" e, depois da senha da equipe, nome, telefone e e-mail do cliente entram nos campos dele. O mesmo acontece em
+   **Gerar simulação** (aba Propostas da página do lead, que também registra a simulação) e no botão **Simulador de
+   consórcio** do painel lateral. Para trocar os arquivos: `node scripts/build-tools.js --diag Diagnostico-Vero.html --sim
+   Simulador_Consorcio_Vero.html`.
 
 ### H8. LPs ligadas ao CRM e rastreio (UTM)
 

@@ -99,6 +99,21 @@ function createRouter(db) {
   add('GET', '/api/planos', ({ query }) => catalog.listPlans(db, query));
   // Simulador servido pelo CRM: administradoras e planos ativos (sessão do usuário logado)
   add('GET', '/api/simulador/planos', () => catalog.simulatorPlans(db));
+  // Simulador de consórcio (Ferramentas › Consórcio): nome e contato do cliente escolhido para a simulação
+  const fmtPhoneBR = (v) => {
+    const d = String(v || '').replace(/\D/g, '').replace(/^55(?=\d{10,11}$)/, '');
+    if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+    if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+    return String(v || '');
+  };
+  add('GET', '/api/simulador/cliente/:id', ({ user, params }) => {
+    const c = core.loadContact(db, user, params.id);
+    return {
+      id: c.id, codigo: c.code, nome: c.name, telefone: fmtPhoneBR(c.whatsapp || c.phone1 || c.phone2), email: c.email || '',
+      consultor: { nome: user.name, email: user.email, telefone: fmtPhoneBR(user.whatsapp || user.phone) },
+      crm_url: `#/leads/${c.id}`,
+    };
+  });
   add('POST', '/api/planos', ({ user, body }) => ({ id: catalog.savePlan(db, user, body) }));
   add('GET', '/api/planos/:id/verificar-credito', ({ params, query }) => {
     const plan = db.prepare('SELECT * FROM products WHERE id = ?').get(Number(params.id));
