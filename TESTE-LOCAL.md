@@ -16,7 +16,8 @@ cai no CRM e é distribuído pela roleta; o especialista gera a proposta no simu
 | O quê | Endereço | Acesso |
 |---|---|---|
 | CRM | <http://localhost:3000/> | `admin@demo.local` · senha `demo12345` |
-| Landing page | <http://localhost:3000/lp/> | pública |
+| LP Consórcios (geral) | <http://localhost:3000/lp/> | pública |
+| LP Planejamento | <http://localhost:3000/lp/lp-planejamento.html> | pública |
 | Simulador | <http://localhost:3000/simulador/> | aberto pelo CRM |
 
 Outros usuários da demonstração (mesma senha): `gestora@demo.local` (líder), `consultor1@demo.local` e
@@ -238,6 +239,17 @@ cliques em `iniciar-windows.bat`. Ao fechar a área restrita, tudo é apagado.
 8. **BI:** No-show R1 e R2 separados, TMA (tempo na etapa) e TME (sem atividade) em horas, taxa de conversão e receita com
    planejamento. Aceite uma proposta de planejamento e veja a receita subir.
 
+### H8. LPs ligadas ao CRM e rastreio (UTM)
+
+1. Abra <http://localhost:3000/lp/?utm_source=meta&utm_medium=pago_social&utm_campaign=consorcio_imovel_2026-11> (LP
+   Consórcios), simule e envie seus dados. No CRM, o lead aparece no pipeline com origem **LP (landing page)**, área
+   Consórcio e a nota **Formulário da LP** (aba Notas) com a simulação e a campanha.
+2. Abra <http://localhost:3000/lp/lp-planejamento.html>, responda as 4 perguntas e envie: lead com área **Planejamento
+   financeiro** e as respostas (objetivo, prazo, renda e se consegue guardar) na nota. Como você entrou antes pelo link da
+   Meta, a nota mostra esse "primeiro contato com a Vero".
+3. **Ferramentas › LPs e rastreio:** gere um link com UTM, veja o desempenho por LP, fonte ou campanha, cadastre uma LP nova
+   (ex.: Seguros) em **Editar LPs** e baixe o arquivo da LP já com o endereço do CRM.
+
 ### H2. Menu lateral e Gestão do time
 
 1. O botão no canto superior esquerdo recolhe o menu (fica só o símbolo da Vero e os ícones); clique de novo para expandir.
@@ -282,8 +294,10 @@ Financeiro (contas a pagar e a receber), Administradoras (senha do portal), Rela
 
 - **CRM:** um servidor com Node.js 22+, atrás de HTTPS (Nginx, Caddy ou o balanceador da nuvem), com
   `HOST=0.0.0.0`, `CRM_DB` num disco com backup e `CRM_SECRET_KEY` definida (ver README).
-- **Landing page:** pode ficar no próprio CRM (`/lp/`) ou no seu domínio. Em outro domínio, troque em
-  `public/lp/index.html` o `leadEndpoint` para `https://SEU-CRM/api/publico/lp/leads` e limite os sites que podem
-  enviar leads com a variável `LP_ALLOWED_ORIGINS=https://seudominio.com.br` (o padrão `*` aceita qualquer site).
+- **Landing pages:** a LP Consórcios vai como `index.html` da hospedagem e a LP Planejamento como
+  `lp-planejamento.html`. Baixe as duas em **Ferramentas › LPs e rastreio › Baixar** (já saem com o endereço do CRM,
+  `PUBLIC_URL`) ou gere com `node scripts/preparar-lp.js public/lp/index.html index.html --lp consorcios --area consorcio
+  --crm https://crm.veroconsorciosbr.com.br`. Para aceitar leads só dos seus sites, use
+  `LP_ALLOWED_ORIGINS=https://veroconsorciosbr.com.br` (o padrão `*` aceita qualquer site).
 - **Simulador:** servido pelo CRM (`/simulador/`), no mesmo endereço, para devolver as propostas ao CRM.
 - O endpoint da LP tem limite de envios por IP, exige o aceite da Política de Privacidade e não duplica cadastros.

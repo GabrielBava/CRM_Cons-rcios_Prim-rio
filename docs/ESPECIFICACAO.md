@@ -756,3 +756,11 @@ O **Ganho** antes da hora pede, no mesmo pop-up, o canal do contato (quando aind
 | Win rate | ganhos ÷ (ganhos + perdidos) fechados no período |
 
 A duração média das ligações (o antigo "TMA de atendimento") continua no BI com esse nome.
+
+## 24. LPs (consórcio e planejamento) ligadas ao CRM e rastreio de campanhas (UTM)
+
+**LPs.** A **LP Consórcios** é a LP geral (o `index.html` da hospedagem) e a **LP Planejamento** fica em `lp-planejamento.html`. Cada envio de formulário entra no CRM na hora: o cadastro com origem **LP (landing page)**, o negócio em **Tentativa de contato** com a **área** do formulário (consórcio — simulador ou Mecanismo de Alavancagem — ou planejamento financeiro) e a roleta distribui o lead. Tudo o que a pessoa preencheu (simulação, crédito, parcela e prazo; ou objetivo, prazo, renda familiar e se consegue guardar; preferência e horário de contato; aceites) fica nas **observações do cadastro** e na nota **Formulário da LP**, a primeira da aba Notas do painel do lead, junto com a campanha (UTM), o primeiro contato com a Vero e a página. Telefone ou e-mail já cadastrado não duplica: entra a nova origem e o negócio da área é completado ou aberto (ex.: cliente de planejamento que simula consórcio ganha um segundo negócio, de consórcio).
+
+**LPs futuras** (seguros, investimentos e temas específicos) usam o mesmo envio, com a área e as respostas livres; o CRM registra todas as respostas, mesmo as que não conhece.
+
+**Rastreio (UTM).** Um script único (`vero-rastreio.js`), embutido nas LPs, guarda por 90 dias o primeiro e o último toque (UTMs, gclid/fbclid e outros identificadores de clique, página e site de origem) e identifica o canal quando não há UTM. Assim, quem clica num anúncio e volta dias depois direto pela LP continua atribuído ao anúncio. **Ferramentas › LPs e rastreio** (líder e administrador): LPs cadastradas (o administrador inclui as novas), gerador de links no **padrão de UTM da Vero** (`utm_campaign = área_tema_aaaa-mm`, fontes e mídias padronizadas), desempenho por LP, formulário, área, fonte, mídia, campanha ou criativo (entradas, cadastros, com R1, ganhos e conversão) e o botão **Baixar** a LP já configurada com o endereço do CRM.

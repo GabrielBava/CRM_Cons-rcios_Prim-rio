@@ -345,7 +345,8 @@ function changeStatus(db, user, id, data) {
     extra.accepted_channel = clean(data.accepted_channel);
     if (!extra.accepted_channel) throw badRequest('Informe por qual canal o cliente aceitou a proposta.');
     assertOption(db, 'canal_aceite', extra.accepted_channel, 'canal do aceite');
-    extra.accepted_at = toDateOnly(data.accepted_at) || now.slice(0, 10);
+    // Data do aceite no horário de Brasília (a meia-noite UTC ainda é o dia anterior no Brasil)
+    extra.accepted_at = toDateOnly(data.accepted_at) || new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
     extra.accepted_by = user.id;
   }
   if (status === 'recusada') {

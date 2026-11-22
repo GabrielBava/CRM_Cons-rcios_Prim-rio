@@ -606,7 +606,7 @@ const DEFAULT_OPTIONS = {
     ['facebook', 'Facebook'],
     ['linkedin', 'LinkedIn'],
     ['tiktok', 'TikTok'],
-    ['landing_page', 'Landing page'],
+    ['landing_page', 'LP (landing page)'],
     ['site', 'Site ou formulário'],
     ['evento', 'Evento'],
     ['prospeccao_propria', 'Prospecção própria'],
@@ -1341,6 +1341,8 @@ function seedDefaults(db) {
     }
     db.prepare("INSERT INTO settings (key, value) VALUES ('migr_v13_arquivos', 'true')").run();
   }
+  // v16: origem "Landing page" passa a se chamar "LP (landing page)"
+  db.prepare("UPDATE options SET label = 'LP (landing page)' WHERE list = 'origem' AND value = 'landing_page' AND label = 'Landing page'").run();
   // v15: a passagem para Qualificação pede a triagem concluída (a qualificação detalhada fica opcional)
   if (!db.prepare("SELECT 1 FROM settings WHERE key = 'migr_v15_triagem'").get()) {
     const custom = db.prepare("SELECT value FROM settings WHERE key = 'stage_rules'").get();

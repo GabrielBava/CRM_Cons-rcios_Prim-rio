@@ -1830,6 +1830,91 @@ test('landing page: simulador (aquisição ou alavancagem) e mecanismo de alavan
   assert.ok(pr.generated_at && pr.pdf_attachment_id);
 });
 
+test('LPs: planejamento e LPs futuras (área + respostas) com origem LP, nota do formulário, UTM e rastreio; tela LPs e rastreio', async () => {
+  let ip = 10;
+  const pub = async (body) => {
+    const r = await fetch(`${base}/api/publico/lp/leads`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': `203.0.113.${ip++}` }, body: JSON.stringify(body) });
+    return { status: r.status, data: await r.json() };
+  };
+  const contactOf = async (code) => (await call('admin', 'GET', `/api/cadastros/${appDb.prepare('SELECT id FROM contacts WHERE code = ?').get(code).id}`)).data;
+  // LP de planejamento (formato da LP) com o rastreio do vero-rastreio.js
+  const plan = await pub({
+    tipo: 'planejamento_financeiro', nome: 'Nina Planeja', email: 'nina.lp@ex.com', celular: '51990001111', preferencia_contato: 'WhatsApp', melhor_horario: 'Noite',
+    objetivo: 'Sair das dívidas', prazo: 'Até 6 meses', renda_familiar: 'De R$ 7.000 a R$ 10.000', consegue_guardar: 'Não', aceite_privacidade: true, aceite_contato: true,
+    origem: 'LP Planejamento · popup_jornada', pagina: 'https://veroconsorciosbr.com.br/lp-planejamento.html?utm_source=google',
+    utm: { utm_source: 'google', utm_medium: 'cpc', utm_campaign: 'planejamento_dividas_2026-11', utm_term: 'sair-das-dividas', gclid: 'G-123' },
+    rastreio: { lp: 'planejamento', area: 'planejamento', visitas: 2, primeiro_toque: { utm: { utm_source: 'meta', utm_medium: 'pago_social', utm_campaign: 'consorcio_imovel_2026-10' }, data: '2026-10-30T12:00:00.000Z' }, ultimo_toque: { utm: { utm_source: 'google', utm_medium: 'cpc' } } },
+  });
+  assert.equal(plan.status, 200, JSON.stringify(plan.data));
+  assert.deepEqual([plan.data.status, plan.data.lp, plan.data.area, plan.data.formulario], ['criado', 'planejamento', 'planejamento', 'planejamento']);
+  const nina = await contactOf(plan.data.codigo);
+  assert.equal(nina.origin, 'landing_page');
+  assert.equal(nina.opportunities[0].business_area, 'planejamento');
+  assert.equal(nina.opportunities[0].stage_name, 'Tentativa de contato');
+  assert.match(nina.initial_notes, /Objetivo financeiro: Sair das dívidas/);
+  assert.match(nina.initial_notes, /Renda familiar mensal: De R\$ 7\.000 a R\$ 10\.000/);
+  const note = appDb.prepare("SELECT notes FROM activities WHERE contact_id = ? AND ref_type = 'lp_form'").get(nina.id).notes;
+  assert.match(note, /pop-up do botão "jornada"/);
+  assert.match(note, /Primeiro contato com a Vero: meta \/ pago_social/);
+  const og = appDb.prepare("SELECT * FROM contact_origins WHERE contact_id = ? AND source_ref LIKE 'lp:%'").get(nina.id);
+  assert.equal(og.source_ref, 'lp:planejamento:planejamento');
+  assert.deepEqual([og.utm_source, og.utm_medium, og.utm_campaign, og.utm_term], ['google', 'cpc', 'planejamento_dividas_2026-11', 'sair-das-dividas']);
+  const extra = JSON.parse(og.other_params);
+  assert.equal(extra.gclid, 'G-123');
+  assert.equal(extra.primeiro_toque.utm.utm_source, 'meta');
+  assert.equal(appDb.prepare("SELECT label FROM options WHERE list = 'origem' AND value = 'landing_page'").get().label, 'LP (landing page)');
+  // LP futura (seguros): área + respostas livres; campos desconhecidos também ficam registrados
+  const seg = await pub({ lp: 'seguros-vida', area: 'seguros', formulario: 'cotacao_vida', nome: 'Caio Seguro', celular: '51990002222', aceite_privacidade: true,
+    respostas: { 'Tem dependentes?': 'Sim', 'Idade': 42 }, profissao: 'Engenheiro', utm: { utm_source: 'instagram', utm_medium: 'organico' } });
+  assert.equal(seg.status, 200, JSON.stringify(seg.data));
+  assert.equal(seg.data.area, 'seguros');
+  const caio = await contactOf(seg.data.codigo);
+  assert.equal(caio.opportunities[0].business_area, 'seguros');
+  assert.match(caio.initial_notes, /Tem dependentes\?: Sim/);
+  assert.match(caio.initial_notes, /Idade: 42/);
+  assert.match(caio.initial_notes, /Profissao: Engenheiro/);
+  // Mesmo telefone pela LP de consórcio: sem duplicar o cadastro, abre o negócio de consórcio ao lado do de planejamento
+  const again = await pub({ nome: 'Nina Planeja', celular: '51990001111', categoria: 'Imóvel', credito: 300000, aceite_privacidade: true });
+  assert.equal(again.data.status, 'existente');
+  assert.equal(again.data.area, 'consorcio');
+  const nina2 = await contactOf(plan.data.codigo);
+  assert.deepEqual(nina2.opportunities.map((o) => o.business_area).sort(), ['consorcio', 'planejamento']);
+  assert.equal(appDb.prepare("SELECT COUNT(*) AS n FROM activities WHERE contact_id = ? AND ref_type = 'lp_form'").get(nina.id).n, 2);
+  // Tela LPs e rastreio
+  assert.equal((await call('c1', 'GET', '/api/lps')).status, 403, 'especialista não acessa');
+  const lps = await call('admin', 'GET', '/api/lps');
+  assert.equal(lps.status, 200);
+  assert.deepEqual(lps.data.pages.map((p) => p.slug), ['consorcios', 'planejamento']);
+  assert.ok(lps.data.padrao.fontes.some(([v]) => v === 'meta') && lps.data.padrao.midias.some(([v]) => v === 'cpc'));
+  assert.equal((await call('gestor', 'PUT', '/api/lps', { pages: [] })).status, 403, 'só o administrador edita');
+  assert.equal((await call('admin', 'PUT', '/api/lps', { pages: [...lps.data.pages, { nome: 'LP Seguros', slug: 'seguros-vida', area: 'outra' }] })).status, 400);
+  const saved = await call('admin', 'PUT', '/api/lps', { pages: [...lps.data.pages, { nome: 'LP Seguros de vida', slug: 'Seguros Vida', area: 'seguros', url: 'https://veroconsorciosbr.com.br/lp-seguros.html' }] });
+  assert.equal(saved.status, 200, JSON.stringify(saved.data));
+  assert.equal(saved.data.pages[2].slug, 'seguros-vida');
+  const perf = (await call('admin', 'GET', '/api/lps/desempenho?dias=30&por=lp')).data;
+  assert.ok(perf.rows.find((r) => r.chave === 'LP Planejamento').entradas >= 1);
+  assert.ok(perf.rows.find((r) => r.chave === 'LP Seguros de vida').cadastros >= 1);
+  const byArea = (await call('admin', 'GET', '/api/lps/desempenho?por=area')).data.rows.map((r) => r.chave);
+  assert.ok(byArea.includes('Seguros') && byArea.includes('Planejamento financeiro'));
+  const bySource = (await call('admin', 'GET', '/api/lps/desempenho?por=fonte')).data.rows.map((r) => r.chave);
+  assert.ok(bySource.includes('google') && bySource.includes('instagram'));
+  // Arquivo da LP para a hospedagem: já com o endereço do CRM
+  const file = await fetch(`${base}/api/lps/planejamento/arquivo`, { headers: { Cookie: sessions.admin } });
+  assert.equal(file.status, 200);
+  assert.match(file.headers.get('content-disposition'), /lp-planejamento\.html/);
+  const htmlTxt = await file.text();
+  assert.ok(htmlTxt.includes(`window.VERO_LP={crm:"${base}",lp:"planejamento",area:"planejamento"}`), 'endereço do CRM no arquivo');
+  assert.ok(htmlTxt.includes('leadEndpoint:window.VeroLP?VeroLP.endpoint():""'));
+  assert.equal((await fetch(`${base}/api/lps/seguros-vida/arquivo`, { headers: { Cookie: sessions.admin } })).status, 404, 'LP sem arquivo no CRM');
+  // Preparar uma LP nova: embute o rastreio uma vez só e liga o leadEndpoint
+  const { prepare } = require('../scripts/preparar-lp.js');
+  const once = prepare('<html><head><title>x</title></head><body><script>var c={leadEndpoint:""}</script></body></html>', { lp: 'seguros-vida', area: 'seguros', crm: 'https://crm.exemplo.com' });
+  assert.ok(once.wired);
+  const twice = prepare(once.html, { lp: 'seguros-vida', area: 'seguros', crm: 'https://crm.exemplo.com' });
+  assert.equal(twice.html.split('vero-lp:inicio').length, 2, 'sem duplicar o bloco');
+  assert.throws(() => prepare('<html><head></head></html>', { lp: 'X Y', area: 'seguros' }));
+});
+
 test('planos na proposta: só administradoras e planos ativos (pelo código) ou "Outros"; nova versão abre o simulador e atualiza a mesma proposta (v2)', async () => {
   const plan = await ensurePlan();
   // Código do plano único por administradora

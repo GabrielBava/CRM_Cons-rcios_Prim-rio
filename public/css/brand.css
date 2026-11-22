@@ -1920,3 +1920,24 @@ html.nav-collapsed { --sidebar-w: 74px; }
 .opt-menu button { display: grid; grid-template-columns: 18px 1fr; column-gap: 8px; align-items: center; text-align: left; padding: 8px 10px; border: 0; border-radius: 10px; background: transparent; color: var(--text); font: inherit; font-size: var(--fs-sm); cursor: pointer; }
 .opt-menu button small { grid-column: 2; color: var(--text-muted); font-size: var(--fs-xs); }
 .opt-menu button:hover, .opt-menu button:focus-visible { background: var(--bg-active); }
+
+/* LPs e rastreio */
+.lps-page .card { margin-bottom: 16px; }
+.lp-table td { vertical-align: top; }
+.lp-table a { word-break: break-all; }
+.utm-form { align-items: end; }
+.utm-out { display: flex; gap: 8px; align-items: center; }
+.utm-out input { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--fs-sm); }
+.utm-std summary { cursor: pointer; font-weight: 600; }
+.utm-rules { margin: 10px 0; padding-left: 18px; font-size: var(--fs-sm); display: grid; gap: 4px; }
+.utm-std-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+.utm-std-grid dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0; font-size: var(--fs-sm); }
+.utm-std-grid dd { margin: 0; color: var(--text-muted); }
+.code-block { white-space: pre-wrap; word-break: break-all; background: var(--pill-bg); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; font-size: var(--fs-xs); }
+.lp-edit { display: grid; gap: 8px; margin-bottom: 10px; }
+.lp-edit-row { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1.8fr 34px; gap: 6px; align-items: center; }
+.lp-edit-row input, .lp-edit-row select { min-width: 0; }
+@media (max-width: 760px) { .lp-edit-row { grid-template-columns: 1fr 1fr; } .lp-edit-row [name=url] { grid-column: 1 / -1; } .utm-out { flex-wrap: wrap; } .utm-out input { flex-basis: 100%; } }
+.lp-forms li { border-left: 3px solid var(--primary-bright); }
+.pre-line { white-space: pre-line; overflow-wrap: anywhere; }
+.lp-forms li { min-width: 0; }

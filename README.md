@@ -213,6 +213,12 @@ docs/
 - **Painel do lead:** atividade com resultado e próxima ação; tarefas de aproximação que só se concluem registrando o que foi feito; **triagem** de 6 perguntas obrigatória para a R1; agendas e propostas reorganizadas; opções da proposta num botão só.
 - **Menu:** grupo Ferramentas e Treinamentos (só os dois itens); Gestão do time com Organograma, Dashboard, BI e Distribuição de leads. **BI** com no-show R1/R2, TMA (tempo na etapa) e TME (sem atividade) em horas e receita com planejamento. Detalhes em `docs/ESPECIFICACAO.md` §23.
 
+## LPs ligadas ao CRM e rastreio (UTM)
+
+- **LP Consórcios** (`index.html` da hospedagem) e **LP Planejamento** (`lp-planejamento.html`) enviam cada cadastro ao CRM: origem LP, área do formulário, negócio em Tentativa de contato e todas as respostas na nota "Formulário da LP".
+- **Rastreio:** `public/lp/vero-rastreio.js` (primeiro e último toque, UTMs e gclid/fbclid) embutido pelo `scripts/preparar-lp.js`, que também serve para as LPs futuras (seguros, investimentos, temas).
+- **Ferramentas › LPs e rastreio:** LPs cadastradas, gerador de links no padrão de UTM da Vero, desempenho por campanha e download das LPs configuradas. Detalhes em `docs/INTEGRACOES.md` §15.
+
 ## Configuração local (senhas e chaves)
 
 Senhas e chaves (Google, SMTP) ficam no arquivo `config.env`, na pasta do sistema, fora do Git (`.gitignore`). Modelo em `config.env.exemplo`. O servidor lê o arquivo ao iniciar (`npm start`, `npm run local` e os atalhos) e o instalador do Ubuntu o leva para `/etc/vero-consorcios.env`.

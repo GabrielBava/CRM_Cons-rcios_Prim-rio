@@ -306,6 +306,15 @@ function createRouter(db) {
     cors(req, res);
     return require('./services/landing').receive(db, body, { ip: clientIp(req) });
   }, { integration: true, bodyLimit: 50e3 });
+  // LPs e rastreio (líder e administrador): LPs cadastradas, padrão de UTM, desempenho e o arquivo da LP configurado
+  const reqOrigin = (req) => `${String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() || (req.socket?.encrypted ? 'https' : 'http')}://${req.headers['x-forwarded-host'] || req.headers.host}`;
+  add('GET', '/api/lps', ({ user, req }) => require('./services/landing').overview(db, user, { origin: reqOrigin(req) }));
+  add('PUT', '/api/lps', ({ user, body }) => ({ pages: require('./services/landing').saveLpPages(db, user, body.pages) }));
+  add('GET', '/api/lps/desempenho', ({ user, query }) => require('./services/landing').performance(db, user, query));
+  add('GET', '/api/lps/:slug/arquivo', ({ user, params, req, res }) => {
+    const f = require('./services/landing').lpFile(db, user, params.slug, { origin: reqOrigin(req) });
+    return sendBinary(res, f.filename, 'text/html; charset=utf-8', f.html);
+  });
   add('OPTIONS', '/api/publico/simulador/proposta', preflight, { integration: true });
   add('POST', '/api/publico/simulador/proposta', ({ req, res, body }) => {
     cors(req, res);

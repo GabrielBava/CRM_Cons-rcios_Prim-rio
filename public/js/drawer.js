@@ -300,9 +300,11 @@ export async function openLeadDrawer(contactId, { oppId = null, onChange = null,
         ${ms.length ? html`<ul class="feed meetings">${ms.map((t) => html`<li><div><span class="badge kind-meet">${kindL(t)}</span> <strong>${fmtDateTime(t.due_at)}</strong>${t.ends_at ? html` <small>às ${new Date(t.ends_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</small>` : ''} ${out(t)} ${t.confirmed_at ? badge('presença confirmada', 'ok') : ''}${t.rescheduled_from ? html` <small class="muted">(remarcação)</small>` : ''}</div>
           <small class="muted">${t.title} · ${t.assigned_name || '—'}</small>${t.notes ? html`<p class="small">${t.notes}</p>` : ''}${t.status === 'pendente' ? html`<div>${meetingLinks(t)}</div>` : ''}</li>`)}</ul>` : empty('Nenhuma reunião agendada para este lead.')}`);
     } else if (tab === 'notas') {
+      const lpForms = acts.filter((a) => a.ref_type === 'lp_form');
       const notes = acts.filter((a) => a.type === 'observacao');
       render(box, html`${w ? html`<form class="note-form" data-note><textarea name="notes" rows="3" placeholder="Escreva uma nota sobre o lead (fica no histórico e conta como atividade)" required></textarea><div class="inline-actions"><button type="submit" class="btn small primary">Salvar nota</button></div></form>` : ''}
-        ${notes.length ? html`<ul class="feed notes">${notes.map((a) => html`<li><p>${a.notes}</p><small class="muted">${a.user_name || '—'} · ${fmtDateTime(a.occurred_at)}</small></li>`)}</ul>` : empty('Nenhuma nota.')}`);
+        ${lpForms.length ? html`<ul class="feed notes lp-forms">${lpForms.map((a) => html`<li><span class="badge info">Formulário da LP</span><p class="pre-line">${a.notes}</p><small class="muted">${fmtDateTime(a.occurred_at)}</small></li>`)}</ul>` : ''}
+        ${notes.length ? html`<ul class="feed notes">${notes.map((a) => html`<li><p>${a.notes}</p><small class="muted">${a.user_name || '—'} · ${fmtDateTime(a.occurred_at)}</small></li>`)}</ul>` : lpForms.length ? '' : empty('Nenhuma nota.')}`);
     } else if (tab === 'propostas') {
       const props = c.proposals;
       const areaL = (a) => PROPOSAL_AREAS.find((x) => x.value === (a || 'consorcio'))?.label || 'Consórcio';
