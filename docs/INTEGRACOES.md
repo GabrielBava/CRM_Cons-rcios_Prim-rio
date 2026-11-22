@@ -286,4 +286,5 @@ A ponte da ferramenta de diagnóstico envia, junto com cada salvamento, a precif
   - Opções: `--schema <nome>`, `--sem-dados`, `--sem-anexos`.
   - Segurança: sem a tabela de sessões; senhas, tokens, hashes e chaves cifradas como NULL; configurações com segredo (SMTP, Google) fora; RLS ligado em todas as tabelas, sem políticas, e o schema fora da API pública (anon/authenticated sem acesso). Dados pessoais dos clientes (CPF, telefone) vão junto: use um projeto Supabase só da Vero.
   - Tipos: INTEGER → bigint, REAL → double precision, TEXT → text, BLOB → bytea; `id` vira identity; índices simples e únicos recriados; chaves estrangeiras como `NOT VALID`.
+  - **Projeto de teste:** `vero-crm-teste` (organização Vero Consórcios, região São Paulo), com o schema `crm_teste` carregado a partir de `supabase/crm_teste.sql` (dados de demonstração). Como recarregar: `supabase/LEIA-ME.md`.
   - Para o CRM rodar de fato sobre o Supabase (por exemplo, na Vercel), a camada de dados precisa ser migrada do SQLite para o Postgres: é outra etapa.
