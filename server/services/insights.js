@@ -138,7 +138,7 @@ function build(db, user, key, q) {
         FROM sales s WHERE s.status != 'cancelada' AND ${SALE_DATE} BETWEEN ? AND ? GROUP BY mes ORDER BY mes`).all(p.dFrom, p.dTo);
       const canc = Object.fromEntries(db.prepare(`SELECT substr(cancelled_at, 1, 7) AS mes, COUNT(*) AS n, SUM(credit_value) AS v FROM sales WHERE status = 'cancelada' AND substr(cancelled_at, 1, 10) BETWEEN ? AND ? GROUP BY mes`).all(p.dFrom, p.dTo).map((r) => [r.mes, r]));
       const out = rows.map((r) => ({ mes: monthLabel(r.mes), vendas: r.vendas, credito: r2(r.credito), ticket: r2(r.ticket), especialistas: r.especialistas, cancelamentos: canc[r.mes]?.n || 0, credito_cancelado: r2(canc[r.mes]?.v) }));
-      const bySeller = db.prepare(`SELECT u.name AS especialista, COUNT(*) AS vendas, SUM(s.credit_value) AS credito FROM sales s LEFT JOIN users u ON u.id = s.seller_id WHERE s.status != 'cancelada' AND ${SALE_DATE} BETWEEN ? AND ? GROUP BY s.seller_id ORDER BY credito DESC`).all(p.dFrom, p.dTo).map((r) => ({ ...r, credito: r2(r.credito) }));
+      const bySeller = db.prepare(`SELECT u.name AS especialista, COUNT(*) AS vendas, SUM(s.credit_value) AS credito FROM sales s LEFT JOIN users u ON u.id = s.seller_id WHERE s.status != 'cancelada' AND ${SALE_DATE} BETWEEN ? AND ? GROUP BY s.seller_id, u.name ORDER BY credito DESC`).all(p.dFrom, p.dTo).map((r) => ({ ...r, credito: r2(r.credito) }));
       const tot = out.reduce((t, r) => ({ vendas: t.vendas + r.vendas, credito: t.credito + r.credito, cancelamentos: t.cancelamentos + r.cancelamentos, credito_cancelado: t.credito_cancelado + r.credito_cancelado }), { vendas: 0, credito: 0, cancelamentos: 0, credito_cancelado: 0 });
       return {
         ...base,
@@ -151,7 +151,7 @@ function build(db, user, key, q) {
     }
     case 'vendas_categoria': {
       const rows = db.prepare(`SELECT COALESCE(a.name, 'Sem administradora') AS administradora, s.category AS categoria, COUNT(*) AS vendas, SUM(s.credit_value) AS credito, AVG(s.term_months) AS prazo_medio
-        FROM sales s LEFT JOIN administrators a ON a.id = s.administrator_id WHERE s.status != 'cancelada' AND ${SALE_DATE} BETWEEN ? AND ? GROUP BY s.administrator_id, s.category ORDER BY credito DESC`).all(p.dFrom, p.dTo)
+        FROM sales s LEFT JOIN administrators a ON a.id = s.administrator_id WHERE s.status != 'cancelada' AND ${SALE_DATE} BETWEEN ? AND ? GROUP BY s.administrator_id, a.name, s.category ORDER BY credito DESC`).all(p.dFrom, p.dTo)
         .map((r) => ({ ...r, categoria: catLabel(db, r.categoria), credito: r2(r.credito), prazo_medio: r.prazo_medio ? Math.round(r.prazo_medio) : null }));
       const total = rows.reduce((t, r) => t + r.credito, 0);
       rows.forEach((r) => (r.participacao = pct(r.credito, total)));
@@ -221,7 +221,7 @@ function build(db, user, key, q) {
           SUM(i.amount) AS previsto, SUM(CASE WHEN i.status = 'pago' THEN i.paid_amount ELSE 0 END) AS realizado,
           SUM(CASE WHEN i.status = 'aberto' THEN i.amount ELSE 0 END) AS em_aberto, SUM(CASE WHEN i.status = 'aberto' AND i.due_date < ? THEN i.amount ELSE 0 END) AS vencido
         FROM fin_installments i JOIN fin_titles t ON t.id = i.title_id LEFT JOIN fin_categories c ON c.id = t.category_id LEFT JOIN fin_cost_centers cc ON cc.id = t.cost_center_id
-        WHERE t.direction = ? AND i.status != 'cancelado' AND i.due_date BETWEEN ? AND ? GROUP BY t.category_id, t.cost_center_id ORDER BY previsto DESC`).all(d, dir, p.dFrom, p.dTo)
+        WHERE t.direction = ? AND i.status != 'cancelado' AND i.due_date BETWEEN ? AND ? GROUP BY t.category_id, t.cost_center_id, c.name, cc.name ORDER BY previsto DESC`).all(d, dir, p.dFrom, p.dTo)
         .map((r) => ({ ...r, previsto: r2(r.previsto), realizado: r2(r.realizado), em_aberto: r2(r.em_aberto), vencido: r2(r.vencido) }));
       const items = db.prepare(`SELECT t.code AS titulo, t.description AS descricao, COALESCE(fp.name, '—') AS ${dir === 'pagar' ? 'fornecedor' : 'pagador'}, i.number AS parcela, i.due_date AS vencimento, i.amount AS valor,
           CASE WHEN i.status = 'pago' THEN 'Pago' WHEN i.due_date < ? THEN 'Vencido' ELSE 'Em aberto' END AS situacao, i.paid_at AS pago_em
@@ -240,7 +240,7 @@ function build(db, user, key, q) {
     case 'fin_resultado': {
       const rows = db.prepare(`SELECT t.direction AS tipo, COALESCE(c.group_name, '') AS grupo, COALESCE(c.name, 'Sem categoria') AS categoria, SUM(i.paid_amount) AS valor, COUNT(*) AS lancamentos
         FROM fin_installments i JOIN fin_titles t ON t.id = i.title_id LEFT JOIN fin_categories c ON c.id = t.category_id
-        WHERE i.status = 'pago' AND i.paid_at BETWEEN ? AND ? GROUP BY t.direction, t.category_id ORDER BY t.direction DESC, valor DESC`).all(p.dFrom, p.dTo)
+        WHERE i.status = 'pago' AND i.paid_at BETWEEN ? AND ? GROUP BY t.direction, t.category_id, c.group_name, c.name ORDER BY t.direction DESC, valor DESC`).all(p.dFrom, p.dTo)
         .map((r) => ({ ...r, tipo: r.tipo === 'receber' ? 'Receita' : 'Despesa', valor: r2(r.tipo === 'receber' ? r.valor : -r.valor) }));
       const rec = r2(rows.filter((r) => r.valor > 0).reduce((t, r) => t + r.valor, 0));
       const desp = r2(rows.filter((r) => r.valor < 0).reduce((t, r) => t + r.valor, 0));
@@ -407,7 +407,7 @@ const BI_DATASETS = {
   colaboradores: { label: 'Colaboradores (sem CPF, RG e dados bancários)', sql: 'SELECT e.id, e.code AS codigo, e.full_name AS nome, e.job_title AS cargo, e.job_function AS funcao, t.name AS time, l.full_name AS lider, cc.name AS centro_custo, e.contract_type AS contrato, e.work_regime AS regime, e.status AS situacao, e.admission_date AS entrada, e.termination_date AS desligamento, e.pay_model AS remuneracao, e.base_salary AS fixo, e.variable_target AS variavel_referencia, e.weekly_hours AS carga_semanal FROM employees e LEFT JOIN teams t ON t.id = e.team_id LEFT JOIN employees l ON l.id = e.leader_id LEFT JOIN fin_cost_centers cc ON cc.id = e.cost_center_id ORDER BY e.id' },
   beneficios: { label: 'Benefícios e descontos dos colaboradores', sql: 'SELECT b.id, e.code AS colaborador_codigo, b.kind AS tipo, b.type AS item, b.description AS descricao, b.value_type AS tipo_valor, b.amount AS valor, b.company_cost AS custo_empresa, b.active AS ativo FROM employee_benefits b JOIN employees e ON e.id = b.employee_id ORDER BY b.id' },
   metas: { label: 'Metas', sql: 'SELECT g.* FROM goals g ORDER BY g.id' },
-  atividades: { label: 'Atividades por dia, usuário e tipo', sql: 'SELECT substr(a.occurred_at, 1, 10) AS dia, u.name AS usuario, a.type AS tipo, COUNT(*) AS quantidade FROM activities a LEFT JOIN users u ON u.id = a.user_id GROUP BY dia, a.user_id, a.type ORDER BY dia' },
+  atividades: { label: 'Atividades por dia, usuário e tipo', sql: 'SELECT substr(a.occurred_at, 1, 10) AS dia, u.name AS usuario, a.type AS tipo, COUNT(*) AS quantidade FROM activities a LEFT JOIN users u ON u.id = a.user_id GROUP BY dia, a.user_id, u.name, a.type ORDER BY dia' },
 };
 
 function biIndex(db, baseUrl) {

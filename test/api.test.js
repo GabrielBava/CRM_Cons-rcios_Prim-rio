@@ -42,7 +42,14 @@ async function fichaKey(token, phone) {
 }
 
 before(async () => {
-  ({ server, db: appDb } = createApp({ dbFile: ':memory:' }));
+  // Com TEST_DATABASE_URL (Postgres/Supabase), a suíte roda no Postgres num schema limpo
+  const pgUrl = process.env.TEST_DATABASE_URL;
+  if (pgUrl) {
+    const tmp = require('../server/pg').openPg(pgUrl);
+    tmp.execRaw(`DROP SCHEMA IF EXISTS ${tmp.schema} CASCADE`);
+    tmp.close();
+  }
+  ({ server, db: appDb } = createApp({ dbFile: pgUrl || ':memory:' }));
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${server.address().port}`;
   const r = await call(null, 'POST', '/api/setup', { name: 'Admin', email: 'admin@t.com', password: 'senha1234' });
@@ -1917,6 +1924,12 @@ test('LPs: planejamento e LPs futuras (área + respostas) com origem LP, nota do
 
 test('Supabase: cópia de teste em schema próprio, sem sessões, senhas, tokens e configurações com segredo; domínio fora dos buscadores', async () => {
   const { buildSql } = require('../scripts/supabase-sync.js');
+  // A cópia parte do banco SQLite; rodando a suíte no Postgres, só o domínio é testado
+  if (appDb.isPostgres) {
+    const rb = await fetch(`${base}/robots.txt`);
+    assert.match(await rb.text(), /Disallow: \//);
+    return;
+  }
   const out = buildSql(appDb, { schema: 'crm_teste' });
   const sql = out.blocks.join('\n');
   assert.ok(out.tables > 50 && out.rows > 0);
@@ -1935,6 +1948,29 @@ test('Supabase: cópia de teste em schema próprio, sem sessões, senhas, tokens
   const r = await fetch(`${base}/robots.txt`);
   assert.match(await r.text(), /Disallow: \//);
   assert.equal(r.headers.get('x-robots-tag'), 'noindex, nofollow');
+});
+
+test('Postgres (Supabase): tradução do SQL do SQLite, schema gerado e entrada da Vercel', async () => {
+  const { translate } = require('../server/pg/translate');
+  const tr = (s) => translate(s).sql.replace(/\s+/g, ' ').trim();
+  assert.equal(tr("SELECT * FROM t WHERE a = ? AND b LIKE ? AND c = 'x?y'"), "SELECT * FROM t WHERE a = $1 AND b ILIKE $2 AND c = 'x?y'");
+  assert.equal(tr('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)'), 'INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT DO NOTHING');
+  assert.equal(tr('INSERT INTO counters (name, value) VALUES (?, 1) ON CONFLICT(name) DO UPDATE SET value = value + 1'), 'INSERT INTO counters (name, value) VALUES ($1, 1) ON CONFLICT(name) DO UPDATE SET value = counters.value + 1');
+  assert.match(tr("SELECT SUM(o.status = 'ganha') AS g FROM o"), /SUM\(CASE WHEN o\.status = 'ganha' THEN 1 ELSE 0 END\)/);
+  assert.match(tr('UPDATE p SET s = MAX(s, ?) WHERE id = ?'), /GREATEST\(s, \$1\)/);
+  assert.match(tr("SELECT julianday('now') - julianday(x) FROM t"), /EXTRACT\(EPOCH FROM now\(\)\)/);
+  assert.match(tr("SELECT GROUP_CONCAT(DISTINCT a) FROM t"), /string_agg\(DISTINCT CAST\(a AS text\), ','\)/);
+  assert.match(tr('SELECT 1 FROM t WHERE x IS ? AND (? IS NULL OR y = ?)'), /x IS NOT DISTINCT FROM \$1 AND \(\$2::text IS NULL OR y = \$3\)/);
+  assert.match(tr('SELECT * FROM t WHERE name = ? COLLATE NOCASE ORDER BY c.name COLLATE NOCASE'), /lower\(name\) = lower\(\$1\) ORDER BY lower\(c\.name\)/);
+  // Schema gerado: idempotente e com as tabelas do CRM
+  const sql = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'server', 'pg', 'schema.sql'), 'utf8');
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS "contacts"/);
+  assert.match(sql, /ALTER TABLE "contacts" ADD COLUMN IF NOT EXISTS/);
+  assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS "users_email_key" ON "users" \(lower\("email"\)\)/);
+  const fresh = require('../scripts/pg-schema.js').buildSchema();
+  assert.equal(fresh.sql, sql, 'server/pg/schema.sql atualizado (rode npm run pg:schema)');
+  // Vercel: rotinas pelo /api/cron só com o segredo
+  assert.equal((await fetch(`${base}/api/cron`)).status, 401);
 });
 
 test('planos na proposta: só administradoras e planos ativos (pelo código) ou "Outros"; nova versão abre o simulador e atualiza a mesma proposta (v2)', async () => {

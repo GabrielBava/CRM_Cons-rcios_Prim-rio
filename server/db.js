@@ -2451,7 +2451,66 @@ function ensureSecretKey(file) {
   }
 }
 
+/**
+ * Postgres (Supabase): aplica o schema gerado (server/pg/schema.sql) e os valores iniciais quando o código muda.
+ * Um bloqueio (advisory lock) evita que duas instâncias da Vercel façam isso ao mesmo tempo.
+ */
+function initPg(db) {
+  const schemaSql = fs.readFileSync(path.join(__dirname, 'pg', 'schema.sql'), 'utf8');
+  const version = require('node:crypto').createHash('sha256')
+    .update(schemaSql).update(JSON.stringify(DEFAULT_OPTIONS)).update(String(seedDefaults)).update(String(migrate))
+    .digest('hex').slice(0, 16);
+  const current = () => {
+    const has = db.queryRaw('SELECT to_regclass($1) AS t', [`${db.schema}.settings`])[0].t;
+    return has ? db.queryRaw(`SELECT value FROM ${db.schema}.settings WHERE key = 'pg_schema_version'`)[0]?.value : null;
+  };
+  if (current() === JSON.stringify(version)) {
+    db.refreshTables();
+    pgSecretKey(db);
+    return db;
+  }
+  db.execRaw(`CREATE SCHEMA IF NOT EXISTS ${db.schema}`);
+  db.queryRaw('SELECT pg_advisory_lock(7203911)');
+  try {
+    if (current() !== JSON.stringify(version)) {
+      db.execRaw(`BEGIN; ${schemaSql} COMMIT;`);
+      db.refreshTables();
+      // Ajustes de dados do migrate() que valem também para o Postgres
+      db.exec(`INSERT INTO bid_strategy_history (contract_id, contact_id, will_bid, bid_type, bid_pct, use_embedded, use_fgts, notes, created_by, created_at)
+        SELECT b.contract_id, b.contact_id, b.will_bid, b.bid_type, b.bid_pct, b.use_embedded, b.use_fgts, b.notes, b.updated_by, b.updated_at FROM bid_strategies b
+        WHERE NOT EXISTS (SELECT 1 FROM bid_strategy_history h WHERE h.contract_id = b.contract_id)`);
+      db.exec("UPDATE contacts SET active = 0 WHERE client_status = 'inativo' AND active = 1");
+      seedDefaults(db);
+      setSetting(db, 'pg_schema_version', version);
+    }
+  } finally {
+    db.queryRaw('SELECT pg_advisory_unlock(7203911)');
+  }
+  db.refreshTables();
+  pgSecretKey(db);
+  return db;
+}
+
+/**
+ * Chave que cifra os segredos guardados (senha do portal, token do Google): CRM_SECRET_KEY. Sem ela, no Postgres, uma
+ * chave é criada uma vez e guardada no banco, para todas as instâncias usarem a mesma (defina CRM_SECRET_KEY na Vercel
+ * para manter a chave fora do banco).
+ */
+function pgSecretKey(db) {
+  if (process.env.CRM_SECRET_KEY) return;
+  let key = getSetting(db, 'crm_secret_key_auto');
+  if (!key) {
+    db.prepare("INSERT INTO settings (key, value) VALUES ('crm_secret_key_auto', ?) ON CONFLICT(key) DO NOTHING").run(JSON.stringify(require('node:crypto').randomBytes(32).toString('base64')));
+    key = getSetting(db, 'crm_secret_key_auto');
+  }
+  process.env.CRM_SECRET_KEY = key;
+  console.warn('CRM_SECRET_KEY não definida: usando a chave guardada no banco. Defina CRM_SECRET_KEY nas variáveis da Vercel.');
+}
+
+const isPgUrl = (s) => /^postgres(ql)?:\/\//i.test(String(s || ''));
+
 function openDb(file) {
+  if (isPgUrl(file)) return initPg(require('./pg').openPg(file));
   if (file !== ':memory:') fs.mkdirSync(path.dirname(file), { recursive: true });
   ensureSecretKey(file);
   const db = new DatabaseSync(file);
@@ -2495,4 +2554,4 @@ function setSetting(db, key, value) {
   );
 }
 
-module.exports = { openDb, initDb, tx, nextCode, getSetting, setSetting, DEFAULT_SETTINGS };
+module.exports = { openDb, initDb, initPg, isPgUrl, tx, nextCode, getSetting, setSetting, DEFAULT_SETTINGS };

@@ -419,9 +419,11 @@ async function chat(db, user, contactId, data = {}) {
  */
 function history(db, user, contactId, q = {}) {
   const c = loadContact(db, user, contactId);
-  const threads = db.prepare(`SELECT COALESCE(thread, 'anterior') AS thread, MIN(created_at) AS started_at, MAX(created_at) AS last_at, COUNT(*) AS n,
-      (SELECT content FROM ai_messages m2 WHERE m2.contact_id = m.contact_id AND m2.user_id = m.user_id AND COALESCE(m2.thread, 'anterior') = COALESCE(m.thread, 'anterior') AND m2.role = 'user' ORDER BY m2.id LIMIT 1) AS first
-    FROM ai_messages m WHERE contact_id = ? AND user_id = ? GROUP BY COALESCE(thread, 'anterior') ORDER BY last_at DESC LIMIT 30`).all(c.id, user.id);
+  // Conversas agrupadas numa subconsulta (forma aceita pelo SQLite e pelo Postgres)
+  const threads = db.prepare(`SELECT g.thread, g.started_at, g.last_at, g.n,
+      (SELECT content FROM ai_messages m2 WHERE m2.contact_id = ? AND m2.user_id = ? AND COALESCE(m2.thread, 'anterior') = g.thread AND m2.role = 'user' ORDER BY m2.id LIMIT 1) AS first
+    FROM (SELECT COALESCE(thread, 'anterior') AS thread, MIN(created_at) AS started_at, MAX(created_at) AS last_at, COUNT(*) AS n
+      FROM ai_messages WHERE contact_id = ? AND user_id = ? GROUP BY COALESCE(thread, 'anterior')) g ORDER BY g.last_at DESC LIMIT 30`).all(c.id, user.id, c.id, user.id);
   const t = q.thread ? String(q.thread) : null;
   const messages = t ? db.prepare("SELECT id, role, content, engine, rating, thread, created_at FROM ai_messages WHERE contact_id = ? AND user_id = ? AND COALESCE(thread, 'anterior') = ? ORDER BY id LIMIT 200").all(c.id, user.id, t) : [];
   return { threads, messages };

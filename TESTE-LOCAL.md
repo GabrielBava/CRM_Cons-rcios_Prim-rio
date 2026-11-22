@@ -301,3 +301,27 @@ Financeiro (contas a pagar e a receber), Administradoras (senha do portal), Rela
   `LP_ALLOWED_ORIGINS=https://veroconsorciosbr.com.br` (o padrão `*` aceita qualquer site).
 - **Simulador:** servido pelo CRM (`/simulador/`), no mesmo endereço, para devolver as propostas ao CRM.
 - O endpoint da LP tem limite de envios por IP, exige o aceite da Política de Privacidade e não duplica cadastros.
+
+## 4. Versão de teste na Vercel com o banco no Supabase
+
+1. **Supabase** (projeto `vero-crm-teste`): em **Project Settings › Database**, defina a senha do banco (Reset database
+   password) e guarde. Clique em **Connect** › **Session pooler** e copie o endereço
+   `postgresql://postgres.<ref>:[YOUR-PASSWORD]@aws-…-sa-east-1.pooler.supabase.com:5432/postgres`, trocando
+   `[YOUR-PASSWORD]` pela senha.
+2. **GitHub:** a Vercel publica o branch principal (`main`). Leve o branch de trabalho para o `main` (pull request) ou, na
+   Vercel, escolha o branch de trabalho em **Settings › Git › Production Branch**.
+3. **Vercel:** **Add New › Project**, importe `GabrielBava/CRM_Cons-rcios_Prim-rio`, Framework Preset **Other** (o
+   `vercel.json` já define tudo). Em **Environment Variables**:
+   - `DATABASE_URL` = o endereço do passo 1;
+   - `CRM_SECRET_KEY` = uma chave longa (ex.: `openssl rand -base64 32`; está no `config.env` do pacote);
+   - `PUBLIC_URL` = `https://crm.veroconsorciosbr.com.br`;
+   - `CRON_SECRET` = uma senha longa qualquer;
+   - versão de teste: `CRM_DEMO` = `1` e `DEMO_PASSWORD` = a senha dos usuários de demonstração;
+   - Google e e-mail: as variáveis `GOOGLE_*` e `SMTP_*` do `config.env`.
+4. **Deploy.** O primeiro acesso cria as tabelas (schema `crm` no Supabase) e os dados de demonstração — pode levar uns
+   segundos. Entre com `admin@demo.local` e a `DEMO_PASSWORD`. No Supabase, **Table Editor › schema crm** mostra os dados.
+5. **Domínio:** na Vercel, **Settings › Domains › Add** `crm.veroconsorciosbr.com.br`; no DNS do domínio, crie o registro
+   **CNAME** `crm` com o valor que a Vercel mostrar. O HTTPS é automático.
+6. **Para valer (produção):** tire `CRM_DEMO`/`DEMO_PASSWORD`, apague o schema `crm` no Supabase (SQL Editor:
+   `drop schema crm cascade;`) e abra o CRM: a tela de primeiro acesso cria o administrador. O schema `crm_teste`
+   (cópia antiga) pode ser apagado.

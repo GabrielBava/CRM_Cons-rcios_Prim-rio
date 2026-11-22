@@ -14,7 +14,9 @@
     "demo": "node --disable-warning=ExperimentalWarning scripts/demo-data.js",
     "build:preview": "node scripts/build-preview.js",
     "local": "node --disable-warning=ExperimentalWarning scripts/local.js",
-    "supabase": "node --disable-warning=ExperimentalWarning scripts/supabase-sync.js"
+    "supabase": "node --disable-warning=ExperimentalWarning scripts/supabase-sync.js",
+    "pg:schema": "node --disable-warning=ExperimentalWarning scripts/pg-schema.js",
+    "test:pg": "node --disable-warning=ExperimentalWarning --test --test-concurrency=1 test/*.test.js"
   },
   "license": "UNLICENSED",
   "devDependencies": {

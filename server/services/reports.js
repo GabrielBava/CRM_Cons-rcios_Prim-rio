@@ -160,7 +160,7 @@ function dashboard(db, user, q) {
         `SELECT ${groupExpr} AS chave, ${labelJoin} AS rotulo, COUNT(*) AS oportunidades, SUM(o.status = 'ganha') AS ganhas, SUM(o.status = 'perdida') AS perdidas
          FROM opportunities o JOIN contacts c ON c.id = o.contact_id LEFT JOIN users u ON u.id = o.owner_id LEFT JOIN products p ON p.id = o.product_id
          LEFT JOIN options og ON og.list = 'origem' AND og.value = c.origin
-         WHERE ${fo.where} AND o.created_at BETWEEN ? AND ? GROUP BY ${groupExpr} ORDER BY oportunidades DESC`,
+         WHERE ${fo.where} AND o.created_at BETWEEN ? AND ? GROUP BY ${groupExpr}, ${labelJoin} ORDER BY oportunidades DESC`,
       )
       .all(...fo.params, from, to)
       .map((r) => ({ ...r, taxa: pct(r.ganhas, r.oportunidades) }));
@@ -231,7 +231,7 @@ function report(db, user, key, q) {
             SUM(EXISTS (SELECT 1 FROM activities x WHERE x.contact_id = c.id AND x.type IN (${IN(ATTEMPT_TYPES)}))) AS com_tentativa,
             SUM(EXISTS (SELECT 1 FROM opportunities x WHERE x.contact_id = c.id AND x.status = 'ganha')) AS com_venda
            FROM contacts c LEFT JOIN options og ON og.list = 'origem' AND og.value = c.origin
-           WHERE ${fc.where} AND c.created_at BETWEEN ? AND ? GROUP BY c.origin ORDER BY leads DESC`,
+           WHERE ${fc.where} AND c.created_at BETWEEN ? AND ? GROUP BY c.origin, og.label ORDER BY leads DESC`,
         )
         .all(...ATTEMPT_TYPES, ...fc.params, from, to)
         .map((r) => ({ ...r, conversao: pct(r.com_venda, r.leads) }));
@@ -278,7 +278,7 @@ function report(db, user, key, q) {
         .prepare(
           `SELECT COALESCE(ro.label, a.result, 'Sem resultado') AS resultado, COUNT(*) AS total FROM activities a JOIN contacts c ON c.id = a.contact_id
            LEFT JOIN options ro ON ro.list = 'resultado_ligacao' AND ro.value = a.result
-           WHERE ${fa.where} AND a.type IN (${IN(CALL_ATTEMPT_TYPES)}) AND a.occurred_at BETWEEN ? AND ? GROUP BY a.result ORDER BY total DESC`,
+           WHERE ${fa.where} AND a.type IN (${IN(CALL_ATTEMPT_TYPES)}) AND a.occurred_at BETWEEN ? AND ? GROUP BY a.result, ro.label ORDER BY total DESC`,
         )
         .all(...fa.params, ...CALL_ATTEMPT_TYPES, from, to);
       return {
@@ -298,7 +298,7 @@ function report(db, user, key, q) {
             COUNT(DISTINCT CASE WHEN a.result IN (${IN(effIn)}) THEN a.contact_id END) AS leads_contatados
            FROM activities a JOIN contacts c ON c.id = a.contact_id LEFT JOIN users u ON u.id = a.user_id
            WHERE ${fa.where} AND a.type IN (${IN(CALL_ATTEMPT_TYPES)}) AND a.occurred_at BETWEEN ? AND ?
-           GROUP BY a.user_id ORDER BY tentativas DESC`,
+           GROUP BY a.user_id, u.name ORDER BY tentativas DESC`,
         )
         .all(...effIn, ...effIn, ...fa.params, ...CALL_ATTEMPT_TYPES, from, to)
         .map((r) => ({ ...r, taxa_tentativas: pct(r.efetivas, r.tentativas), taxa_leads: pct(r.leads_contatados, r.leads_tentados) }));
@@ -324,7 +324,7 @@ function report(db, user, key, q) {
             SUM((t.status = 'cancelada' OR t.outcome = 'cancelada') AND t.due_at BETWEEN $f AND $t) AS canceladas,
             SUM(t.status = 'pendente' AND t.due_at BETWEEN $f AND $t) AS pendentes
            FROM tasks t JOIN contacts c ON c.id = t.contact_id LEFT JOIN users u ON u.id = t.assigned_to
-           WHERE ${ft.where} AND t.type = 'reuniao' AND (t.created_at BETWEEN $f AND $t OR t.due_at BETWEEN $f AND $t) GROUP BY t.assigned_to ORDER BY agendadas DESC`
+           WHERE ${ft.where} AND t.type = 'reuniao' AND (t.created_at BETWEEN $f AND $t OR t.due_at BETWEEN $f AND $t) GROUP BY t.assigned_to, u.name ORDER BY agendadas DESC`
             // from/to vêm de toIso() (sempre ISO 8601 gerado por Date), por isso podem ser embutidos com segurança
             .replace(/\$f/g, `'${from}'`).replace(/\$t/g, `'${to}'`),
         )
@@ -411,7 +411,7 @@ function report(db, user, key, q) {
         .prepare(
           `SELECT COALESCE(ml.label, o.lost_reason, 'Não informado') AS motivo, COUNT(*) AS perdidas, COALESCE(SUM(o.credit_value), 0) AS credito
            FROM opportunities o JOIN contacts c ON c.id = o.contact_id LEFT JOIN options ml ON ml.list = 'motivo_perda' AND ml.value = o.lost_reason
-           WHERE ${fo.where} AND o.status = 'perdida' AND o.closed_at BETWEEN ? AND ? GROUP BY o.lost_reason ORDER BY perdidas DESC`,
+           WHERE ${fo.where} AND o.status = 'perdida' AND o.closed_at BETWEEN ? AND ? GROUP BY o.lost_reason, ml.label ORDER BY perdidas DESC`,
         )
         .all(...fo.params, from, to);
       const total = rows.reduce((a, r) => a + r.perdidas, 0);
@@ -460,7 +460,7 @@ function report(db, user, key, q) {
       const overdue = db
         .prepare(
           `SELECT COALESCE(u.name, '—') AS responsavel, COUNT(*) AS atrasadas FROM tasks t JOIN contacts c ON c.id = t.contact_id LEFT JOIN users u ON u.id = t.assigned_to
-           WHERE ${ft.where} AND t.status = 'pendente' AND t.due_at < ? GROUP BY t.assigned_to ORDER BY atrasadas DESC`,
+           WHERE ${ft.where} AND t.status = 'pendente' AND t.due_at < ? GROUP BY t.assigned_to, u.name ORDER BY atrasadas DESC`,
         )
         .all(...ft.params, now);
       return {
@@ -550,7 +550,7 @@ function report(db, user, key, q) {
             COALESCE(SUM(k.sale_value), 0) AS valor_venda_cartas, SUM(k.quotas) AS cotas
            FROM contracts k JOIN contacts c ON c.id = k.contact_id LEFT JOIN users u ON u.id = k.seller_id
            WHERE ${fk.where} AND k.status <> 'cancelado' AND COALESCE(k.contracted_at, substr(k.created_at, 1, 10)) BETWEEN ? AND ?
-           ${q.owner_id ? 'AND k.seller_id = ?' : ''} GROUP BY k.seller_id ORDER BY credito DESC`,
+           ${q.owner_id ? 'AND k.seller_id = ?' : ''} GROUP BY k.seller_id, u.name ORDER BY credito DESC`,
         )
         .all(...fk.params, from.slice(0, 10), to.slice(0, 10), ...(q.owner_id ? [Number(q.owner_id)] : []));
       return {

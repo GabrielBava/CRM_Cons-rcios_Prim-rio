@@ -2,7 +2,7 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
-const { openDb } = require('./db');
+const { openDb, getSetting, setSetting } = require('./db');
 const { HttpError } = require('./util');
 const { createRouter } = require('./router');
 
@@ -10,10 +10,62 @@ const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.json': 'application/json', '.woff2': 'font/woff2', '.woff': 'font/woff', '.png': 'image/png', '.webp': 'image/webp' };
 const MAX_BODY = 15e6;
 
-function createApp({ dbFile = process.env.CRM_DB || path.join(__dirname, '..', 'data', 'crm.db') } = {}) {
+/**
+ * Versão de teste no Supabase: com CRM_DEMO=1 e DEMO_PASSWORD, um banco sem usuários recebe os dados de demonstração
+ * (uma vez só; o bloqueio evita duas instâncias da Vercel fazendo isso juntas).
+ */
+function seedDemoIfEmpty(db) {
+  if (process.env.CRM_DEMO !== '1') return;
+  const password = process.env.DEMO_PASSWORD;
+  if (!password) {
+    console.warn('CRM_DEMO=1 sem DEMO_PASSWORD: os dados de demonstração não foram criados.');
+    return;
+  }
+  const empty = () => db.prepare('SELECT COUNT(*) AS n FROM users').get().n === 0;
+  if (!empty()) return;
+  if (db.isPostgres) db.queryRaw('SELECT pg_advisory_lock(7203912)');
+  try {
+    if (empty()) {
+      require('./demo').seedDemo(db, password);
+      console.log('Dados de demonstração criados (versão de teste).');
+    }
+  } finally {
+    if (db.isPostgres) db.queryRaw('SELECT pg_advisory_unlock(7203912)');
+  }
+}
+
+// Rotinas periódicas: [nome no router, intervalo]
+const ROUTINES = [['sweep', 60 * 60 * 1000], ['queueSweep', 15 * 60 * 1000], ['meetSweep', 5 * 60 * 1000]];
+
+/**
+ * serverless (Vercel): sem processo fixo, as rotinas periódicas rodam quando vencem, no primeiro acesso à API depois do
+ * prazo (e pelo /api/cron da Vercel). Fora da Vercel, rodam por timer como antes.
+ */
+function createApp({ dbFile = process.env.DATABASE_URL || process.env.CRM_DB || path.join(__dirname, '..', 'data', 'crm.db'), serverless = !!process.env.VERCEL } = {}) {
   const db = openDb(dbFile);
+  seedDemoIfEmpty(db);
   const router = createRouter(db);
+
+  /** Roda as rotinas vencidas (ou todas, com force); a data da última execução fica no banco, comum às instâncias. */
+  async function dueRoutines(force = false) {
+    const ran = [];
+    for (const [name, every] of ROUTINES) {
+      const key = `rotina_${name}`;
+      const last = Number(getSetting(db, key)) || 0;
+      if (!force && Date.now() - last < every) continue;
+      setSetting(db, key, Date.now());
+      await router[name]();
+      ran.push(name);
+    }
+    return ran;
+  }
+
   function readBody(req, limit) {
+    // Na Vercel o corpo pode já ter sido lido pela plataforma (req.body)
+    if (req.readableEnded && req.body !== undefined) {
+      const b = req.body;
+      return Promise.resolve(Buffer.isBuffer(b) ? b.toString('utf8') : typeof b === 'string' ? b : b == null ? '' : JSON.stringify(b));
+    }
     return new Promise((resolve, reject) => {
       let size = 0;
       const chunks = [];
@@ -87,11 +139,25 @@ function createApp({ dbFile = process.env.CRM_DB || path.join(__dirname, '..', '
       }
       return serveStatic(req, res, url.pathname);
     }
+    // Agendamento da Vercel (vercel.json › crons): roda todas as rotinas; protegido por CRON_SECRET
+    if (url.pathname === '/api/cron') {
+      const ok = process.env.CRON_SECRET && req.headers.authorization === `Bearer ${process.env.CRON_SECRET}`;
+      res.writeHead(ok ? 200 : 401, { 'Content-Type': 'application/json; charset=utf-8' });
+      if (!ok) return res.end(JSON.stringify({ error: 'Não autorizado.' }));
+      return res.end(JSON.stringify({ ok: true, rotinas: await dueRoutines(true) }));
+    }
     try {
       req.rawBody = ['POST', 'PATCH', 'PUT'].includes(req.method) ? await readBody(req, MAX_BODY) : '';
     } catch (e) {
       res.writeHead(e.status || 400, { 'Content-Type': 'application/json; charset=utf-8' });
       return res.end(JSON.stringify({ error: e.message }));
+    }
+    if (serverless) {
+      try {
+        await dueRoutines();
+      } catch (e) {
+        console.error('Falha nas rotinas periódicas:', e.message);
+      }
     }
     return router.dispatch(req, res);
   }
@@ -100,22 +166,19 @@ function createApp({ dbFile = process.env.CRM_DB || path.join(__dirname, '..', '
     handle(req, res);
   });
 
-  // Rotinas periódicas: manutenção a cada hora e distribuição da fila de leads (roleta) a cada 15 minutos
-  router.sweep();
-  const timer = setInterval(router.sweep, 60 * 60 * 1000);
-  timer.unref();
-  const queueTimer = setInterval(router.queueSweep, 15 * 60 * 1000);
-  queueTimer.unref();
-  // Presença na R1 pelo Google Meet: a cada 5 minutos
-  const meetTimer = setInterval(router.meetSweep, 5 * 60 * 1000);
-  meetTimer.unref();
-  server.on('close', () => {
-    clearInterval(timer);
-    clearInterval(queueTimer);
-    clearInterval(meetTimer);
-  });
+  // Rotinas periódicas (servidor fixo): manutenção a cada hora, fila de leads (roleta) a cada 15 minutos e presença na
+  // R1 pelo Google Meet a cada 5 minutos
+  if (!serverless) {
+    router.sweep();
+    const timers = ROUTINES.map(([name, every]) => {
+      const t = setInterval(router[name], every);
+      t.unref();
+      return t;
+    });
+    server.on('close', () => timers.forEach(clearInterval));
+  }
 
-  return { server, db };
+  return { server, db, handle, dueRoutines };
 }
 
 module.exports = { createApp };
