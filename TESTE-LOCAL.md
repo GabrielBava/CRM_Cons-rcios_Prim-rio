@@ -313,7 +313,9 @@ Financeiro (contas a pagar e a receber), Administradoras (senha do portal), Rela
 2. **GitHub:** a Vercel publica o branch principal (`main`). Leve o branch de trabalho para o `main` (pull request) ou, na
    Vercel, escolha o branch de trabalho em **Settings › Git › Production Branch**.
 3. **Vercel:** **Add New › Project**, importe `GabrielBava/CRM_Cons-rcios_Prim-rio`, Framework Preset **Other** (o
-   `vercel.json` já define tudo). Em **Environment Variables**:
+   `vercel.json` já define tudo). Em **Environment Variables** (marque **Production** e **Preview**; depois de mudar
+   variáveis, faça **Redeploy** do último deploy — o erro "mkdir '/var/task/data'" ou "DATABASE_URL não está nesta
+   publicação" indica variável ausente naquele ambiente):
    - `DATABASE_URL` = o endereço do passo 1;
    - `CRM_SECRET_KEY` = uma chave longa (ex.: `openssl rand -base64 32`; está no `config.env` do pacote);
    - `PUBLIC_URL` = `https://crm.veroconsorciosbr.com.br`;

@@ -2,7 +2,7 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
-const { openDb, getSetting, setSetting } = require('./db');
+const { openDb, getSetting, setSetting, isPgUrl } = require('./db');
 const { HttpError } = require('./util');
 const { createRouter } = require('./router');
 
@@ -34,6 +34,18 @@ function seedDemoIfEmpty(db) {
   }
 }
 
+/**
+ * Endereço do banco Postgres: DATABASE_URL ou, com a integração do Supabase na Vercel, POSTGRES_URL (a porta 6543 do
+ * pooler, modo transação, vira 5432, modo sessão, que o CRM precisa). Aspas e espaços colados por engano são removidos.
+ */
+function databaseUrl(env = process.env) {
+  const clean = (v) => String(v).trim().replace(/^(["'])(.*)\1$/, '$2').trim();
+  if (env.DATABASE_URL && clean(env.DATABASE_URL)) return clean(env.DATABASE_URL);
+  const alt = env.POSTGRES_URL || env.SUPABASE_DB_URL;
+  if (alt && clean(alt)) return clean(alt).replace(/(\.pooler\.supabase\.com):6543\b/i, '$1:5432');
+  return null;
+}
+
 // Rotinas periódicas: [nome no router, intervalo]
 const ROUTINES = [['sweep', 60 * 60 * 1000], ['queueSweep', 15 * 60 * 1000], ['meetSweep', 5 * 60 * 1000]];
 
@@ -41,7 +53,13 @@ const ROUTINES = [['sweep', 60 * 60 * 1000], ['queueSweep', 15 * 60 * 1000], ['m
  * serverless (Vercel): sem processo fixo, as rotinas periódicas rodam quando vencem, no primeiro acesso à API depois do
  * prazo (e pelo /api/cron da Vercel). Fora da Vercel, rodam por timer como antes.
  */
-function createApp({ dbFile = process.env.DATABASE_URL || process.env.CRM_DB || path.join(__dirname, '..', 'data', 'crm.db'), serverless = !!process.env.VERCEL } = {}) {
+function createApp({ dbFile = databaseUrl() || process.env.CRM_DB || path.join(__dirname, '..', 'data', 'crm.db'), serverless = !!process.env.VERCEL } = {}) {
+  // Na Vercel não há disco para o SQLite: sem o endereço do Postgres, explica o que falta em vez de tentar criar data/
+  if (process.env.VERCEL && !isPgUrl(dbFile)) {
+    const env = process.env.VERCEL_ENV === 'preview' ? 'Preview' : process.env.VERCEL_ENV === 'production' ? 'Production' : process.env.VERCEL_ENV || '?';
+    const bad = process.env.DATABASE_URL ? ' (a DATABASE_URL existe, mas não começa com postgresql://)' : '';
+    throw new Error(`a variável DATABASE_URL não está nesta publicação (ambiente ${env} da Vercel)${bad}. Em Settings › Environment Variables, cadastre DATABASE_URL marcando Production e Preview e faça Redeploy do último deploy.`);
+  }
   const db = openDb(dbFile);
   seedDemoIfEmpty(db);
   const router = createRouter(db);
@@ -193,4 +211,4 @@ function createApp({ dbFile = process.env.DATABASE_URL || process.env.CRM_DB || 
   return { server, db, handle, dueRoutines };
 }
 
-module.exports = { createApp };
+module.exports = { databaseUrl, createApp };

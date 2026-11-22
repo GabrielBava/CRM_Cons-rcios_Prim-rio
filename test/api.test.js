@@ -3015,3 +3015,11 @@ test('atividades e tarefas de aproximação: resultado por canal, próxima açã
   const nt = await call('c1', 'POST', '/api/tarefas', { contact_id: c.data.id, title: 'Separar documentos', due_at: due, type: 'retorno' });
   assert.equal((await call('c1', 'PATCH', `/api/tarefas/${nt.data.id}`, { action: 'cancelar' })).status, 200);
 });
+
+test('Vercel: endereço do banco por DATABASE_URL ou POSTGRES_URL da integração do Supabase', () => {
+  const { databaseUrl } = require('../server/app');
+  const url = 'postgresql://postgres.ref:x@aws-0-sa-east-1.pooler.supabase.com:5432/postgres';
+  assert.equal(databaseUrl({ DATABASE_URL: ` "${url}"\n` }), url);
+  assert.equal(databaseUrl({ POSTGRES_URL: url.replace(':5432', ':6543') }), url);
+  assert.equal(databaseUrl({}), null);
+});
