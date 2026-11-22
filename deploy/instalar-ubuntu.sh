@@ -62,7 +62,8 @@ CRM_SECRET_KEY=$KEY
 ${DOMINIO:+PUBLIC_URL=https://$DOMINIO}
 # Google Agenda (R1 com Meet): GOOGLE_CLIENT_ID=... e GOOGLE_CLIENT_SECRET=... (ou um config.env junto do sistema)
 # E-mail da ficha (SMTP): SMTP_HOST=... SMTP_PORT=465 SMTP_SECURITY=tls SMTP_USER=noreply@veroconsorciosbr.com.br SMTP_PASSWORD=...
-# Landing page em outro domínio: LP_ALLOWED_ORIGINS=https://www.seudominio.com.br
+# LPs que enviam leads (padrão: qualquer site). Para aceitar só o site da Vero, tire o # da linha abaixo:
+# LP_ALLOWED_ORIGINS=https://${DOMINIO:+${DOMINIO#*.}},https://www.${DOMINIO:+${DOMINIO#*.}}
 EOF
   chmod 600 "$ENV_FILE"
 fi

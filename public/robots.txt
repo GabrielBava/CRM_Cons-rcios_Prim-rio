@@ -1,0 +1,3 @@
+# CRM Vero: área restrita, fora dos buscadores (as LPs oficiais ficam em veroconsorciosbr.com.br)
+User-agent: *
+Disallow: /

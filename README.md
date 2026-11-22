@@ -219,6 +219,11 @@ docs/
 - **Rastreio:** `public/lp/vero-rastreio.js` (primeiro e último toque, UTMs e gclid/fbclid) embutido pelo `scripts/preparar-lp.js`, que também serve para as LPs futuras (seguros, investimentos, temas).
 - **Ferramentas › LPs e rastreio:** LPs cadastradas, gerador de links no padrão de UTM da Vero, desempenho por campanha e download das LPs configuradas. Detalhes em `docs/INTEGRACOES.md` §15.
 
+## Domínio e cópia de teste no Supabase
+
+- **Produção em `crm.veroconsorciosbr.com.br`:** registro A `crm` no DNS apontando para o servidor e `sudo DOMINIO=crm.veroconsorciosbr.com.br DEMO=0 bash deploy/instalar-ubuntu.sh` (HTTPS automático). O CRM fica fora dos buscadores (`robots.txt` e `X-Robots-Tag`).
+- **Supabase:** `npm run supabase -- --arquivo crm_teste.sql` (para colar no SQL Editor) ou `--enviar` com `SUPABASE_ACCESS_TOKEN` e `SUPABASE_PROJECT_REF`: cópia do banco no schema `crm_teste`, sem senhas, tokens nem sessões. Detalhes em `docs/INTEGRACOES.md` §16.
+
 ## Configuração local (senhas e chaves)
 
 Senhas e chaves (Google, SMTP) ficam no arquivo `config.env`, na pasta do sistema, fora do Git (`.gitignore`). Modelo em `config.env.exemplo`. O servidor lê o arquivo ao iniciar (`npm start`, `npm run local` e os atalhos) e o instalador do Ubuntu o leva para `/etc/vero-consorcios.env`.

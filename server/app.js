@@ -36,6 +36,8 @@ function createApp({ dbFile = process.env.CRM_DB || path.join(__dirname, '..', '
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Referrer-Policy', 'no-referrer');
+    // O CRM (crm.veroconsorciosbr.com.br) não aparece em buscadores; as LPs oficiais ficam no site da Vero
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
     res.setHeader(
       'Content-Security-Policy',
       "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; frame-src 'self' blob: https://www.youtube-nocookie.com https://player.vimeo.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
