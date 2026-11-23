@@ -100,6 +100,7 @@ async function liteManager(onClose) {
         ${admin ? html`<details class="lite-server" ${data.can_create ? '' : 'open'}><summary>Servidor do WhatsApp Lite (administrador)</summary>
           <form data-form="server" class="grid" novalidate>
             <div class="field full"><label>Endereço do servidor (Evolution API)</label><input name="url" value="${data.url || ''}" placeholder="https://whatsapp.suaempresa.com.br" ${data.from_env ? 'disabled' : ''}></div>
+            <div class="field full"><label>Endereço do CRM para o webhook (opcional)</label><input name="webhook_base" value="${data.webhook_base_custom || ''}" placeholder="Padrão: o endereço público do CRM"><small class="hint">Só mude se o conector enxergar o CRM por outro endereço (ex.: teste no computador com Docker: http://crm.vero.test:3000).</small></div>
             <div class="field full"><label>Chave global (apikey)</label><input name="key" type="password" autocomplete="off" placeholder="${data.has_key ? '•••••••• (guardada; preencha só para trocar)' : 'Chave do servidor'}" ${data.from_env ? 'disabled' : ''}></div>
             <label class="check full"><input type="checkbox" name="sandbox" ${data.sandbox ? 'checked' : ''}> Modo de teste (sem servidor: QR ilustrativo e mensagens só no CRM)</label>
             <p class="hint full">Cada instância recebe as mensagens pelo webhook <code class="selectable">${data.webhook_base}&lt;segredo da instância&gt;</code>, configurado sozinho na criação.${data.from_env ? ' Endereço e chave vêm do config.env.' : ''}</p>
@@ -256,7 +257,7 @@ async function liteManager(onClose) {
         return qrView(r.id, r);
       }
       if (f.dataset.form === 'server') {
-        const body = { url: f.url.value.trim(), sandbox: f.sandbox.checked };
+        const body = { url: f.url.value.trim(), sandbox: f.sandbox.checked, webhook_base: f.webhook_base.value.trim() };
         if (f.key.value) body.key = f.key.value;
         await put('/api/whatsapp/lite/config', body);
         toast('Servidor do WhatsApp Lite salvo.');
@@ -368,6 +369,8 @@ async function agentDialog(onClose) {
           <div class="field"><label>Antecedência mínima (horas)</label><input type="number" name="notice_hours" min="0" max="72" value="${c.notice_hours}" ${ro}></div>
           <div class="field full"><label>Critério de fit</label><textarea name="fit" rows="3" ${ro}>${c.fit}</textarea><small class="hint">Quem tem fit é convidado para a R1; quem não tem é passado ao especialista (nutrição ou perdido).</small></div>
           <div class="field full"><label>Orientações extras para a IA (opcional)</label><textarea name="instructions" rows="3" placeholder="Ex.: campanhas do mês, administradoras parceiras, como chamar a reunião…" ${ro}>${c.instructions}</textarea></div>
+          <div class="field"><label>Especialista padrão para leads novos</label><select name="default_owner_id" ${ro}><option value="">Distribuição (roleta)</option>${(d.users || []).map((u) => html`<option value="${u.id}" ${Number(c.default_owner_id) === u.id ? 'selected' : ''}>${u.name}</option>`)}</select><small class="hint">Usado quando a roleta não define ninguém: a IA agenda a R1 na agenda dele.</small></div>
+          <div class="field"><label>Modo de teste: atender só estes números</label><textarea name="test_numbers" rows="2" placeholder="Ex.: 51 99999-0000 (um por linha)" ${ro}>${c.test_numbers || ''}</textarea><small class="hint">${d.test_mode ? html`<b>Modo de teste ligado:</b> a IA ignora quem não está na lista.` : 'Vazio: a IA atende todos que escreverem para o número central.'}</small></div>
           ${d.can_edit ? html`<div class="full"><button type="submit" class="btn primary">Salvar</button></div>` : html`<p class="hint full">Só o administrador altera estas configurações.</p>`}
         </form>
         ${d.recent.length ? html`<h3 class="agent-h">Últimas ações da IA</h3><ul class="agent-log">${d.recent.map((r) => html`<li><a href="#/comunicacao/whatsapp/${r.conversation_id}" data-x><b>${ACTION[r.action] || r.action}</b> · ${r.contact_name || 'Conversa'}${r.detail ? html` <small class="muted">· ${r.detail}</small>` : ''}</a><small class="muted">${new Date(r.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</small></li>`)}</ul>` : ''}
@@ -410,6 +413,7 @@ async function agentDialog(onClose) {
       r1_minutes: Number(f.r1_minutes.value),
       days: [...f.querySelectorAll('[name=day]:checked')].map((x) => Number(x.value)), start: f.start.value, end: f.end.value,
       notice_hours: Number(f.notice_hours.value), fit: f.fit.value, instructions: f.instructions.value,
+      test_numbers: f.test_numbers.value, default_owner_id: f.default_owner_id.value ? Number(f.default_owner_id.value) : null,
       ...(t === 'oficial' ? { channel: 'oficial' } : t ? { channel: 'lite', instance_id: Number(t.split(':')[1]) } : {}),
     };
     try {

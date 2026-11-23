@@ -3538,3 +3538,72 @@ test('IA com Gemini (padrão) e troca para o Claude: agente do WhatsApp e IA Ver
     await call('admin', 'PUT', '/api/whatsapp/lite/config', { sandbox: false });
   }
 });
+
+test('Agente de IA em modo de teste (só números autorizados), especialista padrão e endereço do CRM para o webhook', async () => {
+  const llm = require('../server/services/llm');
+  process.env.WA_AGENT_DEBOUNCE_MS = '0';
+  await call('admin', 'PUT', '/api/whatsapp/lite/config', { url: '', clear_key: true, sandbox: true });
+  // Endereço do CRM para o webhook (teste no computador com Docker)
+  assert.equal((await call('admin', 'PUT', '/api/whatsapp/lite/config', { webhook_base: 'ftp://x' })).status, 400);
+  await call('admin', 'PUT', '/api/whatsapp/lite/config', { webhook_base: 'http://crm.vero.test:3000/' });
+  const ov = (await call('admin', 'GET', '/api/whatsapp/lite')).data;
+  assert.equal(ov.webhook_base, 'http://crm.vero.test:3000/api/whatsapp/lite/webhook/');
+  await call('admin', 'PUT', '/api/whatsapp/lite/config', { webhook_base: '' });
+  assert.notEqual((await call('admin', 'GET', '/api/whatsapp/lite')).data.webhook_base, ov.webhook_base, 'vazio volta ao padrão');
+
+  const inst = await call('admin', 'POST', '/api/whatsapp/lite/instancias', { name: 'Central Teste' });
+  await call('admin', 'POST', `/api/whatsapp/lite/instancias/${inst.data.id}/simular-conexao`, { phone: '5151989203845' });
+  const token = appDb.prepare('SELECT webhook_token FROM wa_instances WHERE id = ?').get(inst.data.id).webhook_token;
+  let seq = 0;
+  const say = (from, text, pushName) => fetch(`${base}/api/whatsapp/lite/webhook/${token}`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event: 'messages.upsert', data: { key: { remoteJid: `${from}@s.whatsapp.net`, fromMe: false, id: `TM-${++seq}` }, pushName, message: { conversation: text }, messageTimestamp: Math.floor(Date.now() / 1000) } }) }).then((r) => r.json());
+  let calls = 0;
+  llm.setGeminiFetch(async () => {
+    calls++;
+    return { ok: true, status: 200, json: async () => ({ candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ text: 'Olá! Sou a Vero, assistente virtual.' }] } }], usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 } }) };
+  });
+  // Sem roleta automática (o especialista padrão entra quando ninguém é definido pela distribuição)
+  const roletaAntes = appDb.prepare("SELECT value FROM settings WHERE key = 'roleta'").get()?.value;
+  appDb.prepare("INSERT INTO settings (key, value) VALUES ('roleta', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(JSON.stringify({ mode: 'sequencial', auto: false, participants: [], first_contact_hours: 1 }));
+  try {
+    const c2 = await userId('c2@t.com');
+    assert.equal((await call('admin', 'PUT', '/api/whatsapp/agente', { test_numbers: 'abc' })).status, 400);
+    assert.equal((await call('admin', 'PUT', '/api/whatsapp/agente', { default_owner_id: 999999 })).status, 400);
+    const cfg = await call('admin', 'PUT', '/api/whatsapp/agente', {
+      enabled: true, channel: 'lite', instance_id: inst.data.id, provider: 'gemini', gemini_api_key: 'AIza-teste-2',
+      test_numbers: '51 99911-2233\n(11) 98877-6655', default_owner_id: c2,
+    });
+    assert.equal(cfg.status, 200, JSON.stringify(cfg.data));
+    assert.equal(cfg.data.ready, true);
+    assert.equal(cfg.data.test_mode, true);
+    assert.ok(cfg.data.users.some((u) => u.id === c2));
+    assert.equal(appDb.prepare('SELECT only_known FROM wa_instances WHERE id = ?').get(inst.data.id).only_known, 1, 'modo de teste: números pessoais não entram');
+    // Número fora da lista (ex.: um amigo escrevendo para o número pessoal): nada de IA, nada de lead
+    const r1 = await say('5521977770000', 'E aí, tudo bem?', 'Amigo');
+    assert.ok(!r1.agente);
+    assert.equal(calls, 0);
+    assert.equal(appDb.prepare("SELECT COUNT(*) AS n FROM wa_conversations WHERE peer = '5521977770000'").get().n, 0, 'conversa pessoal não entra no CRM');
+    // Número autorizado (com ou sem o nono dígito): vira lead do especialista padrão e a IA responde
+    const r2 = await say('555199112233', 'Oi, vi o anúncio', 'Teste Lead');
+    assert.equal(r2.agente, 1, JSON.stringify(r2));
+    assert.equal(calls, 1);
+    const conv = appDb.prepare("SELECT * FROM wa_conversations WHERE instance_id = ? AND contact_id IS NOT NULL ORDER BY id DESC LIMIT 1").get(inst.data.id);
+    assert.ok(conv);
+    const lead = appDb.prepare('SELECT owner_id, origin FROM contacts WHERE id = ?').get(conv.contact_id);
+    assert.equal(lead.origin, 'whatsapp');
+    assert.equal(lead.owner_id, c2, 'sem roleta, o especialista padrão recebe o lead');
+    assert.equal(appDb.prepare("SELECT owner_id FROM opportunities WHERE contact_id = ? AND status = 'aberta'").get(conv.contact_id).owner_id, c2);
+    // Sem o modo de teste, o número central volta a registrar todos os leads
+    await call('admin', 'PUT', '/api/whatsapp/agente', { test_numbers: '' });
+    assert.equal(appDb.prepare('SELECT only_known FROM wa_instances WHERE id = ?').get(inst.data.id).only_known, 0);
+    await say('5521977770000', 'Agora quero saber de consórcio', 'Novo');
+    assert.equal(calls, 2);
+  } finally {
+    llm.setGeminiFetch(null);
+    delete process.env.WA_AGENT_DEBOUNCE_MS;
+    if (roletaAntes) appDb.prepare("UPDATE settings SET value = ? WHERE key = 'roleta'").run(roletaAntes);
+    await call('admin', 'PUT', '/api/whatsapp/agente', { enabled: false, test_numbers: '', default_owner_id: null });
+    await call('admin', 'PUT', '/api/ia/config', { clear_gemini_key: true });
+    await call('admin', 'PUT', '/api/whatsapp/lite/config', { sandbox: false });
+  }
+});

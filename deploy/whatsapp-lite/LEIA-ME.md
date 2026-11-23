@@ -4,6 +4,9 @@ O WhatsApp Lite funciona como o WhatsApp Web: o celular conecta o CRM como um "a
 conexão aberta 24 horas é o **conector** (Evolution API v2), que roda numa VPS e repassa cada mensagem ao CRM. A Vercel
 não mantém conexões abertas, por isso o conector fica fora dela.
 
+> **Quer testar antes de contratar?** Use o kit `teste-no-computador/` (Docker Desktop no seu computador):
+> passo a passo em [`teste-no-computador/LEIA-ME.md`](teste-no-computador/LEIA-ME.md).
+
 ## O que contratar
 
 - **VPS Linux Ubuntu 22.04 ou 24.04**, com **2 GB de RAM** e 1 ou 2 vCPUs. Na Locaweb, o plano "VPS 2 GB" atende.

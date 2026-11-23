@@ -724,8 +724,11 @@ function seedCommsDemo(db, { admin, gestor, c1, c2, PDF, ids }) {
     if (conv) wa.sendMessage(db, { ...owner, modules: null }, conv.id, { body: `Olá, ${leads[0].name.split(' ')[0]}! Claro: no consórcio você paga parcelas sem juros e é contemplado por sorteio ou lance. Posso te ligar em 5 minutos?` }).catch(() => {});
   }
   wa.receiveWebhook(db, req, msg('5511955554321', 'Marcos', 'wamid.demo.unknown', 'Olá, quero saber sobre consórcio de veículo.', 12));
-  seedLiteDemo(db, { c1, c2 });
-  seedAgentDemo(db, { admin, c1 });
+  // Com o conector real (teste no computador ou VPS), os números fictícios do modo de teste ficam de fora
+  if (!process.env.EVOLUTION_API_URL) {
+    seedLiteDemo(db, { c1, c2 });
+    seedAgentDemo(db, { admin, c1 });
+  }
 }
 
 /**

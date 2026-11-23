@@ -42,8 +42,22 @@ function liteConfig(db) {
   return { url, key, configured, fromEnv: !!process.env.EVOLUTION_API_URL, sandbox: !configured && getSetting(db, 'walite_sandbox') === true };
 }
 
+/**
+ * Endereço do CRM que o conector usa para avisar as mensagens (webhook). Padrão: o endereço público do CRM. No teste
+ * no computador (CRM e conector no Docker), o conector enxerga o CRM por outro nome (ex.: http://crm:3000).
+ */
+function webhookBase(db, req) {
+  const set = String(process.env.EVOLUTION_WEBHOOK_BASE || getSetting(db, 'walite_webhook_base') || '').trim().replace(/\/+$/, '');
+  return set || require('./meetings').publicUrl(db, req);
+}
+
 function saveConfig(db, user, data = {}) {
   if (user.role !== 'admin') throw forbidden('Só o administrador configura o servidor do WhatsApp Lite.');
+  if (data.webhook_base !== undefined) {
+    const b = clean(data.webhook_base);
+    if (b && !/^https?:\/\/[^\s/]+(:\d+)?\/?$/i.test(b)) throw badRequest('Endereço do CRM para o webhook inválido (ex.: https://crm.seudominio.com.br).');
+    setSetting(db, 'walite_webhook_base', b ? b.replace(/\/+$/, '') : '');
+  }
   if (data.url !== undefined) {
     const url = clean(data.url);
     if (url && !/^https?:\/\/[^\s]+$/i.test(url)) throw badRequest('Endereço do servidor inválido (use https://…).');
@@ -68,7 +82,7 @@ async function evo(cfg, method, path, body) {
       signal: AbortSignal.timeout(25000),
     });
   } catch (e) {
-    throw new HttpError(502, `Não foi possível falar com o servidor do WhatsApp Lite: ${e.cause?.code || e.message}.`);
+    throw new HttpError(502, `Não foi possível falar com o conector do WhatsApp Lite (${e.cause?.code || e.message}). Confira se ele está ligado: no teste no computador, o conector leva até 1 minuto para ficar pronto depois de iniciar.`);
   }
   const text = await res.text();
   let data = null;
@@ -157,7 +171,7 @@ function overview(db, user, req) {
   return {
     configured: cfg.configured, sandbox: cfg.sandbox, can_create: cfg.configured || cfg.sandbox,
     connected: instances.filter((i) => i.status === 'conectado').length, instances,
-    ...(user.role === 'admin' ? { url: cfg.url, has_key: !!cfg.key, from_env: cfg.fromEnv, webhook_base: `${require('./meetings').publicUrl(db, req)}/api/whatsapp/lite/webhook/` } : {}),
+    ...(user.role === 'admin' ? { url: cfg.url, has_key: !!cfg.key, from_env: cfg.fromEnv, webhook_base: `${webhookBase(db, req)}/api/whatsapp/lite/webhook/`, webhook_base_custom: String(process.env.EVOLUTION_WEBHOOK_BASE || getSetting(db, 'walite_webhook_base') || '') || null } : {}),
   };
 }
 
@@ -202,7 +216,7 @@ async function createInstance(db, user, req, data = {}) {
   let qr = null;
   try {
     if (cfg.configured) {
-      const url = `${require('./meetings').publicUrl(db, req)}/api/whatsapp/lite/webhook/${token}`;
+      const url = `${webhookBase(db, req)}/api/whatsapp/lite/webhook/${token}`;
       const webhook = { enabled: true, url, byEvents: false, base64: false, events: EVENTS };
       const r = await evo(cfg, 'POST', '/instance/create', { instanceName: key, integration: 'WHATSAPP-BAILEYS', qrcode: true, groupsIgnore: true, rejectCall: false, alwaysOnline: false, readMessages: false, readStatus: false, syncFullHistory: false, webhook });
       // Versões anteriores da v2 ignoram o webhook na criação: confirma pela rota própria
@@ -532,7 +546,7 @@ function inbound(db, inst, d) {
   const cands = wa.waCandidates(peer);
   let conv = db.prepare(`SELECT * FROM wa_conversations WHERE channel = 'lite' AND instance_id = ? AND peer IN (${cands.map(() => '?').join(',')}) ORDER BY id LIMIT 1`).get(inst.id, ...cands);
   const agent = require('./waagent');
-  if (!conv && !contact && inst.only_known && !agent.handlesInstance(db, inst.id)) return false;
+  if (!conv && !contact && inst.only_known && !(agent.handlesInstance(db, inst.id) && agent.allowsPeer(db, peer))) return false;
   const fromMe = !!key.fromMe;
   // Eco de uma mensagem que o próprio CRM acabou de enviar (o servidor às vezes avisa antes de responder o envio):
   // só registra o ID na mensagem que já está no CRM, sem duplicar e sem contar como resposta de uma pessoa

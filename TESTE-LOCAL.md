@@ -269,6 +269,8 @@ cliques em `iniciar-windows.bat`. Ao fechar a área restrita, tudo é apagado.
     - **Comunicação › WhatsApp** como `consultor1@demo.local`: **Juliana Prado** está com a marca **IA** e a faixa **IA
       atendendo** (teste **Assumir conversa** e **Devolver para a IA**); **Ricardo Souza** já teve a triagem feita e a R1
       agendada pela IA (etapa R1 no pipeline) e está "Com o especialista".
+12. **WhatsApp real e agente de IA no seu computador (antes da VPS):** siga `deploy/whatsapp-lite/teste-no-computador/LEIA-ME.md`
+    (Docker Desktop, conectar o número pelo QR Code, chave do Gemini e modo de teste com o número que faz o papel de lead).
 
 ### H8. LPs ligadas ao CRM e rastreio (UTM)
 

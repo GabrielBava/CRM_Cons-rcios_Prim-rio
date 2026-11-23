@@ -25,6 +25,10 @@ const DEFAULT_FIT = 'Tem fit quem demonstra interesse real, tem uma necessidade 
 const DEFAULTS = {
   enabled: false, channel: 'lite', instance_id: null, name: 'Vero', provider: 'gemini', model: 'claude-opus-5-5', gemini_model: llm.GEMINI_DEFAULT, r1_minutes: 45, days: [1, 2, 3, 4, 5],
   start: '09:00', end: '18:00', notice_hours: 2, fit: DEFAULT_FIT, instructions: '',
+  // Modo de teste: a IA só atende estes números (vazio = todos que escreverem para o número central)
+  test_numbers: '',
+  // Especialista que recebe os leads novos quando a distribuição automática não definir ninguém
+  default_owner_id: null,
 };
 const STATUS_LABEL = { ativa: 'IA atendendo', humano: 'Com o especialista', pausada: 'Especialista assumiu' };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -64,8 +68,22 @@ function handlesInstance(db, instId) {
 }
 /** O agente vai mesmo responder (ligado e com a IA pronta): só então dispensa o aviso de "número sem cadastro". */
 function answers(db, w) {
-  return handlesConversation(db, w) && ready(db).ok;
+  return handlesConversation(db, w) && allowsPeer(db, peerOfConv(w)) && ready(db).ok;
 }
+
+/** Números do modo de teste, normalizados (com e sem o nono dígito). */
+function testNumbers(cfg) {
+  const wa = require('./whatsapp');
+  return String(cfg.test_numbers || '').split(/[\n,;]+/).map((x) => wa.toWaId(x)).filter(Boolean).flatMap((x) => wa.waCandidates(x));
+}
+/** O agente pode atender este número? (fora do modo de teste, qualquer um) */
+function allowsPeer(db, peer) {
+  const list = testNumbers(config(db));
+  if (!list.length) return true;
+  const wa = require('./whatsapp');
+  return wa.waCandidates(String(peer || '').replace(/\D/g, '')).some((x) => list.includes(x));
+}
+const peerOfConv = (w) => (w?.channel === 'lite' ? w.peer : w?.wa_id);
 
 const isLead = (u) => u.role === 'admin' || u.role === 'gestor';
 
@@ -93,6 +111,8 @@ function view(db, user) {
     })(),
     instances: instances.map((i) => ({ ...i, label: `${i.name}${i.phone ? ` · +${i.phone}` : ''}${i.status === 'conectado' ? '' : ' (desconectado)'}` })),
     models: MODELS.map(([value, label]) => ({ value, label })),
+    users: db.prepare("SELECT id, name, role FROM users WHERE active = 1 AND role IN ('consultor','gestor','admin') ORDER BY role = 'consultor' DESC, name").all(),
+    test_mode: testNumbers(c).length > 0,
     stats: {
       atendidas: db.prepare('SELECT COUNT(DISTINCT conversation_id) AS n FROM wa_agent_log WHERE created_at >= ?').get(since).n,
       novos_leads: count('novo_lead'), qualificados: count('qualificou'), r1_agendadas: count('agendou_r1'), transferidas: count('transferiu'), sem_fit: count('sem_fit'),
@@ -151,12 +171,22 @@ function save(db, user, data = {}) {
   if (data.notice_hours !== undefined) next.notice_hours = Math.min(72, Math.max(0, Number(data.notice_hours) || 0));
   if (data.fit !== undefined) next.fit = String(clean(data.fit) || DEFAULT_FIT).slice(0, 1500);
   if (data.instructions !== undefined) next.instructions = String(clean(data.instructions) || '').slice(0, 3000);
+  if (data.test_numbers !== undefined) {
+    next.test_numbers = String(clean(data.test_numbers) || '').slice(0, 500);
+    if (next.test_numbers && !testNumbers(next).length) throw badRequest('Números do modo de teste inválidos (ex.: 51 99999-0000).');
+  }
+  if (data.default_owner_id !== undefined) {
+    const id = data.default_owner_id ? Number(data.default_owner_id) : null;
+    if (id && !db.prepare("SELECT 1 FROM users WHERE id = ? AND active = 1 AND role IN ('consultor','gestor','admin')").get(id)) throw badRequest('Especialista padrão inválido.');
+    next.default_owner_id = id;
+  }
   if (next.enabled) {
     if (next.channel === 'lite') {
       const inst = next.instance_id && db.prepare('SELECT * FROM wa_instances WHERE id = ?').get(next.instance_id);
       if (!inst) throw badRequest('Escolha o número central (WhatsApp Lite) que o agente vai atender.');
-      // O número central recebe leads novos: registra todas as conversas, não só as de quem já está no CRM
-      db.prepare('UPDATE wa_instances SET only_known = 0, updated_at = ? WHERE id = ?').run(nowIso(), inst.id);
+      // O número central recebe leads novos: registra todas as conversas, não só as de quem já está no CRM.
+      // No modo de teste (número pessoal), só os números da lista entram além dos cadastros do CRM.
+      db.prepare('UPDATE wa_instances SET only_known = ?, updated_at = ? WHERE id = ?').run(testNumbers(next).length ? 1 : 0, nowIso(), inst.id);
     }
   }
   setSetting(db, 'wa_agent', next);
@@ -209,6 +239,7 @@ function log(db, w, action, detail, usage) {
 async function onInbound(db, convId, msgId) {
   let w = db.prepare('SELECT * FROM wa_conversations WHERE id = ?').get(convId);
   if (!handlesConversation(db, w)) return null;
+  if (!allowsPeer(db, peerOfConv(w))) return null;
   if (w.ai_status === 'humano' || w.ai_status === 'pausada') return null;
   const r = ready(db);
   if (!r.ok) return null;
@@ -266,7 +297,10 @@ function ensureLead(db, w) {
       origin_details: { origin: 'whatsapp', platform: 'whatsapp', received_at: nowIso(), source_ref: 'wa_agent' }, create_opportunity: true,
     }, { system: true, skipDuplicateCheck: true, source: 'whatsapp', sourceLabel: 'pelo WhatsApp (agente de IA)' });
     contactId = r.id;
-    require('./distribution').autoDistribute(db, contactId);
+    const to = require('./distribution').autoDistribute(db, contactId);
+    const def = config(db).default_owner_id;
+    if (!to && def) db.prepare('UPDATE contacts SET owner_id = ? WHERE id = ? AND owner_id IS NULL').run(def, contactId);
+    if (!to && def) db.prepare('UPDATE opportunities SET owner_id = ? WHERE contact_id = ? AND owner_id IS NULL').run(def, contactId);
     log(db, { ...w, contact_id: contactId }, 'novo_lead', clean(w.profile_name));
   }
   const owner = db.prepare('SELECT owner_id FROM contacts WHERE id = ?').get(contactId)?.owner_id ?? null;
@@ -488,6 +522,11 @@ async function runTool(db, cfg, w, ctx, name, input) {
 function ensureOwner(db, w) {
   let owner = db.prepare('SELECT owner_id FROM contacts WHERE id = ?').get(w.contact_id)?.owner_id ?? null;
   if (!owner) owner = require('./distribution').autoDistribute(db, w.contact_id) || null;
+  if (!owner && config(db).default_owner_id) {
+    owner = config(db).default_owner_id;
+    db.prepare('UPDATE contacts SET owner_id = ? WHERE id = ? AND owner_id IS NULL').run(owner, w.contact_id);
+    db.prepare("UPDATE opportunities SET owner_id = ? WHERE contact_id = ? AND owner_id IS NULL AND status = 'aberta'").run(owner, w.contact_id);
+  }
   if (owner) db.prepare('UPDATE wa_conversations SET assigned_to = COALESCE(assigned_to, ?) WHERE id = ?').run(owner, w.id);
   return owner;
 }
@@ -610,6 +649,6 @@ async function sendAsAgent(db, w, text) {
 }
 
 module.exports = {
-  config, ready, view, save, control, onInbound, humanReplied, handlesConversation, handlesInstance, answers, freeSlots, fmtSlot, systemPrompt,
+  config, ready, view, save, control, onInbound, humanReplied, handlesConversation, handlesInstance, answers, allowsPeer, freeSlots, fmtSlot, systemPrompt,
   STATUS_LABEL, AGENT_USER, DEFAULT_FIT,
 };
