@@ -259,8 +259,9 @@ async function liteManager(onClose) {
       if (f.dataset.form === 'server') {
         const body = { url: f.url.value.trim(), sandbox: f.sandbox.checked, webhook_base: f.webhook_base.value.trim() };
         if (f.key.value) body.key = f.key.value;
-        await put('/api/whatsapp/lite/config', body);
-        toast('Servidor do WhatsApp Lite salvo.');
+        const r = await put('/api/whatsapp/lite/config', body);
+        if (r?.check && !r.check.ok) toast(`Salvo, mas o conector não confirmou: ${r.check.message}`, 'error');
+        else toast(r?.check?.ok ? 'Servidor do WhatsApp Lite salvo: conector respondendo e chave aceita.' : 'Servidor do WhatsApp Lite salvo.');
         return list();
       }
     } catch (ex) {

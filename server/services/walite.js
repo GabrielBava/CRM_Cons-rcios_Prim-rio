@@ -51,7 +51,7 @@ function webhookBase(db, req) {
   return set || require('./meetings').publicUrl(db, req);
 }
 
-function saveConfig(db, user, data = {}) {
+async function saveConfig(db, user, data = {}) {
   if (user.role !== 'admin') throw forbidden('Só o administrador configura o servidor do WhatsApp Lite.');
   if (data.webhook_base !== undefined) {
     const b = clean(data.webhook_base);
@@ -67,7 +67,31 @@ function saveConfig(db, user, data = {}) {
   if (data.clear_key) setSetting(db, 'walite_key_enc', '');
   if (data.sandbox !== undefined) setSetting(db, 'walite_sandbox', !!data.sandbox);
   audit(db, user, 'integration', null, 'whatsapp_lite_config', { url: !!data.url, sandbox: data.sandbox });
-  return { ok: true };
+  // Endereço ou chave novos: confere na hora se o conector responde e aceita a chave (salva de qualquer jeito)
+  const cfg = liteConfig(db);
+  const changed = data.url !== undefined || (data.key !== undefined && data.key !== '');
+  return { ok: true, check: changed && cfg.configured ? await checkServer(cfg) : null };
+}
+
+/** Confere o conector: responde, é uma Evolution API v2 e aceita a chave global. */
+async function checkServer(cfg) {
+  let res;
+  try {
+    res = await fetch(`${cfg.url}/instance/fetchInstances`, { headers: { apikey: cfg.key }, signal: AbortSignal.timeout(10000) });
+  } catch (e) {
+    const code = String(e.cause?.code || '');
+    if (/CERT|TLS|SSL/i.test(code)) return { ok: false, message: 'O conector ainda não tem um certificado HTTPS válido. Ele sai sozinho alguns minutos depois de o DNS apontar para a VPS: tente salvar de novo daqui a pouco.' };
+    const why = e.name === 'TimeoutError' ? 'sem resposta em 10 segundos'
+      : code === 'ENOTFOUND' ? 'o endereço ainda não existe no DNS'
+      : code === 'ECONNREFUSED' ? 'conexão recusada'
+      : code || e.cause?.message || e.message;
+    return { ok: false, message: `Não foi possível falar com o conector (${why}). Confira o endereço, se a instalação na VPS terminou e se o DNS já aponta para ela.` };
+  }
+  if (res.status === 401 || res.status === 403) return { ok: false, message: 'O conector respondeu, mas recusou a chave. Confira a chave global (na VPS, o comando vero-whatsapp dados mostra a chave).' };
+  if (!res.ok) return { ok: false, message: `O conector respondeu com erro ${res.status}. Confira se o endereço é o do conector do WhatsApp Lite.` };
+  const list = await res.json().catch(() => null);
+  if (!Array.isArray(list)) return { ok: false, message: 'O endereço respondeu, mas não parece ser o conector do WhatsApp Lite (Evolution API v2).' };
+  return { ok: true, instances: list.length };
 }
 
 /* ------------------------- Servidor (Evolution API v2) ------------------------- */

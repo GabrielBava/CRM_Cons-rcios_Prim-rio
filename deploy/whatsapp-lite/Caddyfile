@@ -1,5 +1,0 @@
-# HTTPS automático (Let's Encrypt) no domínio do conector, encaminhando para a Evolution API
-{$DOMINIO} {
-	encode gzip
-	reverse_proxy evolution-api:8080
-}

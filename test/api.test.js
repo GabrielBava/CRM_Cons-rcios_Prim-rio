@@ -3092,6 +3092,7 @@ test('WhatsApp Lite (QR Code): instância no servidor Evolution, conexão, mensa
     req.on('end', () => {
       const body = raw ? JSON.parse(raw) : null;
       calls.push({ method: req.method, url: req.url, body, apikey: req.headers.apikey });
+      if (req.headers.apikey === 'chave-errada') { res.writeHead(401, { 'Content-Type': 'application/json' }); return res.end('{"status":401,"error":"Unauthorized"}'); }
       const send = (o) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
       const u = req.url;
       if (u === '/instance/create') return send({ instance: { instanceName: body.instanceName, status: 'created' }, hash: 'tok', qrcode: { base64: 'data:image/png;base64,QUFB', code: '2@x' } });
@@ -3116,7 +3117,23 @@ test('WhatsApp Lite (QR Code): instância no servidor Evolution, conexão, mensa
     // Sem servidor nem modo de teste: não cria
     assert.equal((await call('c1', 'POST', '/api/whatsapp/lite/instancias', { name: 'Meu número' })).status, 400);
     assert.equal((await call('c1', 'PUT', '/api/whatsapp/lite/config', { url: evoUrl, key: 'chave' })).status, 403, 'só o administrador configura');
-    assert.equal((await call('admin', 'PUT', '/api/whatsapp/lite/config', { url: evoUrl, key: 'chave-global' })).status, 200);
+    // Ao salvar, o CRM confere o conector: endereço fora do ar, chave errada e, por fim, tudo certo (salva de qualquer jeito)
+    const closed = require('node:net').createServer();
+    await new Promise((r) => closed.listen(0, '127.0.0.1', r));
+    const closedPort = closed.address().port;
+    await new Promise((r) => closed.close(r));
+    const off = await call('admin', 'PUT', '/api/whatsapp/lite/config', { url: `http://127.0.0.1:${closedPort}`, key: 'chave-global' });
+    assert.equal(off.status, 200);
+    assert.equal(off.data.check.ok, false);
+    assert.match(off.data.check.message, /Não foi possível falar com o conector \(conexão recusada\)/);
+    const wrong = await call('admin', 'PUT', '/api/whatsapp/lite/config', { url: evoUrl, key: 'chave-errada' });
+    assert.equal(wrong.data.check.ok, false);
+    assert.match(wrong.data.check.message, /recusou a chave/);
+    const saved = await call('admin', 'PUT', '/api/whatsapp/lite/config', { url: evoUrl, key: 'chave-global' });
+    assert.equal(saved.status, 200);
+    assert.deepEqual(saved.data.check, { ok: true, instances: 1 });
+    assert.equal((await call('admin', 'PUT', '/api/whatsapp/lite/config', { sandbox: false })).data.check, null, 'sem mudar endereço nem chave, não confere de novo');
+    calls.length = 0;
     // Especialista cria a instância e recebe o QR Code
     const inst = await call('c1', 'POST', '/api/whatsapp/lite/instancias', { name: 'Meu número' });
     assert.equal(inst.status, 200, JSON.stringify(inst.data));
