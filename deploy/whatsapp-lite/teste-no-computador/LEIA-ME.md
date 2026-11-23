@@ -6,8 +6,10 @@ mexe no CRM oficial nem no banco de produção.
 
 ## Do que você precisa
 
-- **Docker Desktop** (gratuito): https://www.docker.com/products/docker-desktop (no Windows, o instalador pede para
-  ativar o WSL 2; aceite e reinicie se pedir). Abra o Docker Desktop e espere aparecer "Engine running".
+- **Docker Desktop** (gratuito): https://www.docker.com/products/docker-desktop. No Windows, instale **como
+  administrador** (botão direito no instalador › **Executar como administrador**) e escolha **"All-users
+  installation"**; deixe marcado **"Use WSL 2 instead of Hyper-V"** e reinicie o computador quando pedir. Depois abra o
+  Docker Desktop e espere aparecer "Engine running".
 - **Dois celulares com WhatsApp:**
   - o **número central** que a IA vai atender (no seu teste: **51 98920-3845**), que lê o QR Code;
   - **outro número** para fazer o papel do **lead** (o seu pessoal ou de um colega), que manda as mensagens.
@@ -50,6 +52,17 @@ mexe no CRM oficial nem no banco de produção.
 
 ## Se algo não funcionar
 
+- **Ao instalar o Docker Desktop: "requires the Virtual Machine Platform Windows feature"** (ou "A per-user
+  installation cannot enable it"): o instalador foi aberto sem permissão de administrador. Resolva de um destes jeitos:
+  - feche o instalador, clique com o botão direito nele › **Executar como administrador** › escolha
+    **"All-users installation"** › reinicie quando pedir; **ou**
+  - menu Iniciar › digite **PowerShell** › botão direito › **Executar como administrador** › rode `wsl --install` ›
+    reinicie o computador › rode o instalador do Docker Desktop de novo.
+  Se o computador não tem senha de administrador (computador da empresa), quem administra a máquina precisa fazer
+  esse passo.
+- **Depois de instalar: "Virtualization support not detected" / o Docker não inicia:** a virtualização está desligada
+  no computador. Confira em Gerenciador de Tarefas › **Desempenho** › **CPU** › "Virtualização". Se estiver
+  "Desabilitado", ligue na BIOS/UEFI (opção "Intel Virtualization Technology", "VT-x", "SVM" ou "AMD-V") e reinicie.
 - **"Port is already allocated" / porta 3000 ou 8080 em uso:** feche o CRM local (iniciar-windows.bat) ou outro
   programa que use essas portas e rode de novo.
 - **O QR Code não aparece:** o conector leva até 1 minuto para ficar pronto na primeira vez; clique em
