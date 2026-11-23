@@ -3364,6 +3364,14 @@ test('Agente de IA no WhatsApp: lead novo no número central, triagem, horários
     assert.ok((await keys('admin')).includes('wa_agent'));
     assert.ok(!(await keys('c1')).includes('wa_agent'));
 
+    // Modelo mais barato (Haiku): sem o modelo reserva da Anthropic, que ele não tem
+    await call('admin', 'PUT', '/api/whatsapp/agente', { model: 'claude-haiku-5-5' });
+    await say('5511977001199', 'Oi', 'Caio');
+    const hk = seen[seen.length - 1];
+    assert.equal(hk.model, 'claude-haiku-5-5');
+    assert.equal(hk.fallbacks, undefined);
+    assert.equal(hk.betas, undefined);
+    assert.equal(seen[0].fallbacks, 'default', 'os outros modelos usam o modelo reserva');
     // Desligado: mensagens no número central ficam só para a equipe
     await call('admin', 'PUT', '/api/whatsapp/agente', { enabled: false });
     const before = seen.length;

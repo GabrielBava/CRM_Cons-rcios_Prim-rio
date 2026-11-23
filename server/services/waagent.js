@@ -556,11 +556,12 @@ async function runTurn(db, cfg, llm, w0) {
   try {
     for (let i = 0; i < 6; i++) {
       if (Date.now() - started > MAX_TURN_MS) throw new Error('tempo esgotado');
+      const model = cfg.model || 'claude-opus-5-5';
       const res = await client.beta.messages.create({
-        model: cfg.model || 'claude-opus-5-5',
+        model,
         max_tokens: 2000,
-        betas: ['server-side-fallback-2026-07-01'],
-        fallbacks: 'default',
+        // Modelo reserva do lado da Anthropic (o Haiku não tem: o parâmetro não vai para ele)
+        ...(/haiku/.test(model) ? {} : { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' }),
         output_config: { effort: 'low' },
         system: sys,
         tools: toolDefs,
