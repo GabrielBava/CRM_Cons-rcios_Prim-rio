@@ -326,7 +326,8 @@ Cartões por categoria, com a situação de cada conexão e o botão Conectar/Ge
 
 ### 18.2 WhatsApp Lite: como funciona
 
-- Cada usuário cria uma **instância** (Integrações › WhatsApp Lite › Nova instância), dá um nome e lê o **QR Code** com o WhatsApp do celular (Business ou pessoal) em **Aparelhos conectados › Conectar um aparelho**. A tela se atualiza sozinha quando conecta e mostra o número.
+- **Igual ao WhatsApp Web:** em **Comunicação › WhatsApp**, o usuário clica em **Conectar meu WhatsApp** (ou no ícone de QR Code no topo da lista) e o QR Code aparece na própria tela. No celular (Business ou pessoal): **Aparelhos conectados › Conectar um aparelho** e lê o código. A tela se atualiza sozinha quando conecta, e as conversas com os clientes passam a aparecer na lista. "Gerar outro QR Code" renova o código da mesma conexão. Também dá para conectar por Integrações › WhatsApp Lite › Nova instância.
+- **Por que existe o conector:** o WhatsApp Web só recebe mensagens enquanto a aba está aberta. No CRM, quem fica "com a aba aberta" 24 horas é o conector (servidor compatível com a Evolution API, seção 18.4): ele mantém o aparelho conectado e repassa cada mensagem ao CRM, mesmo com o computador do especialista desligado. A Vercel não mantém conexões abertas entre uma requisição e outra, por isso o conector roda fora dela.
 - As conversas vão para **Comunicação › WhatsApp**, junto com as do número oficial, com o canal e a instância indicados.
 - **Privacidade (padrão):** só entram as conversas com números que já estão no CRM (lead ou cliente). Mensagens de amigos e família do número pessoal são ignoradas. O dono pode trocar para "Registrar todas as conversas" no menu ⋯ da instância.
 - Grupos, listas de transmissão e canais são ignorados.

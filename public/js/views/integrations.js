@@ -111,7 +111,7 @@ async function liteManager(onClose) {
   async function newInstance() {
     render(sh.box, html`<header class="int-head"><div><h2>Adicionar instância Lite</h2><small>A instância é criada no servidor do WhatsApp da Vero.</small></div><button type="button" class="icon" data-x aria-label="Fechar">×</button></header>
       <form class="int-body" data-form="create" novalidate>
-        <div class="field full"><label>Nome da instância</label><input name="name" maxlength="60" required placeholder="Ex.: Meu WhatsApp, Time SDR Brasil" autofocus></div>
+        <div class="field full"><label>Nome da instância</label><input name="name" maxlength="60" required placeholder="Ex.: Meu WhatsApp, Time SDR Brasil" value="${data.instances.some((i) => i.owner_id === state.user.id) ? '' : `WhatsApp de ${String(state.user.name || '').split(' ')[0]}`}" autofocus></div>
         <label class="check full"><input type="checkbox" name="only_known" checked> Registrar só conversas com cadastros do CRM <small class="muted">(recomendado para número pessoal: conversas com amigos e família não entram no CRM)</small></label>
         <p class="hint">Depois de criar, o QR Code aparece para concluir o pareamento.</p>
         <footer class="int-foot"><button type="button" class="btn ghost" data-a="back">Voltar</button><button type="submit" class="btn primary">Criar instância</button></footer>

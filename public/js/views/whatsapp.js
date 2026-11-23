@@ -49,14 +49,30 @@ export async function whatsapp(view, openId, params, tabs) {
     return render(view, html`<div class="page">${tabs}<div class="alert danger">${e.message}</div></div>`);
   }
   const officialReady = status.configured || status.sandbox;
-  const liteInst = lite?.instances || [];
+  let liteInst = lite?.instances || [];
   const sendable = liteInst.filter((i) => i.my_access === 'enviar' && (i.status === 'conectado' || lite.sandbox));
   const nothing = !officialReady && !liteInst.length;
+  // Como no WhatsApp Web: o usuário liga o próprio WhatsApp ao CRM lendo o QR Code com o celular
+  const canLink = !!lite?.can_create && state.user.role !== 'leitura';
+  const myLinked = () => liteInst.find((i) => i.owner_id === state.user.id && i.status === 'conectado');
+  const welcome = () => {
+    const mine = myLinked();
+    const linkBox = mine
+      ? html`<div class="wa-linked">${icon('confirmar', 18)}<span>Seu WhatsApp está conectado${mine.phone_label ? html` · <strong>${mine.phone_label}</strong>` : ''}</span></div>
+        <button type="button" class="btn ghost small" data-act="link-wa">${icon('qrcode', 15)} Conectar outro número</button>`
+      : canLink ? html`<button type="button" class="btn primary" data-act="link-wa">${icon('qrcode', 17)} Conectar meu WhatsApp</button>
+        <small class="muted">Igual ao WhatsApp Web: aparece um QR Code e você lê com o celular (Business ou pessoal).</small>`
+        : lite && !lite.can_create ? html`<div class="alert">O conector do WhatsApp Lite ainda não foi configurado.${state.user.role === 'admin' ? html` Configure em <a href="#/integracoes">Integrações › WhatsApp Lite</a>.` : ' Peça ao administrador.'}</div>` : '';
+    return html`<div class="wa-empty">${icon('whatsapp', 56)}<h3>WhatsApp no CRM</h3>
+      <p>Todas as conversas com clientes ficam aqui: o número oficial da empresa e o WhatsApp de cada especialista conectado por QR Code.</p>
+      ${linkBox}
+      <small class="muted">As mensagens entram no histórico do lead. O ícone do WhatsApp aparece no card do Pipeline de quem tem conversa.</small></div>`;
+  };
   render(view, html`<div class="page wide comm-page wa-page">${tabs}
-    ${nothing ? html`<div class="alert warn"><strong>Nenhum WhatsApp conectado ainda.</strong> Conecte o seu número pelo QR Code em <a href="#/integracoes">Integrações › WhatsApp Lite</a>${state.user.role === 'admin' ? html` ou o número oficial da empresa em <a href="#/configuracoes/integracoes">Configurações › Integrações</a>` : ''}.</div>` : ''}
+    ${nothing && !canLink ? html`<div class="alert warn"><strong>Nenhum WhatsApp conectado ainda.</strong> ${state.user.role === 'admin' ? html`Configure o conector do WhatsApp Lite em <a href="#/integracoes">Integrações › WhatsApp Lite</a> ou o número oficial da empresa em <a href="#/configuracoes/integracoes">Configurações › Integrações</a>.` : 'Peça ao administrador para configurar o conector do WhatsApp Lite.'}</div>` : ''}
     <div class="wa-shell" data-shell>
       <aside class="wa-list">
-        <div class="wa-list-head"><h2>Conversas</h2><button type="button" class="icon" data-act="new" title="Nova conversa" aria-label="Nova conversa">${icon('adicionar', 20)}</button></div>
+        <div class="wa-list-head"><h2>Conversas</h2><span class="grow"></span>${canLink ? html`<button type="button" class="icon" data-act="link-wa" title="Conectar meu WhatsApp (QR Code)" aria-label="Conectar meu WhatsApp pelo QR Code">${icon('qrcode', 19)}</button>` : ''}<button type="button" class="icon" data-act="new" title="Nova conversa" aria-label="Nova conversa">${icon('adicionar', 20)}</button></div>
         <label class="wa-search">${icon('buscar', 16)}<input type="search" placeholder="Buscar conversas e mensagens…" data-q value="${saved.q}" aria-label="Buscar conversas e mensagens"></label>
         <div class="wa-chips">${[['', 'Todas'], ['nao_lidas', 'Não lidas'], ['minhas', 'Minhas']].map(([k, l]) => html`<button type="button" class="wa-chip ${saved.filtro === k ? 'on' : ''}" data-wf="${k}">${l}</button>`)}
           <span class="grow"></span><button type="button" class="icon ${saved.canal ? 'on' : ''}" data-act="filters" title="Filtrar por número" aria-label="Filtrar por número">${icon('filtro', 17)}</button></div>
@@ -65,9 +81,7 @@ export async function whatsapp(view, openId, params, tabs) {
           ${liteInst.map((i) => html`<option value="i${i.id}" ${saved.canal === `i${i.id}` ? 'selected' : ''}>Lite · ${i.name}${i.phone_label ? ` · ${i.phone_label}` : ''}</option>`)}</select></div>
         <div class="wa-items" data-items><p class="muted small pad">Carregando…</p></div>
       </aside>
-      <section class="wa-main" data-main><div class="wa-empty">${icon('whatsapp', 56)}<h3>WhatsApp da Vero</h3>
-        <p>Todas as conversas com clientes ficam aqui: o número oficial da empresa e os números conectados pelo WhatsApp Lite.</p>
-        <small class="muted">As mensagens entram no histórico do lead. O ícone do WhatsApp aparece no card do Pipeline de quem tem conversa.</small></div></section>
+      <section class="wa-main" data-main>${welcome()}</section>
       <aside class="wa-side" data-side hidden></aside>
     </div></div>`);
 
@@ -78,7 +92,77 @@ export async function whatsapp(view, openId, params, tabs) {
   let timer = null;
   let listTimer = null;
   let rec = null;
+  let linkTimer = null;
   const shell = $('[data-shell]', view);
+
+  /* ---------- Conectar o WhatsApp pelo QR Code (como no WhatsApp Web) ---------- */
+  const stopLink = () => {
+    clearInterval(linkTimer);
+    linkTimer = null;
+  };
+  const showWelcome = () => {
+    stopLink();
+    render($('[data-main]', view), welcome());
+  };
+  const drawLink = (r) => render($('[data-main]', view), html`<div class="wa-link">
+    <header class="wa-link-head"><button type="button" class="icon wa-back" data-act="back" aria-label="Voltar">${icon('voltar', 20)}</button><strong>Conectar meu WhatsApp</strong><span class="grow"></span><button type="button" class="icon" data-act="link-cancel" aria-label="Fechar">×</button></header>
+    ${r.status === 'conectado' ? html`<div class="wa-link-done">${icon('confirmar', 44)}<h3>WhatsApp conectado</h3><p>${r.phone_label || r.name} está ligado ao CRM. As conversas com os seus clientes aparecem na lista ao lado.</p>
+        <button type="button" class="btn primary" data-act="link-cancel">Ver conversas</button></div>`
+    : html`<div class="wa-link-body">
+      <div class="wa-link-steps"><h3>Use o seu WhatsApp no CRM</h3>
+        <ol><li>Abra o <strong>WhatsApp</strong> no celular (Business ou pessoal).</li>
+          <li>Toque em <strong>Mais opções ⋮</strong> (Android) ou <strong>Configurações</strong> (iPhone) e depois em <strong>Aparelhos conectados</strong>.</li>
+          <li>Toque em <strong>Conectar um aparelho</strong> e aponte o celular para esta tela para ler o QR Code.</li></ol>
+        <label class="check wa-link-known"><input type="checkbox" data-known ${r.only_known === false ? '' : 'checked'}><span>Registrar só conversas com clientes do CRM<small class="muted">Amigos e família do número pessoal ficam fora.</small></span></label>
+        <p class="wa-link-mobile alert">No celular, abra esta tela no computador: o QR Code precisa ser lido por outro aparelho.</p>
+        <p class="small muted">O celular continua funcionando normalmente. Para desligar: no celular, em Aparelhos conectados, ou em Integrações › WhatsApp Lite.</p></div>
+      <div class="wa-link-qr"><div class="qr-box">${r.qr ? html`<img src="${r.qr}" alt="QR Code para conectar o WhatsApp" width="264" height="264">` : html`<div class="qr-wait">Gerando o QR Code…</div>`}</div>
+        <button type="button" class="btn ghost small" data-act="link-newqr">${icon('historico', 14)} Gerar outro QR Code</button>
+        ${r.sandbox ? html`<div class="alert">Modo de teste: o QR Code é ilustrativo. <button type="button" class="btn small primary" data-act="link-sim">Simular leitura</button></div>` : ''}</div>
+    </div>`}</div>`);
+  let linking = null;
+  const linkWa = async (fresh = false) => {
+    shell.classList.add('has-conv');
+    stopLink();
+    clearInterval(timer);
+    conv = null;
+    drawList();
+    render($('[data-main]', view), html`<div class="wa-empty"><div class="qr-wait">Gerando o QR Code…</div></div>`);
+    try {
+      // Reaproveita a conexão do próprio usuário que ainda não terminou de parear
+      const pending = !fresh && ((linking && linking.status !== 'conectado' && linking) || liteInst.find((i) => i.owner_id === state.user.id && i.status !== 'conectado'));
+      const first = String(state.user.name || '').split(' ')[0];
+      linking = pending
+        ? await post(`/api/whatsapp/lite/instancias/${pending.id}/reconectar`)
+        : await post('/api/whatsapp/lite/instancias', { name: myLinked() ? `WhatsApp ${liteInst.filter((i) => i.owner_id === state.user.id).length + 1} de ${first}` : `WhatsApp de ${first}`, only_known: true });
+    } catch (e) {
+      toastError(e);
+      return showWelcome();
+    }
+    if (!liteInst.some((i) => i.id === linking.id)) liteInst = [...liteInst, linking];
+    drawLink(linking);
+    linkTimer = setInterval(async () => {
+      if (!view.isConnected) return stopLink();
+      try {
+        const n = await get(`/api/whatsapp/lite/instancias/${linking.id}`);
+        const changed = n.status !== linking.status || n.qr !== linking.qr;
+        linking = { ...linking, ...n };
+        if (changed) drawLink(linking);
+        if (n.status === 'conectado') linked();
+      } catch { /* mantém a tela */ }
+      return undefined;
+    }, 3000);
+    return undefined;
+  };
+  const linked = async () => {
+    stopLink();
+    toast('WhatsApp conectado ao CRM.');
+    try {
+      lite = await get('/api/whatsapp/lite');
+      liteInst = lite.instances || [];
+    } catch { /* segue com a lista atual */ }
+    loadList();
+  };
 
   /* ---------- Lista ---------- */
   const preview = (c) => {
@@ -167,6 +251,7 @@ export async function whatsapp(view, openId, params, tabs) {
 
   const openConv = async (id, { silent = false } = {}) => {
     clearInterval(timer);
+    stopLink();
     let d;
     try {
       d = await get(`/api/whatsapp/conversas/${id}`);
@@ -613,7 +698,32 @@ export async function whatsapp(view, openId, params, tabs) {
     clearInterval(timer);
     conv = null;
     history.replaceState(null, '', '#/comunicacao/whatsapp');
+    showWelcome();
     drawList();
+  });
+  on(view, 'click', '[data-act=link-wa]', () => linkWa());
+  on(view, 'click', '[data-act=link-newqr]', () => linkWa(false));
+  on(view, 'click', '[data-act=link-cancel]', () => {
+    shell.classList.remove('has-conv');
+    showWelcome();
+  });
+  on(view, 'click', '[data-act=link-sim]', async () => {
+    try {
+      linking = { ...linking, ...(await post(`/api/whatsapp/lite/instancias/${linking.id}/simular-conexao`, {})) };
+      drawLink(linking);
+      linked();
+    } catch (e) {
+      toastError(e);
+    }
+  });
+  on(view, 'change', '[data-known]', async (e, el) => {
+    if (!linking) return;
+    try {
+      await patch(`/api/whatsapp/lite/instancias/${linking.id}`, { only_known: el.checked });
+      linking.only_known = el.checked;
+    } catch (ex) {
+      toastError(ex);
+    }
   });
   on(view, 'click', '[data-act=new]', async () => {
     const cid = await pickContact('Conversar com um cliente');
@@ -651,6 +761,7 @@ export async function whatsapp(view, openId, params, tabs) {
   return () => {
     clearInterval(timer);
     clearInterval(listTimer);
+    stopLink();
     if (rec) {
       rec.cancel = true;
       rec.mr.stop();

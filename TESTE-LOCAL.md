@@ -247,9 +247,12 @@ cliques em `iniciar-windows.bat`. Ao fechar a área restrita, tudo é apagado.
 10. **Integrações e WhatsApp Lite** (dados de demonstração em modo de teste):
     - **Integrações** como administrador: cartões em Mensageria, Voz, Marketing, Produtividade e Sistema. Como
       `consultor1@demo.local`: só WhatsApp Lite, Instagram e LinkedIn (em breve) e Google Agenda.
-    - **WhatsApp Lite** como `consultor2@demo.local`: "Meu WhatsApp" do Especialista 1 aparece com "Só ver". Clique em
-      **Nova instância**, dê um nome, veja o QR Code e use **Simular leitura**. No menu ⋯, **Acesso dos membros**: mude o
-      Especialista 1 para "Só ver" ou "Ver e enviar" e use "Acesso para todos".
+    - **Conectar como no WhatsApp Web** como `consultor2@demo.local`: em **Comunicação › WhatsApp**, clique em **Conectar
+      meu WhatsApp**: o QR Code aparece ao lado das instruções. Use **Simular leitura** (modo de teste) e veja "WhatsApp
+      conectado".
+    - **WhatsApp Lite** em Integrações como `consultor2@demo.local`: "Meu WhatsApp" do Especialista 1 aparece com "Só ver" e o
+      número que você acabou de conectar aparece como seu. No menu ⋯, **Acesso dos membros**: mude o Especialista 1 para
+      "Só ver" ou "Ver e enviar" e use "Acesso para todos".
     - **Comunicação › WhatsApp** como `consultor1@demo.local`: filtros Todas / Não lidas / Minhas, iniciais do responsável
       (ED) e etapa do lead em cada conversa. Abra uma conversa do "Meu WhatsApp": envie texto com emoji, um anexo
       (até 3 MB) e, se o navegador permitir o microfone, um áudio. Clique em **Ver**: aba Lead (Agendar R1, Gerar proposta,
