@@ -55,6 +55,13 @@ conector com HTTPS automático e mostra no fim o **endereço** e a **chave** par
    curl -fsSL https://raw.githubusercontent.com/GabrielBava/CRM_Cons-rcios_Prim-rio/main/deploy/whatsapp-lite/instalar-evolution.sh -o instalar.sh
    sudo DOMINIO=whatsapp.veroconsorciosbr.com.br bash instalar.sh
    ```
+   **Se não conseguir colar** (o console pelo site da Locaweb às vezes não aceita), digite estes três comandos, mais
+   curtos. Atenção ao endereço: é `crm_cons-rcios_prim-rio`, com sublinhado, hífen, sublinhado e hífen.
+   ```
+   apt install -y git
+   git clone https://github.com/gabrielbava/crm_cons-rcios_prim-rio vero
+   DOMINIO=whatsapp.veroconsorciosbr.com.br bash vero/deploy/whatsapp-lite/instalar-evolution.sh
+   ```
 3. Espere de 3 a 10 minutos. No fim aparece um quadro com:
    ```
    Endereço do servidor:  https://whatsapp.veroconsorciosbr.com.br
