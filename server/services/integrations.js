@@ -312,6 +312,12 @@ function panel(db, user, req) {
       action: lite && lite.instances.length ? 'Gerenciar' : 'Conectar' },
     { key: 'whatsapp_oficial', group: 'mensageria', name: 'WhatsApp Business', sub: 'API oficial · Meta', icon: 'whatsapp', scope: 'geral',
       ...(off?.configured ? { status: 'ativo', label: 'Ativo' } : off?.sandbox ? { status: 'teste', label: 'Modo de teste' } : { status: 'nao_configurado', label: 'Não configurado' }), action: off?.configured ? 'Gerenciar' : 'Conectar' },
+    ...(lead ? (() => {
+      const ag = safe(() => require('./waagent').ready(db)) || { ok: false, reason: 'desligado', cfg: {} };
+      const label = ag.ok ? `Atendendo · ${ag.cfg.channel === 'oficial' ? 'número oficial' : 'número central'}` : ag.reason === 'sem_chave' ? 'Falta a chave da IA' : ag.reason === 'sem_biblioteca' ? 'Falta a biblioteca da IA' : 'Desligado';
+      return [{ key: 'wa_agent', group: 'mensageria', name: 'Agente de IA', sub: 'Atende, qualifica e agenda a R1 no WhatsApp', icon: 'ia', scope: 'geral',
+        status: ag.ok ? 'ativo' : ag.cfg?.enabled ? 'erro' : 'disponivel', label, action: ag.ok ? 'Gerenciar' : 'Configurar' }];
+    })() : []),
     { key: 'instagram', group: 'mensageria', name: 'Instagram', sub: 'Direct · Meta', icon: 'instagram', scope: 'usuario', ...soon },
     { key: 'linkedin', group: 'mensageria', name: 'LinkedIn', sub: 'Mensagens', icon: 'linkedin', scope: 'usuario', ...soon },
     { key: 'discadora', group: 'voz', name: 'Discadora', sub: 'Click-to-call · chamadas e gravações', icon: 'telefone', scope: 'geral', ...intStatus('discadora'), action: 'Configurar' },

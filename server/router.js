@@ -560,6 +560,10 @@ function createRouter(db) {
   });
   // WhatsApp Lite (QR Code): números conectados pelos usuários num servidor compatível com a Evolution API
   const walite = require('./services/walite');
+  const waagent = require('./services/waagent');
+  add('GET', '/api/whatsapp/agente', ({ user }) => waagent.view(db, user));
+  add('PUT', '/api/whatsapp/agente', ({ user, body }) => waagent.save(db, user, body));
+  add('POST', '/api/whatsapp/conversas/:id/ia', ({ user, params, body }) => waagent.control(db, user, params.id, body));
   add('GET', '/api/whatsapp/lite', ({ user, req }) => walite.overview(db, user, req));
   add('PUT', '/api/whatsapp/lite/config', ({ user, body }) => walite.saveConfig(db, user, body));
   add('POST', '/api/whatsapp/lite/instancias', ({ user, req, body }) => walite.createInstance(db, user, req, body));

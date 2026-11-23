@@ -365,8 +365,13 @@ Ajude o especialista a conduzir o lead: próximo passo, canal, perguntas (SPIN),
 Regras: responda em português do Brasil, curto e prático (até 8 linhas ou uma lista curta); use só os dados do contexto do lead; quando faltar dado, diga o que perguntar ao cliente; nunca prometa data de contemplação, rentabilidade ou aprovação; mensagens de WhatsApp em tom cordial, sem jargão, com uma pergunta no final.
 Fluxo do pipeline: Prospect → Lead → Tentativa de contato (exige atividade) → Qualificação (exige qualificação concluída) → R1 (agendada) → R2 (agendada) → Negociação (exige proposta) → Venda. Perdido exige motivo MP1–MP9.`;
 
+/** Cliente da Anthropic (ou o falso injetado nos testes). Usado também pelo agente de IA do WhatsApp. */
+function llmClient(cfg) {
+  return clientFactory ? clientFactory(cfg) : new cfg.Anthropic({ apiKey: cfg.key });
+}
+
 async function llmAnswer(db, cfg, ins, history, question) {
-  const client = clientFactory ? clientFactory(cfg) : new cfg.Anthropic({ apiKey: cfg.key });
+  const client = llmClient(cfg);
   const context = JSON.stringify({ resumo: ins.resumo, etapa: ins.stage, proximo_passo: ins.next, alertas: ins.alerts.map((a) => a.text), canal: ins.canal, bant: ins.bant.map((b) => ({ item: b.label, ok: b.ok, valor: b.value })), em_aberto: ins.open_items, combinado: ins.agreed.map((x) => x.text), oportunidades: ins.cross_sell, score: ins.score, prazo_r1: ins.r1_deadline });
   const response = await client.beta.messages.create({
     model: cfg.model,
@@ -480,4 +485,4 @@ function saveConfig(db, user, data = {}) {
   return status(db, user);
 }
 
-module.exports = { insights, chat, history, rate, listKnowledge, saveKnowledge, status, saveConfig, setClientFactory, internalAnswer, OBJECTIONS };
+module.exports = { insights, chat, history, rate, listKnowledge, saveKnowledge, status, saveConfig, setClientFactory, internalAnswer, OBJECTIONS, llmConfig, llmClient };

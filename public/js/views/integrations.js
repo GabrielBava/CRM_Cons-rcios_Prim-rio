@@ -31,6 +31,7 @@ export async function show(view) {
     if (!c || c.status === 'em_breve') return;
     if (key === 'whatsapp_lite') return liteManager(() => show(view));
     if (key === 'google_agenda') return googleDialog(c, () => show(view));
+    if (key === 'wa_agent') return agentDialog(() => show(view));
     if (state.user.role === 'admin') {
       location.hash = '#/configuracoes/integracoes';
       return undefined;
@@ -307,6 +308,79 @@ async function googleDialog(card, onClose) {
         toast('Google Agenda desconectado.');
         sh.close();
       }
+    } catch (ex) {
+      toastError(ex);
+    }
+  });
+  return undefined;
+}
+
+/* ------------------------- Agente de IA no WhatsApp ------------------------- */
+
+const PRICE = { 'claude-opus-5-5': [4, 20], 'claude-sonnet-5-5': [2, 10], 'claude-haiku-5-5': [0.1, 0.5] };
+const DAYS = [[1, 'Seg'], [2, 'Ter'], [3, 'Qua'], [4, 'Qui'], [5, 'Sex'], [6, 'Sáb'], [0, 'Dom']];
+const ACTION = { qualificou: 'Triagem concluída', agendou_r1: 'R1 agendada', transferiu: 'Transferida ao especialista', sem_fit: 'Sem fit', erro: 'Erro', novo_lead: 'Novo lead' };
+
+async function agentDialog(onClose) {
+  let d;
+  try {
+    d = await get('/api/whatsapp/agente');
+  } catch (e) {
+    return toastError(e);
+  }
+  const sh = sheet(onClose);
+  const draw = () => {
+    const c = d.config;
+    const st = d.stats;
+    const ro = d.can_edit ? '' : 'disabled';
+    const [pi, po] = PRICE[c.model] || PRICE['claude-opus-5-5'];
+    const cost = (st.tokens_in * pi + st.tokens_out * po) / 1e6;
+    const target = c.channel === 'oficial' ? 'oficial' : c.instance_id ? `lite:${c.instance_id}` : '';
+    render(sh.box, html`<header class="int-head"><span class="integ-logo brand-ia">${icon('ia', 26)}</span><div><h2>Agente de IA no WhatsApp</h2>
+        <small>${d.ready ? html`<span class="dot-ok"></span> Atendendo no ${c.channel === 'oficial' ? 'número oficial' : 'número central'}` : c.enabled ? 'Ligado, mas falta configurar (veja abaixo)' : 'Desligado'}</small></div><button type="button" class="icon" data-x aria-label="Fechar">×</button></header>
+      <div class="int-body">
+        <p class="small muted">Quando um lead escreve no número central, a IA responde na hora, faz a triagem (as 6 perguntas da aba Qualificação), registra no CRM e, se houver fit, agenda a R1 na agenda do especialista. Depois passa a conversa para ele. O especialista pode assumir a qualquer momento.</p>
+        ${!d.llm.has_key ? html`<div class="alert">Falta a chave da API da Anthropic: cadastre em <a href="#/configuracoes/integracoes" data-x>Configurações › Integrações › IA generativa</a> (ou <code>ANTHROPIC_API_KEY</code> no servidor).</div>` : ''}
+        ${!d.llm.sdk ? html`<div class="alert">A biblioteca da Anthropic não está instalada no servidor (<code>npm install</code>).</div>` : ''}
+        ${!d.instances.length && !d.official.configured && !d.official.sandbox ? html`<div class="alert">Conecte primeiro o número central em <strong>WhatsApp Lite</strong> (QR Code) ou o número oficial.</div>` : ''}
+        <div class="agent-stats">${[['Atendidas', st.atendidas], ['Novos leads', st.novos_leads], ['Triagens', st.qualificados], ['R1 agendadas', st.r1_agendadas], ['Transferidas', st.transferidas], ['Sem fit', st.sem_fit], ['IA atendendo agora', st.ativas]]
+          .map(([l, v]) => html`<div><b>${v}</b><small>${l}</small></div>`)}</div>
+        <p class="hint">Últimos 30 dias. Uso da IA: ${Math.round(st.tokens_in / 1000)} mil tokens de entrada e ${Math.round(st.tokens_out / 1000)} mil de saída, cerca de US$ ${cost.toFixed(2)} no modelo escolhido (estimativa; o cache reduz o valor).</p>
+        <form data-form="agent" class="grid" novalidate>
+          <label class="check full"><input type="checkbox" name="enabled" ${c.enabled ? 'checked' : ''} ${ro}> <strong>Ligar o agente de IA</strong></label>
+          <div class="field"><label>Número central atendido pela IA</label><select name="target" ${ro}>
+            <option value="">Escolha…</option>
+            ${d.instances.map((i) => html`<option value="lite:${i.id}" ${target === `lite:${i.id}` ? 'selected' : ''}>WhatsApp Lite · ${i.label}</option>`)}
+            ${d.official.configured || d.official.sandbox ? html`<option value="oficial" ${target === 'oficial' ? 'selected' : ''}>Número oficial (API do WhatsApp Business)</option>` : ''}</select></div>
+          <div class="field"><label>Nome da assistente</label><input name="name" maxlength="40" value="${c.name}" ${ro}></div>
+          <div class="field"><label>Modelo de IA</label><select name="model" ${ro}>${d.models.map((m) => html`<option value="${m.value}" ${c.model === m.value ? 'selected' : ''}>${m.label}</option>`)}</select></div>
+          <div class="field"><label>Duração da R1</label><select name="r1_minutes" ${ro}>${[30, 45, 60, 90].map((m) => html`<option value="${m}" ${c.r1_minutes === m ? 'selected' : ''}>${m} minutos</option>`)}</select></div>
+          <div class="field full"><label>Dias para a R1</label><div class="agent-days">${DAYS.map(([v, l]) => html`<label class="chip-check"><input type="checkbox" name="day" value="${v}" ${c.days.includes(v) ? 'checked' : ''} ${ro}> ${l}</label>`)}</div></div>
+          <div class="field"><label>Das</label><input type="time" name="start" value="${c.start}" ${ro}></div>
+          <div class="field"><label>Até</label><input type="time" name="end" value="${c.end}" ${ro}></div>
+          <div class="field"><label>Antecedência mínima (horas)</label><input type="number" name="notice_hours" min="0" max="72" value="${c.notice_hours}" ${ro}></div>
+          <div class="field full"><label>Critério de fit</label><textarea name="fit" rows="3" ${ro}>${c.fit}</textarea><small class="hint">Quem tem fit é convidado para a R1; quem não tem é passado ao especialista (nutrição ou perdido).</small></div>
+          <div class="field full"><label>Orientações extras para a IA (opcional)</label><textarea name="instructions" rows="3" placeholder="Ex.: campanhas do mês, administradoras parceiras, como chamar a reunião…" ${ro}>${c.instructions}</textarea></div>
+          ${d.can_edit ? html`<div class="full"><button type="submit" class="btn primary">Salvar</button></div>` : html`<p class="hint full">Só o administrador altera estas configurações.</p>`}
+        </form>
+        ${d.recent.length ? html`<h3 class="agent-h">Últimas ações da IA</h3><ul class="agent-log">${d.recent.map((r) => html`<li><a href="#/comunicacao/whatsapp/${r.conversation_id}" data-x><b>${ACTION[r.action] || r.action}</b> · ${r.contact_name || 'Conversa'}${r.detail ? html` <small class="muted">· ${r.detail}</small>` : ''}</a><small class="muted">${new Date(r.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</small></li>`)}</ul>` : ''}
+      </div>`);
+  };
+  draw();
+  sh.box.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const t = f.target.value;
+    const body = {
+      enabled: f.enabled.checked, name: f.name.value.trim(), model: f.model.value, r1_minutes: Number(f.r1_minutes.value),
+      days: [...f.querySelectorAll('[name=day]:checked')].map((x) => Number(x.value)), start: f.start.value, end: f.end.value,
+      notice_hours: Number(f.notice_hours.value), fit: f.fit.value, instructions: f.instructions.value,
+      ...(t === 'oficial' ? { channel: 'oficial' } : t ? { channel: 'lite', instance_id: Number(t.split(':')[1]) } : {}),
+    };
+    try {
+      d = await put('/api/whatsapp/agente', body);
+      toast(d.config.enabled ? (d.ready ? 'Agente de IA ligado.' : 'Configuração salva. Falta a chave ou a biblioteca da IA.') : 'Agente de IA desligado.');
+      draw();
     } catch (ex) {
       toastError(ex);
     }

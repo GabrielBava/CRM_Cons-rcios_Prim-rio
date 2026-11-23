@@ -3229,3 +3229,168 @@ test('WhatsApp Lite (QR Code): instância no servidor Evolution, conexão, mensa
     fake.close();
   }
 });
+
+test('Agente de IA no WhatsApp: lead novo no número central, triagem, horários livres, R1 agendada e passagem ao especialista', async () => {
+  const assistant = require('../server/services/assistant');
+  process.env.WA_AGENT_DEBOUNCE_MS = '0';
+  // Número central em modo de teste (sem servidor Evolution)
+  await call('admin', 'PUT', '/api/whatsapp/lite/config', { url: '', clear_key: true, sandbox: true });
+  const inst = await call('admin', 'POST', '/api/whatsapp/lite/instancias', { name: 'Central Vero' });
+  assert.equal(inst.status, 200, JSON.stringify(inst.data));
+  await call('admin', 'POST', `/api/whatsapp/lite/instancias/${inst.data.id}/simular-conexao`, { phone: '5151999990000' });
+  const token = appDb.prepare('SELECT webhook_token FROM wa_instances WHERE id = ?').get(inst.data.id).webhook_token;
+  let seq = 0;
+  const say = (from, text, pushName = 'Mariana') => fetch(`${base}/api/whatsapp/lite/webhook/${token}`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event: 'messages.upsert', data: { key: { remoteJid: `${from}@s.whatsapp.net`, fromMe: false, id: `AG-${++seq}` }, pushName, message: { conversation: text }, messageTimestamp: Math.floor(Date.now() / 1000) } }) }).then((r) => r.json());
+
+  // Só o administrador configura; a liderança vê; especialista não
+  assert.equal((await call('c1', 'GET', '/api/whatsapp/agente')).status, 403);
+  assert.equal((await call('gestor', 'PUT', '/api/whatsapp/agente', { enabled: true })).status, 403);
+  assert.equal((await call('admin', 'PUT', '/api/whatsapp/agente', { enabled: true, channel: 'lite' })).status, 400, 'precisa do número central');
+
+  // Claude simulado: responde conforme o que já aconteceu na conversa
+  const seen = [];
+  let fail = false;
+  const toolResults = (req) => req.messages.flatMap((m) => (Array.isArray(m.content) ? m.content.filter((b) => b.type === 'tool_result') : []));
+  const lastUser = (req) => { const m = req.messages[req.messages.length - 1]; return typeof m.content === 'string' ? m.content : ''; };
+  const use = (name, input) => ({ stop_reason: 'tool_use', usage: { input_tokens: 900, output_tokens: 60 }, content: [{ type: 'thinking', thinking: '...' }, { type: 'tool_use', id: `tu_${name}_${seen.length}`, name, input }] });
+  const say2 = (text) => ({ stop_reason: 'end_turn', usage: { input_tokens: 1000, output_tokens: 80 }, content: [{ type: 'text', text }] });
+  assistant.setClientFactory(() => ({ beta: { messages: { create: async (req) => {
+    seen.push(req);
+    if (fail) throw new Error('rede');
+    const results = toolResults(req);
+    const last = results[results.length - 1];
+    if (last) {
+      const data = JSON.parse(last.content);
+      if (data.horarios) return say2(`Tenho estes horários: ${data.horarios.slice(0, 3).map((h) => h.rotulo).join('; ')}. Qual fica melhor?`);
+      if (data.agendado) return say2(`Prontinho! Sua reunião ficou para ${data.quando} com ${data.especialista}.`);
+      if (data.triagem_concluida) return use('horarios_r1', {});
+      if (data.transferido) return say2('Vou chamar um especialista para continuar com você.');
+      return say2('Anotado!');
+    }
+    const msg = lastUser(req);
+    if (/apartamento/.test(msg)) return use('salvar_triagem', { interesse: 'sim', dor: 'sim', dor_descricao: 'comprar o primeiro apartamento', impacto: 'curto', decisor: 'sim', faixa_investimento: '1000_2000', faixa_renda: '10k_20k' });
+    if (/primeiro horário/.test(msg)) {
+      const prev = seen.slice(0, -1).reverse().flatMap((r) => toolResults(r)).map((b) => JSON.parse(b.content)).find((d) => d.horarios);
+      return use('agendar_r1', { inicio: prev.horarios[0].inicio, email: 'mariana@exemplo.com' });
+    }
+    if (/falar com uma pessoa/.test(msg)) return use('transferir_especialista', { motivo: 'Cliente pediu um atendente' });
+    return say2('Olá! Sou a Vero, assistente virtual da Vero Consórcios. Me conta: o que você quer conquistar?');
+  } } } }));
+  try {
+    await call('admin', 'PUT', '/api/ia/config', { api_key: 'sk-ant-teste' });
+    const cfg = await call('admin', 'PUT', '/api/whatsapp/agente', { enabled: true, channel: 'lite', instance_id: inst.data.id, model: 'claude-sonnet-5-5', notice_hours: 0, days: [0, 1, 2, 3, 4, 5, 6], start: '07:00', end: '22:00', r1_minutes: 45 });
+    assert.equal(cfg.status, 200, JSON.stringify(cfg.data));
+    assert.equal(cfg.data.ready, true);
+    assert.equal(appDb.prepare('SELECT only_known FROM wa_instances WHERE id = ?').get(inst.data.id).only_known, 0, 'número central registra leads novos');
+
+    // 1) Número desconhecido escreve: vira lead (origem WhatsApp) e a IA responde
+    const r1 = await say('5511977001122', 'Oi! Vi o anúncio do consórcio');
+    assert.equal(r1.agente, 1, JSON.stringify(r1));
+    const conv = appDb.prepare("SELECT * FROM wa_conversations WHERE peer = '5511977001122'").get();
+    assert.ok(conv.contact_id, 'lead criado e ligado à conversa');
+    assert.equal(conv.ai_status, 'ativa');
+    const lead = appDb.prepare('SELECT * FROM contacts WHERE id = ?').get(conv.contact_id);
+    assert.equal(lead.origin, 'whatsapp');
+    assert.equal(lead.name, 'Mariana');
+    const first = await call('admin', 'GET', `/api/whatsapp/conversas/${conv.id}`);
+    const aiMsg = first.data.messages.find((m) => m.direction === 'out');
+    assert.ok(aiMsg.ai && aiMsg.user_name === 'IA Vero', 'mensagem da IA identificada');
+    assert.match(aiMsg.body, /assistente virtual/);
+    assert.equal(first.data.agent.handles, true);
+    assert.equal(first.data.agent.label, 'IA atendendo');
+    assert.equal(seen[0].model, 'claude-sonnet-5-5');
+    assert.equal(seen[0].system[0].cache_control.type, 'ephemeral');
+    assert.ok(seen[0].tools.some((t) => t.name === 'agendar_r1') && seen[0].tools.some((t) => t.name === 'salvar_triagem'));
+    assert.ok(!JSON.stringify(seen[0]).includes('sk-ant-teste'), 'a chave não vai no conteúdo');
+    // Líder define o especialista (distribuição manual)
+    const c1 = await userId('c1@t.com');
+    assert.equal((await call('admin', 'PATCH', `/api/cadastros/${lead.id}`, { owner_id: c1 })).status, 200);
+
+    // 2) Cliente conta a necessidade: triagem registrada, etapa Qualificação e horários oferecidos
+    const r2 = await say('5511977001122', 'Quero comprar um apartamento em até 3 meses, consigo uns 2 mil por mês, ganho 12 mil e decido sozinha');
+    assert.equal(r2.agente, 1);
+    const opp = appDb.prepare("SELECT o.*, s.key AS stage_key FROM opportunities o JOIN pipeline_stages s ON s.id = o.stage_id WHERE o.contact_id = ? AND o.status = 'aberta'").get(lead.id);
+    assert.ok(opp.triaged_at, 'triagem concluída');
+    assert.equal(opp.stage_key, 'qualificado');
+    const offer = appDb.prepare("SELECT body FROM wa_messages WHERE conversation_id = ? AND direction = 'out' ORDER BY id DESC LIMIT 1").get(conv.id).body;
+    assert.match(offer, /Tenho estes horários/);
+
+    // 3) Cliente escolhe: R1 agendada na agenda do especialista e a conversa passa para ele
+    const r3 = await say('5511977001122', 'Pode ser o primeiro horário');
+    assert.equal(r3.agente, 1);
+    const task = appDb.prepare("SELECT * FROM tasks WHERE contact_id = ? AND type = 'reuniao'").get(lead.id);
+    assert.ok(task, 'R1 agendada');
+    assert.equal(task.assigned_to, c1);
+    assert.equal(appDb.prepare("SELECT s.key FROM opportunities o JOIN pipeline_stages s ON s.id = o.stage_id WHERE o.id = ?").get(opp.id).key, 'r1');
+    const after = appDb.prepare('SELECT ai_status, ai_reason FROM wa_conversations WHERE id = ?').get(conv.id);
+    assert.equal(after.ai_status, 'humano');
+    assert.match(after.ai_reason, /R1 agendada/);
+    assert.match(appDb.prepare("SELECT body FROM wa_messages WHERE conversation_id = ? AND direction = 'out' ORDER BY id DESC LIMIT 1").get(conv.id).body, /Prontinho/);
+    assert.ok((await call('c1', 'GET', '/api/notificacoes')).data.rows.some((n) => /agendou uma R1/.test(n.title)));
+    // Depois da passagem, a IA não responde mais nesta conversa
+    const calls = seen.length;
+    const r4 = await say('5511977001122', 'Obrigada!');
+    assert.ok(!r4.agente);
+    assert.equal(seen.length, calls);
+
+    // 4) Outro lead pede uma pessoa: transferência e aviso
+    await say('5511977003344', 'Oi', 'Rafael');
+    await say('5511977003344', 'Quero falar com uma pessoa', 'Rafael');
+    const conv2 = appDb.prepare("SELECT * FROM wa_conversations WHERE peer = '5511977003344'").get();
+    assert.equal(conv2.ai_status, 'humano');
+    assert.match(conv2.ai_reason, /pediu um atendente/);
+    // Devolver à IA e assumir de novo; resposta manual de uma pessoa pausa a IA
+    assert.equal((await call('admin', 'POST', `/api/whatsapp/conversas/${conv2.id}/ia`, { acao: 'devolver' })).data.ai_status, 'ativa');
+    assert.equal((await call('admin', 'POST', `/api/whatsapp/conversas/${conv2.id}/mensagens`, { body: 'Oi Rafael, aqui é o Admin.' })).status, 200);
+    assert.equal(appDb.prepare('SELECT ai_status FROM wa_conversations WHERE id = ?').get(conv2.id).ai_status, 'pausada', 'pessoa respondeu: IA para');
+    assert.equal((await call('leitor', 'POST', `/api/whatsapp/conversas/${conv2.id}/ia`, { acao: 'devolver' })).status, 403);
+
+    // 5) IA indisponível: mensagem de cortesia e passagem ao especialista
+    fail = true;
+    await say('5511977005566', 'Boa tarde', 'Paula');
+    const conv3 = appDb.prepare("SELECT * FROM wa_conversations WHERE peer = '5511977005566'").get();
+    assert.equal(conv3.ai_status, 'humano');
+    assert.match(appDb.prepare("SELECT body FROM wa_messages WHERE conversation_id = ? AND direction = 'out'").get(conv3.id).body, /especialista/);
+    fail = false;
+
+    // Painel do agente (liderança) e tela Integrações
+    const view = await call('gestor', 'GET', '/api/whatsapp/agente');
+    assert.equal(view.status, 200);
+    assert.equal(view.data.can_edit, false);
+    assert.ok(view.data.stats.novos_leads >= 3 && view.data.stats.r1_agendadas >= 1 && view.data.stats.transferidas >= 1);
+    assert.ok(view.data.stats.tokens_in > 0);
+    const keys = (who) => call(who, 'GET', '/api/integracoes/painel').then((r) => r.data.groups.flatMap((g) => g.cards.map((c) => c.key)));
+    assert.ok((await keys('admin')).includes('wa_agent'));
+    assert.ok(!(await keys('c1')).includes('wa_agent'));
+
+    // Desligado: mensagens no número central ficam só para a equipe
+    await call('admin', 'PUT', '/api/whatsapp/agente', { enabled: false });
+    const before = seen.length;
+    await say('5511977007788', 'Olá', 'Bruna');
+    assert.equal(seen.length, before);
+    // Conversa que a equipe já atendia: ao religar o agente, a IA não entra no meio
+    const conv4 = appDb.prepare("SELECT * FROM wa_conversations WHERE peer = '5511977007788'").get();
+    if (!conv4.contact_id) {
+      const lb = await call('admin', 'POST', '/api/cadastros', { name: 'Bruna Lima', phone1: '11 97700-7788', origin: 'whatsapp', relationship: 'lead' });
+      await call('admin', 'PATCH', `/api/whatsapp/conversas/${conv4.id}`, { contact_id: lb.data.id });
+    }
+    assert.equal((await call('admin', 'POST', `/api/whatsapp/conversas/${conv4.id}/mensagens`, { body: 'Oi Bruna, tudo bem?' })).status, 200);
+    await call('admin', 'PUT', '/api/whatsapp/agente', { enabled: true });
+    await say('5511977007788', 'Tudo! Quero saber do consórcio', 'Bruna');
+    assert.equal(seen.length, before, 'a IA não assume conversa já atendida por uma pessoa');
+    // Ligado mas sem a chave da IA: número novo avisa a equipe (ninguém fica sem resposta)
+    const savedKey = appDb.prepare("SELECT value FROM settings WHERE key = 'ai_api_key_enc'").get().value;
+    appDb.prepare("UPDATE settings SET value = ? WHERE key = 'ai_api_key_enc'").run(JSON.stringify(''));
+    await say('5511977009900', 'Olá, alguém aí?', 'Tiago');
+    assert.equal(seen.length, before);
+    assert.ok((await call('admin', 'GET', '/api/notificacoes')).data.rows.some((n) => /WhatsApp/.test(n.title) && /Tiago/.test(n.title)), 'o dono do número central é avisado');
+    appDb.prepare("UPDATE settings SET value = ? WHERE key = 'ai_api_key_enc'").run(savedKey);
+  } finally {
+    assistant.setClientFactory(null);
+    delete process.env.WA_AGENT_DEBOUNCE_MS;
+    await call('admin', 'PUT', '/api/whatsapp/agente', { enabled: false });
+    await call('admin', 'PUT', '/api/ia/config', { clear_key: true });
+    await call('admin', 'PUT', '/api/whatsapp/lite/config', { sandbox: false });
+  }
+});

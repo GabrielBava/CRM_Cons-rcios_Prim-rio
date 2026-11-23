@@ -1425,8 +1425,10 @@ function seedTreasury(db, now) {
 /* Colunas adicionadas depois da primeira versão (aplicadas também em bancos existentes). */
 const ADDED_COLUMNS = {
   // WhatsApp: canal (oficial = API da Meta; lite = QR Code), número conectado e número do cliente (no Lite)
-  wa_conversations: [['channel', "TEXT NOT NULL DEFAULT 'oficial'"], ['instance_id', 'INTEGER REFERENCES wa_instances(id)'], ['peer', 'TEXT']],
-  wa_messages: [['media_store_id', 'INTEGER REFERENCES wa_media(id)'], ['duration', 'INTEGER']],
+  wa_conversations: [['channel', "TEXT NOT NULL DEFAULT 'oficial'"], ['instance_id', 'INTEGER REFERENCES wa_instances(id)'], ['peer', 'TEXT'],
+    // Agente de IA: ativa (IA atendendo), humano (transferida ao especialista), pausada (especialista assumiu)
+    ['ai_status', 'TEXT'], ['ai_reason', 'TEXT'], ['ai_updated_at', 'TEXT'], ['ai_lock_at', 'TEXT'], ['ai_seen_id', 'INTEGER'], ['ai_turns', 'INTEGER NOT NULL DEFAULT 0']],
+  wa_messages: [['media_store_id', 'INTEGER REFERENCES wa_media(id)'], ['duration', 'INTEGER'], ['ai', 'INTEGER NOT NULL DEFAULT 0']],
   contacts: [
     ['rg', 'TEXT'], ['birthplace', 'TEXT'], ['nationality', 'TEXT'], ['sex', 'TEXT'], ['marital_status', 'TEXT'],
     ['property_regime', 'TEXT'], ['mother_name', 'TEXT'], ['income_range', 'TEXT'], ['net_worth_range', 'TEXT'],
@@ -2328,6 +2330,20 @@ CREATE TABLE IF NOT EXISTS wa_media (
   data BLOB NOT NULL,
   created_at TEXT NOT NULL
 );
+
+-- Agente de IA do WhatsApp: o que ele fez em cada conversa (qualificou, agendou a R1, transferiu, sem fit, erro)
+CREATE TABLE IF NOT EXISTS wa_agent_log (
+  id INTEGER PRIMARY KEY,
+  conversation_id INTEGER NOT NULL REFERENCES wa_conversations(id),
+  contact_id INTEGER REFERENCES contacts(id),
+  action TEXT NOT NULL,
+  detail TEXT,
+  tokens_in INTEGER NOT NULL DEFAULT 0,
+  tokens_out INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_wa_agent_log ON wa_agent_log(conversation_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_wa_agent_log_action ON wa_agent_log(action, created_at);
 
 -- Produtos do lead: oportunidades de cross-sell e up-sell nas 4 áreas (consórcio, planejamento, seguros, investimentos)
 CREATE TABLE IF NOT EXISTS lead_products (

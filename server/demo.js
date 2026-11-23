@@ -725,6 +725,7 @@ function seedCommsDemo(db, { admin, gestor, c1, c2, PDF, ids }) {
   }
   wa.receiveWebhook(db, req, msg('5511955554321', 'Marcos', 'wamid.demo.unknown', 'Olá, quero saber sobre consórcio de veículo.', 12));
   seedLiteDemo(db, { c1, c2 });
+  seedAgentDemo(db, { admin, c1 });
 }
 
 /**
@@ -764,5 +765,77 @@ function seedLiteDemo(db, { c1, c2 }) {
     if (peer) for (const [me, text, min] of scripts[i] || []) up(peer, me, text.replace('{n}', first), min, first);
   });
 }
+
+/**
+ * Agente de IA no número central (demonstração): o número "Central Vero" está ligado ao agente; uma conversa está com a
+ * IA em andamento e outra já terminou com a R1 agendada e passou para o especialista. Sem a chave da Anthropic, a tela
+ * mostra o que falta configurar.
+ */
+function seedAgentDemo(db, { admin, c1 }) {
+  const lite = require('./services/walite');
+  const u = (x) => ({ ...x, modules: null });
+  lite.createInstance(db, u(admin), { headers: {} }, { name: 'Central Vero', only_known: false }).catch(() => {});
+  const inst = db.prepare("SELECT id FROM wa_instances WHERE name = 'Central Vero' ORDER BY id DESC LIMIT 1").get();
+  if (!inst) return;
+  lite.simulateConnect(db, u(admin), inst.id, { phone: '5151990001000' });
+  db.prepare("INSERT INTO settings (key, value) VALUES ('wa_agent', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+    .run(JSON.stringify({ enabled: true, channel: 'lite', instance_id: inst.id, name: 'Vero', model: 'claude-opus-5-5', r1_minutes: 45, days: [1, 2, 3, 4, 5], start: '09:00', end: '18:00', notice_hours: 2 }));
+  const { createContact } = require('./services/contacts');
+  const sys = { id: null, role: 'admin', name: 'IA Vero (WhatsApp)' };
+  const minAgo = (m) => new Date(Date.now() - m * 60000).toISOString();
+  const mk = (name, phone) => createContact(db, sys, { kind: 'PF', name, phone1: phone, whatsapp: phone, origin: 'whatsapp', relationship: 'lead', owner_id: c1.id, create_opportunity: true,
+    origin_details: { origin: 'whatsapp', platform: 'whatsapp', received_at: nowIsoDemo(), source_ref: 'wa_agent' } }, { system: true, skipDuplicateCheck: true, source: 'whatsapp', sourceLabel: 'pelo WhatsApp (agente de IA)' }).id;
+  const conv = (contactId, peer, name, status, reason, msgs) => {
+    const id = Number(db.prepare("INSERT INTO wa_conversations (wa_id, channel, instance_id, peer, contact_id, profile_name, assigned_to, ai_status, ai_reason, ai_updated_at, last_message_at, last_inbound_at, unread, created_at) VALUES (?, 'lite', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(`lite:${inst.id}:${peer}`, inst.id, peer, contactId, name, c1.id, status, reason, minAgo(msgs[msgs.length - 1][2]), minAgo(msgs[msgs.length - 1][2]), minAgo(msgs.filter((m) => m[0] === 'in').slice(-1)[0][2]), status === 'humano' ? 1 : 0, minAgo(msgs[0][2])).lastInsertRowid);
+    const { insertActivity } = require('./services/activities');
+    msgs.forEach(([dir, body, ago], i) => {
+      const mid = Number(db.prepare("INSERT INTO wa_messages (conversation_id, wamid, direction, kind, body, status, ai, created_at, status_at) VALUES (?, ?, ?, 'text', ?, ?, ?, ?, ?)")
+        .run(id, `AGENT.DEMO.${id}.${i}`, dir, body, dir === 'in' ? 'recebida' : 'lida', dir === 'out' ? 1 : 0, minAgo(ago), minAgo(ago)).lastInsertRowid);
+      // Cada mensagem entra no histórico do lead (a mensagem enviada conta como tentativa de contato)
+      insertActivity(db, { contact_id: contactId, type: dir === 'in' ? 'mensagem_recebida' : 'mensagem_enviada', channel: 'whatsapp', direction: dir === 'in' ? 'entrada' : 'saida', notes: body, occurred_at: minAgo(ago), source: 'whatsapp', external_id: `AGENT.DEMO.${id}.${i}`, user_id: null, ref_type: 'wa_message', ref_id: mid });
+    });
+    return id;
+  };
+  const log = (convId, contactId, action, detail, ago) => db.prepare('INSERT INTO wa_agent_log (conversation_id, contact_id, action, detail, tokens_in, tokens_out, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(convId, contactId, action, detail, 4200, 380, minAgo(ago));
+  // 1) IA atendendo agora
+  const j = mk('Juliana Prado', '51988776655');
+  const cj = conv(j, '5551988776655', 'Juliana', 'ativa', 'Atendimento iniciado pela IA', [
+    ['in', 'Oi! Vi o anúncio de consórcio para imóvel', 22],
+    ['out', 'Olá, Juliana! Sou a Vero, assistente virtual da Vero Consórcios 😊 Me conta: você pensa em comprar, construir ou reformar?', 22],
+    ['in', 'Comprar um apartamento, de preferência até o ano que vem', 18],
+    ['out', 'Ótimo objetivo! E quanto você conseguiria investir por mês, mais ou menos?', 18],
+  ]);
+  log(cj, j, 'novo_lead', 'Juliana', 22);
+  log(cj, j, 'respondeu', null, 18);
+  // 2) Triagem completa, R1 agendada e conversa com o especialista
+  const r = mk('Ricardo Souza', '51977665544');
+  const cr = conv(r, '5551977665544', 'Ricardo', 'humano', 'R1 agendada', [
+    ['in', 'Boa tarde, quero entender o consórcio de carro', 95],
+    ['out', 'Boa tarde, Ricardo! Sou a Vero, assistente virtual da Vero Consórcios. Que carro você tem em mente e para quando?', 95],
+    ['in', 'Um SUV de uns 150 mil, nos próximos 3 meses. Consigo 2 mil por mês, ganho uns 15 mil e decido sozinho', 90],
+    ['out', 'Perfeito, Ricardo! Tenho estes horários para uma conversa online com o nosso especialista: amanhã às 10:00, amanhã às 14:00 ou quinta às 09:00. Qual fica melhor?', 89],
+    ['in', 'Amanhã às 10 está ótimo', 85],
+    ['out', 'Prontinho! Sua reunião ficou para amanhã às 10:00 com o Especialista Demo 1. Você vai receber o link por aqui. Até lá! 🚗', 84],
+    ['in', 'Valeu!', 80],
+  ]);
+  const ops = require('./services/opportunities');
+  const opp = db.prepare("SELECT id FROM opportunities WHERE contact_id = ? AND status = 'aberta'").get(r);
+  if (opp) {
+    try {
+      ops.saveTriage(db, sys, opp.id, { interesse: 'sim', dor: 'sim', dor_descricao: 'trocar de carro por um SUV', impacto: 'curto', decisor: 'sim', faixa_investimento: '1000_2000', faixa_renda: '10k_20k' });
+    } catch { /* segue sem triagem */ }
+    // Amanhã às 10:00 no horário de Brasília (ou segunda, se amanhã for fim de semana)
+    let day = new Date(Date.now() + DAY);
+    while ([0, 6].includes(new Date(`${day.toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' })}T12:00:00-03:00`).getUTCDay())) day = new Date(day.getTime() + DAY);
+    const start = new Date(`${day.toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' })}T10:00:00-03:00`);
+    require('./services/meetings').scheduleR1(db, sys, { contact_id: r, opportunity_id: opp.id, start_at: start.toISOString(), end_at: new Date(start.getTime() + 45 * 60000).toISOString(), assigned_to: c1.id, move_to_r1: true, notes: 'Agendada pelo agente de IA no WhatsApp.' }, null).catch(() => {});
+  }
+  log(cr, r, 'novo_lead', 'Ricardo', 95);
+  log(cr, r, 'qualificou', 'Triagem concluída: interesse sim', 90);
+  log(cr, r, 'agendou_r1', 'amanhã às 10:00 com Especialista Demo 1', 84);
+}
+const nowIsoDemo = () => new Date().toISOString();
 
 module.exports = { seedDemo, DEMO_USERS };

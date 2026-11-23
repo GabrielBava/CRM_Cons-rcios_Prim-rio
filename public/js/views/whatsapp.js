@@ -40,6 +40,8 @@ const toB64 = (blob) => new Promise((res, rej) => {
   r.readAsDataURL(blob);
 });
 
+const AI_NAME = 'IA Vero';
+
 export async function whatsapp(view, openId, params, tabs) {
   let status = null;
   let lite = null;
@@ -174,7 +176,7 @@ export async function whatsapp(view, openId, params, tabs) {
       <span class="wa-item-body"><span class="wa-item-top"><strong>${c.name}</strong><small>${shortWhen(c.last_message_at || c.created_at)}</small></span>
         <span class="wa-item-last"><span>${preview(c)}</span>
           <span class="wa-item-tags">${c.unread ? html`<b class="wa-unread">${c.unread}</b>` : ''}${c.owner_initials ? html`<i class="wa-owner" title="Responsável: ${c.owner_name}">${c.owner_initials}</i>` : ''}</span></span>
-        <span class="wa-item-meta">${c.stage ? html`<span class="wa-stage st-${c.stage.key || 'x'}">${c.stage.name}</span>` : !c.contact_id ? html`<span class="wa-stage none">Sem cadastro</span>` : ''}<small>${c.channel === 'lite' ? c.instance_name || 'Lite' : 'Oficial'}</small></span></span>
+        <span class="wa-item-meta">${c.stage ? html`<span class="wa-stage st-${c.stage.key || 'x'}">${c.stage.name}</span>` : !c.contact_id ? html`<span class="wa-stage none">Sem cadastro</span>` : ''}${c.ai_status === 'ativa' ? html`<span class="wa-ai-tag" title="IA atendendo">${icon('ia', 11)} IA</span>` : ''}<small>${c.channel === 'lite' ? c.instance_name || 'Lite' : 'Oficial'}</small></span></span>
     </button>`)}` : empty(saved.filtro === 'minhas' ? 'Nenhuma conversa com clientes seus.' : saved.filtro === 'nao_lidas' ? 'Tudo lido por aqui.' : 'Nenhuma conversa ainda.'));
   const loadList = async () => {
     const q = { filtro: saved.filtro, q: saved.q };
@@ -231,6 +233,18 @@ export async function whatsapp(view, openId, params, tabs) {
     </header>
     ${c.channel === 'oficial' && !c.window_open ? html`<div class="wa-window closed">Fora da janela de 24 horas da API oficial: envie o modelo aprovado (botão + › Modelo aprovado). Quando o cliente responder, a conversa reabre.</div>` : ''}`;
 
+  // Agente de IA do número central: quem está atendendo e o botão para assumir ou devolver
+  const aiBar = (d) => {
+    const a = d.agent;
+    if (!a || (!a.handles && !a.status)) return '';
+    if (a.status === 'ativa') {
+      return html`<div class="wa-aibar on" data-aibar>${icon('ia', 16)}<span><b>IA atendendo</b> · a ${AI_NAME} conversa, qualifica e agenda a R1. Se você responder, a IA para.</span>
+        ${a.can_control ? html`<button type="button" class="btn small" data-act="ai-take">Assumir conversa</button>` : ''}</div>`;
+    }
+    return html`<div class="wa-aibar" data-aibar>${icon('ia', 16)}<span><b>${a.label || 'Com o especialista'}</b>${a.reason ? ` · ${a.reason}` : ''}</span>
+      ${a.can_control && a.handles ? html`<button type="button" class="btn small ghost" data-act="ai-give">Devolver para a IA</button>` : ''}</div>`;
+  };
+
   const composer = (d) => {
     const c = d.conversation;
     const canType = d.can_send && c.window_open;
@@ -264,7 +278,7 @@ export async function whatsapp(view, openId, params, tabs) {
     shell.classList.add('has-conv');
     const items = timeline(d);
     lastId = d.messages.length ? d.messages[d.messages.length - 1].id : 0;
-    render($('[data-main]', view), html`${header(conv)}
+    render($('[data-main]', view), html`${header(conv)}${aiBar(d)}
       <div class="wa-msgs" data-msgs>${items.length ? items.map((m, i) => msgHtml(m, items[i - 1])) : html`<p class="wa-sys">Nenhuma mensagem ainda. Diga olá!</p>`}</div>
       ${composer(d)}`);
     const box = $('[data-msgs]', view);
@@ -294,7 +308,7 @@ export async function whatsapp(view, openId, params, tabs) {
         el.textContent = TICK[s.status] || '';
       }
     }
-    if (d.conversation.window_open !== conv.window_open) return openConv(conv.id, { silent: true });
+    if (d.conversation.window_open !== conv.window_open || (d.agent?.status || null) !== (convData?.agent?.status || null)) return openConv(conv.id, { silent: true });
     if (!d.messages.length) return;
     let prev = { created_at: d.messages[0].created_at };
     const last = box.querySelector('[data-mid]:last-of-type');
@@ -701,6 +715,18 @@ export async function whatsapp(view, openId, params, tabs) {
     showWelcome();
     drawList();
   });
+  const aiControl = async (acao) => {
+    try {
+      await post(`/api/whatsapp/conversas/${conv.id}/ia`, { acao });
+      toast(acao === 'assumir' ? 'Você assumiu a conversa: a IA não responde mais aqui.' : 'Conversa devolvida para a IA.');
+      await loadList();
+      openConv(conv.id, { silent: true });
+    } catch (e) {
+      toastError(e);
+    }
+  };
+  on(view, 'click', '[data-act=ai-take]', () => aiControl('assumir'));
+  on(view, 'click', '[data-act=ai-give]', () => aiControl('devolver'));
   on(view, 'click', '[data-act=link-wa]', () => linkWa());
   on(view, 'click', '[data-act=link-newqr]', () => linkWa(false));
   on(view, 'click', '[data-act=link-cancel]', () => {

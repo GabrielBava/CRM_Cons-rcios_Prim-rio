@@ -1972,6 +1972,18 @@ html.nav-collapsed { --sidebar-w: 74px; }
 .integ-status.tone-idle i { background: var(--primary); }
 .integ-action { font-weight: 600; color: var(--text); }
 .integ-foot-r { display: inline-flex; align-items: center; gap: 8px; }
+.integ-logo.brand-ia { color: #8B6CFF; background: rgba(139,108,255,.12); border-color: rgba(139,108,255,.25); }
+.agent-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
+.agent-stats div { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: var(--radius); background: var(--bg-card-2); border: 1px solid var(--border); }
+.agent-stats b { font-size: 1.25rem; font-weight: 600; }
+.agent-stats small { color: var(--text-muted); font-size: var(--fs-xs); }
+.agent-days { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip-check { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 99px; border: 1px solid var(--border); font-size: var(--fs-sm); cursor: pointer; }
+.chip-check:has(input:checked) { border-color: var(--primary); background: var(--bg-active); }
+.agent-h { margin: 8px 0 0; font-size: .95rem; }
+.agent-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: var(--fs-sm); }
+.agent-log li { display: flex; justify-content: space-between; gap: 10px; padding: 8px 10px; border-radius: var(--radius); background: var(--bg-card-2); }
+.agent-log a { color: inherit; text-decoration: none; min-width: 0; }
 
 /* Janela própria (WhatsApp Lite, Google Agenda) */
 .int-sheet { max-width: 860px; padding: 0; overflow: hidden; }
@@ -2080,6 +2092,13 @@ html.nav-collapsed { --sidebar-w: 74px; }
 .wa-empty .ico { color: var(--wa-green); }
 .wa-empty h3 { margin: 6px 0 0; color: var(--wa-text); font-weight: 500; }
 .wa-list-head .grow { flex: 1; }
+/* Agente de IA no número central */
+.wa-aibar { display: flex; align-items: center; gap: 10px; padding: 8px 16px; font-size: var(--fs-xs); color: var(--wa-muted); background: var(--wa-head); border-bottom: 1px solid var(--wa-line); }
+.wa-aibar span { flex: 1; min-width: 0; }
+.wa-aibar b { color: var(--wa-text); font-weight: 600; }
+.wa-aibar.on { background: rgba(124,92,255,.10); color: var(--wa-text); }
+.wa-aibar.on .ico { color: #8B6CFF; }
+.wa-ai-tag { display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px; border-radius: 99px; font-size: .68rem; font-weight: 600; color: #8B6CFF; background: rgba(139,108,255,.12); margin-left: 4px; }
 .wa-linked { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 99px; background: rgba(37,211,102,.12); color: var(--wa-green); font-size: var(--fs-sm); }
 .wa-linked strong { color: var(--wa-text); }
 /* Conectar o WhatsApp pelo QR Code (no jeito do WhatsApp Web) */

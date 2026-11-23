@@ -102,6 +102,19 @@ function accessOf(db, user, inst) {
   return RANK[inst.access_all] > RANK[own] ? inst.access_all : own;
 }
 
+/**
+ * Acesso a uma conversa do Lite: o da instância; no número central do agente de IA, quem recebeu a conversa
+ * (responsável pela conversa ou pelo lead) também lê e responde.
+ */
+function convAccess(db, user, w, inst) {
+  const base = accessOf(db, user, inst);
+  if (base === 'enviar' || !w || !inst) return base;
+  const central = require('./waagent').config(db).instance_id;
+  if (Number(central) !== Number(inst.id)) return base;
+  const owner = w.contact_id ? db.prepare('SELECT owner_id FROM contacts WHERE id = ?').get(w.contact_id)?.owner_id : null;
+  return w.assigned_to === user.id || owner === user.id ? 'enviar' : base;
+}
+
 /** Instâncias cujas conversas o usuário vê (Só ver ou Ver e enviar). */
 function visibleInstanceIds(db, user) {
   if (isLead(user)) return db.prepare('SELECT id FROM wa_instances').all().map((r) => r.id);
@@ -368,7 +381,7 @@ function storeMedia(db, { mime, name, buf }) {
 async function send(db, user, w, data = {}) {
   const inst = w.instance_id ? instRow(db, w.instance_id) : null;
   if (!inst) throw badRequest('Esta conversa não está mais ligada a um número conectado.');
-  if (accessOf(db, user, inst) !== 'enviar') throw forbidden('Seu acesso a este número é "Só ver". Peça ao dono da instância o acesso "Ver e enviar".');
+  if (convAccess(db, user, w, inst) !== 'enviar') throw forbidden('Seu acesso a este número é "Só ver". Peça ao dono da instância o acesso "Ver e enviar".');
   const cfg = liteConfig(db);
   if (!cfg.configured && !cfg.sandbox) throw badRequest('O servidor do WhatsApp Lite não está configurado.');
   if (cfg.configured && inst.status !== 'conectado') throw badRequest(`O número "${inst.name}" está desconectado. Reconecte em Integrações › WhatsApp Lite.`);
@@ -482,7 +495,15 @@ function receiveWebhook(db, token, body = {}) {
       db.prepare("UPDATE wa_instances SET status = 'conectado', phone = ?, profile_name = COALESCE(?, profile_name), qr = NULL, connected_at = COALESCE(connected_at, ?), updated_at = ? WHERE id = ?").run(phone || null, d.profileName || null, now, now, inst.id);
     } else if (d.state === 'close') db.prepare("UPDATE wa_instances SET status = 'desconectado', updated_at = ? WHERE id = ?").run(nowIso(), inst.id);
   } else if (ev === 'messages.upsert') {
-    for (const d of items) if (inbound(db, inst, d)) out.mensagens++;
+    const jobs = [];
+    for (const d of items) {
+      const r = inbound(db, inst, d);
+      if (!r) continue;
+      out.mensagens++;
+      if (!r.fromMe) jobs.push(r);
+    }
+    // Número central com o agente de IA: responde antes de devolver o webhook
+    return require('./whatsapp').runAgent(db, jobs, out);
   } else if (ev === 'messages.update') {
     for (const d of items) {
       const id = d.keyId || d.key?.id || d.messageId;
@@ -510,8 +531,20 @@ function inbound(db, inst, d) {
   // Por padrão, só conversas com quem já está no CRM (o número pode ser pessoal)
   const cands = wa.waCandidates(peer);
   let conv = db.prepare(`SELECT * FROM wa_conversations WHERE channel = 'lite' AND instance_id = ? AND peer IN (${cands.map(() => '?').join(',')}) ORDER BY id LIMIT 1`).get(inst.id, ...cands);
-  if (!conv && !contact && inst.only_known) return false;
+  const agent = require('./waagent');
+  if (!conv && !contact && inst.only_known && !agent.handlesInstance(db, inst.id)) return false;
   const fromMe = !!key.fromMe;
+  // Eco de uma mensagem que o próprio CRM acabou de enviar (o servidor às vezes avisa antes de responder o envio):
+  // só registra o ID na mensagem que já está no CRM, sem duplicar e sem contar como resposta de uma pessoa
+  if (fromMe && conv) {
+    const recent = new Date(Date.now() - 120000).toISOString();
+    const pend = db.prepare("SELECT id FROM wa_messages WHERE conversation_id = ? AND direction = 'out' AND wamid IS NULL AND created_at >= ? AND (body = ? OR kind <> 'text') ORDER BY id DESC LIMIT 1")
+      .get(conv.id, recent, parsed.text);
+    if (pend) {
+      db.prepare('UPDATE wa_messages SET wamid = ? WHERE id = ?').run(wamid, pend.id);
+      return false;
+    }
+  }
   const ts = Number(d.messageTimestamp);
   const at = ts ? new Date((ts > 1e12 ? ts : ts * 1000)).toISOString() : nowIso();
   const { insertActivity } = require('./activities');
@@ -536,6 +569,8 @@ function inbound(db, inst, d) {
       db.prepare("UPDATE wa_conversations SET last_message_at = ?, last_inbound_at = ?, unread = unread + 1, status = 'aberta', profile_name = COALESCE(?, profile_name), contact_id = COALESCE(contact_id, ?), assigned_to = COALESCE(assigned_to, ?) WHERE id = ?")
         .run(at, at, clean(d.pushName), contact?.id ?? null, contact?.owner_id ?? inst.owner_id, conv.id);
     }
+    // Resposta dada pelo celular numa conversa que a IA atendia: a IA para
+    if (fromMe) agent.humanReplied(db, conv, 'Resposta pelo celular');
     const contactId = conv.contact_id || contact?.id;
     if (contactId) {
       insertActivity(db, { contact_id: contactId, type: fromMe ? 'mensagem_enviada' : 'mensagem_recebida', channel: 'whatsapp', direction: fromMe ? 'saida' : 'entrada', notes: parsed.text, occurred_at: at, source: 'whatsapp', external_id: wamid, user_id: null, ref_type: 'wa_message', ref_id: msgId });
@@ -544,9 +579,9 @@ function inbound(db, inst, d) {
       const target = conv.assigned_to || contact?.owner_id || inst.owner_id;
       const who = contact?.name || clean(d.pushName) || fmtPhone(peer);
       if (target) notify(db, target, { kind: 'whatsapp', title: `WhatsApp de ${who}`, body: String(parsed.text).slice(0, 160), link: `#/comunicacao/whatsapp/${conv.id}`, dedupe: true });
-      else notify(db, managersOf(db, null), { kind: 'whatsapp', level: 'warn', title: `WhatsApp de número sem cadastro: ${who}`, link: `#/comunicacao/whatsapp/${conv.id}`, dedupe: true });
+      else if (!agent.answers(db, conv)) notify(db, managersOf(db, null), { kind: 'whatsapp', level: 'warn', title: `WhatsApp de número sem cadastro: ${who}`, link: `#/comunicacao/whatsapp/${conv.id}`, dedupe: true });
     }
-    return true;
+    return { conv: conv.id, msg: msgId, fromMe };
   });
 }
 
@@ -567,5 +602,5 @@ function startConversation(db, user, contact, instanceId) {
 
 module.exports = {
   liteConfig, saveConfig, overview, createInstance, instanceStatus, reconnect, simulateConnect, disconnect, removeInstance, updateInstance,
-  members, setMemberAccess, accessOf, visibleInstanceIds, send, mediaFor, receiveWebhook, startConversation, parseMessage, initials, LEVEL_LABEL, MAX_FILE,
+  members, setMemberAccess, accessOf, convAccess, visibleInstanceIds, send, mediaFor, receiveWebhook, startConversation, parseMessage, initials, LEVEL_LABEL, MAX_FILE,
 };

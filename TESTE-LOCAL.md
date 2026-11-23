@@ -261,6 +261,13 @@ cliques em `iniciar-windows.bat`. Ao fechar a área restrita, tudo é apagado.
       abrir a conversa.
     - Como `consultor2@demo.local`, as conversas do número do Especialista 1 aparecem só para leitura e o **Ver** explica que
       o lead é de outro especialista.
+11. **Agente de IA no WhatsApp** (dados de demonstração):
+    - **Integrações › Agente de IA** como administrador: número central "Central Vero", números dos últimos 30 dias, horários
+      da R1, critério de fit e o aviso de que falta a chave da Anthropic (para a IA responder de verdade, cadastre a chave em
+      Configurações › Integrações › IA generativa).
+    - **Comunicação › WhatsApp** como `consultor1@demo.local`: **Juliana Prado** está com a marca **IA** e a faixa **IA
+      atendendo** (teste **Assumir conversa** e **Devolver para a IA**); **Ricardo Souza** já teve a triagem feita e a R1
+      agendada pela IA (etapa R1 no pipeline) e está "Com o especialista".
 
 ### H8. LPs ligadas ao CRM e rastreio (UTM)
 
