@@ -244,6 +244,20 @@ cliques em `iniciar-windows.bat`. Ao fechar a área restrita, tudo é apagado.
    **Gerar simulação** (aba Propostas da página do lead, que também registra a simulação) e no botão **Simulador de
    consórcio** do painel lateral. Para trocar os arquivos: `node scripts/build-tools.js --diag Diagnostico-Vero.html --sim
    Simulador_Consorcio_Vero.html`.
+10. **Integrações e WhatsApp Lite** (dados de demonstração em modo de teste):
+    - **Integrações** como administrador: cartões em Mensageria, Voz, Marketing, Produtividade e Sistema. Como
+      `consultor1@demo.local`: só WhatsApp Lite, Instagram e LinkedIn (em breve) e Google Agenda.
+    - **WhatsApp Lite** como `consultor2@demo.local`: "Meu WhatsApp" do Especialista 1 aparece com "Só ver". Clique em
+      **Nova instância**, dê um nome, veja o QR Code e use **Simular leitura**. No menu ⋯, **Acesso dos membros**: mude o
+      Especialista 1 para "Só ver" ou "Ver e enviar" e use "Acesso para todos".
+    - **Comunicação › WhatsApp** como `consultor1@demo.local`: filtros Todas / Não lidas / Minhas, iniciais do responsável
+      (ED) e etapa do lead em cada conversa. Abra uma conversa do "Meu WhatsApp": envie texto com emoji, um anexo
+      (até 3 MB) e, se o navegador permitir o microfone, um áudio. Clique em **Ver**: aba Lead (Agendar R1, Gerar proposta,
+      Fechamento), IA Vero e Histórico.
+    - **Pipeline:** os cartões de Felipe Rocha, Henrique Dias e Lucas Ferreira mostram o ícone do WhatsApp; clique para
+      abrir a conversa.
+    - Como `consultor2@demo.local`, as conversas do número do Especialista 1 aparecem só para leitura e o **Ver** explica que
+      o lead é de outro especialista.
 
 ### H8. LPs ligadas ao CRM e rastreio (UTM)
 

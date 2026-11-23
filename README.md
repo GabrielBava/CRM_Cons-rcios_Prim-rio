@@ -4,7 +4,7 @@ Plataforma de gestão da empresa inteira (consórcio, planejamento financeiro, s
 
 - **Painel inicial**
 - **Operacional:** Pipeline, Calendário (panorama 360 somente leitura: R1, R2, one-on-ones, tarefas e atividades por dia, semana, mês ou período), Agendas e tarefas, Propostas e Pré-venda
-- **Comunicação:** Inbox (chat interno entre colaboradores, conversas diretas e grupos, com anexos), Tickets (chamados internos com responsável, prazo e anexos: aberto → em andamento → devolvido → concluído) e WhatsApp (número oficial da empresa pela API do WhatsApp Business, conversas ligadas ao lead)
+- **Comunicação:** Inbox (chat interno entre colaboradores, conversas diretas e grupos, com anexos), Tickets (chamados internos com responsável, prazo e anexos: aberto → em andamento → devolvido → concluído) e WhatsApp no jeito do WhatsApp (número oficial da empresa pela API do WhatsApp Business e **WhatsApp Lite**: o número de cada especialista, Business ou pessoal, conectado por QR Code; filtros Todas/Não lidas/Minhas, iniciais do responsável, etapa do lead no pipeline, anexos, áudio, emoji e painel Ver com IA Vero e conversão em reunião, proposta ou fechamento; ícone do WhatsApp no cartão do pipeline)
 - **Ferramentas:** um só item com Simulador, Modelo da R1, Kit do especialista, Manual da marca, Importar leads e modelo da transcrição da R1
 - **Gestão de vendas:** Clientes, Vendas, Pós-venda, Metas, Comissões e cancelamentos e Relatórios
 - **Gestão do time** (líder de equipe para cima): Organograma do time, Dashboard squad, One-on-ones (o líder marca e aparece no calendário dos dois) e Distribuição de leads
@@ -20,6 +20,7 @@ A ficha do cliente tem 9 blocos, com documentos validados, financeiro, pós-vend
 
 - **Especificação funcional (telas, funil, permissões e módulo ERP):** [`docs/ESPECIFICACAO.md`](docs/ESPECIFICACAO.md)
 - **Contratos de integração (discadora, simulador, leads, WhatsApp):** [`docs/INTEGRACOES.md`](docs/INTEGRACOES.md)
+- **Tela Integrações:** cartões por categoria (Mensageria, Voz, Marketing, Produtividade, Sistema). Especialista vê as de uso pessoal (WhatsApp Lite, Instagram, LinkedIn, Google Agenda); líder e administrador veem todas. WhatsApp Lite com acesso dos membros (Sem acesso, Só ver, Ver e enviar): [`docs/INTEGRACOES.md`](docs/INTEGRACOES.md#18-tela-integrações-e-whatsapp-lite-qr-code)
 - **Modelo de dados (DDL completo e relacionamentos):** [`docs/DDL.sql`](docs/DDL.sql) e [`docs/MODELO_DE_DADOS.md`](docs/MODELO_DE_DADOS.md), gerados por `node scripts/ddl.js`
 
 ## Identidade visual

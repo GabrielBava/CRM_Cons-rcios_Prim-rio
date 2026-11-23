@@ -281,7 +281,60 @@ function mapPayload(payload, mapping) {
   return out;
 }
 
+
+/**
+ * Tela Integrações: cards por categoria (Mensageria, Voz, Marketing, Produtividade e Sistema) com a situação de cada
+ * integração para quem está vendo. Especialista e leitura veem as integrações de uso pessoal (WhatsApp Lite, Instagram,
+ * LinkedIn e Google Agenda); líder e administrador veem todas. Credenciais ficam com o administrador.
+ */
+function panel(db, user, req) {
+  const lead = user.role === 'admin' || user.role === 'gestor';
+  const safe = (f, d = null) => { try { return f(); } catch { return d; } };
+  const ints = Object.fromEntries(listIntegrations(db, user).map((i) => [i.key, i]));
+  const intStatus = (k) => {
+    const i = ints[k];
+    if (!i) return { status: 'nao_configurado', label: 'Não configurado' };
+    if (i.effective_status === 'erro') return { status: 'erro', label: 'Com erro' };
+    if (i.status === 'ativa') return { status: 'ativo', label: 'Ativo' };
+    if (i.status === 'em_teste') return { status: 'teste', label: 'Em teste' };
+    return { status: i.has_token ? 'disponivel' : 'nao_configurado', label: i.has_token ? 'Configurado' : 'Não configurado' };
+  };
+  const hasWa = require('../permissions').hasModule(user, 'whatsapp');
+  const lite = hasWa ? safe(() => require('./walite').overview(db, user, req)) : null;
+  const off = safe(() => require('./whatsapp').waConfig(db));
+  const g = safe(() => require('./meetings').googleStatus(db, user, req)) || {};
+  const smtp = safe(() => require('./mailer').smtpStatus(db, user)) || {};
+  const ai = safe(() => require('./assistant').status(db, user)) || {};
+  const soon = { status: 'em_breve', label: 'Em breve' };
+  const cards = [
+    { key: 'whatsapp_lite', group: 'mensageria', name: 'WhatsApp Lite', sub: 'QR Code · número Business ou pessoal', icon: 'whatsapp', scope: 'usuario', available: !!lite,
+      ...(lite && lite.connected ? { status: 'ativo', label: `${lite.connected} conectado(s)` } : lite && lite.instances.length ? { status: 'aguardando', label: 'Aguardando conexão' } : lite && lite.can_create ? { status: 'disponivel', label: lite.sandbox ? 'Modo de teste' : 'Pronto para conectar' } : { status: 'nao_configurado', label: 'Servidor não configurado' }),
+      action: lite && lite.instances.length ? 'Gerenciar' : 'Conectar' },
+    { key: 'whatsapp_oficial', group: 'mensageria', name: 'WhatsApp Business', sub: 'API oficial · Meta', icon: 'whatsapp', scope: 'geral',
+      ...(off?.configured ? { status: 'ativo', label: 'Ativo' } : off?.sandbox ? { status: 'teste', label: 'Modo de teste' } : { status: 'nao_configurado', label: 'Não configurado' }), action: off?.configured ? 'Gerenciar' : 'Conectar' },
+    { key: 'instagram', group: 'mensageria', name: 'Instagram', sub: 'Direct · Meta', icon: 'instagram', scope: 'usuario', ...soon },
+    { key: 'linkedin', group: 'mensageria', name: 'LinkedIn', sub: 'Mensagens', icon: 'linkedin', scope: 'usuario', ...soon },
+    { key: 'discadora', group: 'voz', name: 'Discadora', sub: 'Click-to-call · chamadas e gravações', icon: 'telefone', scope: 'geral', ...intStatus('discadora'), action: 'Configurar' },
+    { key: 'meta_ads', group: 'marketing', name: 'Meta Ads', sub: 'Lead Ads · Facebook e Instagram', icon: 'meta', scope: 'geral', ...intStatus('meta_ads'), action: 'Configurar' },
+    { key: 'google_ads', group: 'marketing', name: 'Google Ads', sub: 'Anúncios · Google', icon: 'google', scope: 'geral', ...soon },
+    { key: 'linkedin_ads', group: 'marketing', name: 'LinkedIn Ads', sub: 'Anúncios · LinkedIn', icon: 'linkedin', scope: 'geral', ...soon },
+    { key: 'google_agenda', group: 'produtividade', name: 'Google Agenda', sub: 'Agenda · Google Meet', icon: 'calendario', scope: 'usuario',
+      ...(g.connected ? { status: 'ativo', label: g.needs_reconnect ? 'Reconectar para o Meet' : `Conectado${g.google_email ? ` · ${g.google_email}` : ''}` } : g.configured ? { status: 'disponivel', label: 'Pronto para conectar' } : { status: 'nao_configurado', label: 'Não configurado' }),
+      action: g.connected ? 'Gerenciar' : 'Conectar' },
+    { key: 'email', group: 'sistema', name: 'E-mail (SMTP)', sub: smtp.from_email || 'Envio de e-mails do CRM', icon: 'email', scope: 'geral', ...(smtp.configured ? { status: 'ativo', label: 'Ativo' } : { status: 'nao_configurado', label: 'Não configurado' }), action: 'Configurar' },
+    { key: 'ia', group: 'sistema', name: 'IA generativa', sub: 'Claude · IA Vero no lead', icon: 'ia', scope: 'geral', ...(ai.generative ? { status: 'ativo', label: 'Ativa' } : { status: 'disponivel', label: 'Motor interno' }), action: 'Configurar' },
+    { key: 'api_leads', group: 'sistema', name: 'API de leads', sub: 'Site, formulários e conectores', icon: 'link', scope: 'geral', ...intStatus('api_leads'), action: 'Configurar' },
+    { key: 'bi', group: 'sistema', name: 'Conexão BI', sub: 'Power BI, Looker Studio, Excel', icon: 'relatorios', scope: 'geral', ...intStatus('bi'), action: 'Configurar' },
+  ].filter((c) => (lead || c.scope === 'usuario') && c.available !== false);
+  const GROUPS = [['mensageria', 'Mensageria'], ['voz', 'Voz'], ['marketing', 'Marketing'], ['produtividade', 'Produtividade'], ['sistema', 'Sistema']];
+  return {
+    role_scope: lead ? 'geral' : 'usuario', can_configure: user.role === 'admin',
+    groups: GROUPS.map(([key, label]) => ({ key, label, cards: cards.filter((c) => c.group === key) })).filter((gr) => gr.cards.length),
+  };
+}
+
 module.exports = {
+  panel,
   DEFAULT_MAPPINGS,
   getIntegration,
   listIntegrations,

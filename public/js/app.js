@@ -36,6 +36,7 @@ import * as toolsView from './views/tools.js';
 import * as teamView from './views/team.js';
 import * as calendarView from './views/calendar.js';
 import * as commsView from './views/comms.js';
+import * as integrationsView from './views/integrations.js';
 import { icon } from './icons.js';
 
 // Rotas do menu lateral: [rota, rótulo, tela, módulo de permissão]
@@ -45,6 +46,7 @@ const NAV = [
   ['calendario', 'Calendário', calendarView, 'calendario'],
   ['agenda', 'Agendas e tarefas', agenda, 'agenda'],
   ['comunicacao', 'Comunicação', commsView, null],
+  ['integracoes', 'Integrações', integrationsView, null],
   ['propostas', 'Propostas', proposalsView, 'propostas'],
   ['prevenda', 'Pré-venda', presales, 'prevenda'],
   ['ferramentas', 'Ferramentas', toolsView, null],
@@ -77,7 +79,7 @@ const NAV_GROUPS = () => [
   ['Gestão do time', ['admin', 'gestor'].includes(state.user?.role), [['time/organograma', 'Organograma', 'organograma', 'time'], ['time/squad', 'Dashboard', 'painel', 'time'], ['time/bi', 'BI', 'relatorios', 'time'], ['entrada', 'Distribuição de leads', 'leads', 'distribuicao']]],
   ['Financeiro', allowed('financeiro'), finLinks()],
   ['Consórcios', true, [['administradoras', 'Administradoras', 'administradoras', 'administradoras'], ['planos', 'Planos', 'planos', 'planos']]],
-  ['Administração', true, [['colaboradores', 'Colaboradores', 'colaboradores', 'colaboradores'], ['documentos', 'Central de documentos', 'documentos', 'documentos'], ['usuarios', 'Usuários', 'usuarios', 'usuarios'], ['configuracoes', 'Configurações', 'configuracoes', 'configuracoes']]],
+  ['Administração', true, [['integracoes', 'Integrações', 'link', null], ['colaboradores', 'Colaboradores', 'colaboradores', 'colaboradores'], ['documentos', 'Central de documentos', 'documentos', 'documentos'], ['usuarios', 'Usuários', 'usuarios', 'usuarios'], ['configuracoes', 'Configurações', 'configuracoes', 'configuracoes']]],
 ];
 // Rotas secundárias: [tela, módulo, item do menu destacado]
 const EXTRA = {

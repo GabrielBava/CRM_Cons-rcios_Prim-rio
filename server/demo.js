@@ -724,6 +724,45 @@ function seedCommsDemo(db, { admin, gestor, c1, c2, PDF, ids }) {
     if (conv) wa.sendMessage(db, { ...owner, modules: null }, conv.id, { body: `Olá, ${leads[0].name.split(' ')[0]}! Claro: no consórcio você paga parcelas sem juros e é contemplado por sorteio ou lance. Posso te ligar em 5 minutos?` }).catch(() => {});
   }
   wa.receiveWebhook(db, req, msg('5511955554321', 'Marcos', 'wamid.demo.unknown', 'Olá, quero saber sobre consórcio de veículo.', 12));
+  seedLiteDemo(db, { c1, c2 });
+}
+
+/**
+ * WhatsApp Lite em modo de teste: o Especialista 1 conectou o próprio número (QR Code simulado), a líder acompanha e o
+ * Especialista 2 tem "Só ver". As conversas são com leads do pipeline do Especialista 1 (ícone do WhatsApp no card).
+ */
+function seedLiteDemo(db, { c1, c2 }) {
+  const lite = require('./services/walite');
+  db.prepare("INSERT INTO settings (key, value) VALUES ('walite_sandbox', 'true') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+  const u = (x) => ({ ...x, modules: null });
+  // No modo de teste a criação não espera o servidor: a instância já está gravada quando a função retorna
+  lite.createInstance(db, u(c1), { headers: {} }, { name: 'Meu WhatsApp' }).catch(() => {});
+  const id = db.prepare('SELECT id FROM wa_instances WHERE owner_id = ? ORDER BY id DESC LIMIT 1').get(c1.id)?.id;
+  if (!id) return;
+  lite.simulateConnect(db, u(c1), id, { phone: '51990000003' });
+  lite.setMemberAccess(db, u(c1), id, { user_id: c2.id, level: 'ver' });
+  const { webhook_token: token } = db.prepare('SELECT webhook_token FROM wa_instances WHERE id = ?').get(id);
+  const wa = require('./services/whatsapp');
+  const leads = db.prepare(`SELECT c.id, c.name, c.whatsapp, c.phone1 FROM contacts c
+    WHERE c.owner_id = ? AND COALESCE(c.whatsapp, c.phone1) IS NOT NULL
+      AND EXISTS (SELECT 1 FROM opportunities o WHERE o.contact_id = c.id AND o.status = 'aberta')
+      AND NOT EXISTS (SELECT 1 FROM wa_conversations w WHERE w.contact_id = c.id)
+    ORDER BY c.id LIMIT 3`).all(c1.id);
+  const at = (minAgo) => Math.floor((Date.now() - minAgo * 60000) / 1000);
+  let n = 0;
+  const up = (peer, fromMe, text, minAgo, pushName) => {
+    lite.receiveWebhook(db, token, { event: 'messages.upsert', data: { key: { remoteJid: `${peer}@s.whatsapp.net`, fromMe, id: `LITE.DEMO.${id}.${++n}` }, pushName, message: { conversation: text }, messageTimestamp: at(minAgo) } });
+  };
+  const scripts = [
+    [[false, 'Oi! Aqui é a {n}. Vocês trabalham com consórcio para reforma?', 26 * 60], [true, 'Oi, {n}! Trabalhamos sim: a carta de crédito pode ser usada em reforma. Qual valor você imagina?', 26 * 60 - 4], [false, 'Uns R$ 80 mil 🙂', 26 * 60 - 9], [true, 'Perfeito! Te mando duas simulações e já deixo uma conversa marcada para amanhã às 10h, pode ser?', 26 * 60 - 11], [false, 'Pode sim, obrigada!', 18]],
+    [[true, '{n}, bom dia! Conseguiu ver a proposta que te enviei?', 3 * 60], [false, 'Vi sim. Achei a parcela um pouco alta, dá para ver com lance embutido?', 47]],
+    [[false, 'Boa tarde! Meu cunhado indicou vocês, ele foi contemplado no mês passado 👏', 9]],
+  ];
+  leads.forEach((c, i) => {
+    const peer = wa.toWaId(c.whatsapp || c.phone1);
+    const first = c.name.split(' ')[0];
+    if (peer) for (const [me, text, min] of scripts[i] || []) up(peer, me, text.replace('{n}', first), min, first);
+  });
 }
 
 module.exports = { seedDemo, DEMO_USERS };

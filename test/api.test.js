@@ -3081,3 +3081,151 @@ test('Ferramentas Vero v1: simulador recebe nome e contato do cliente; diagnóst
     assert.ok(txt.includes('id="vero-crm"') && txt.includes('/api/simulador/cliente/'));
   }
 });
+
+test('WhatsApp Lite (QR Code): instância no servidor Evolution, conexão, mensagens, acesso dos membros, mídia e tela Integrações', async () => {
+  const http = require('node:http');
+  const calls = [];
+  let state = 'connecting';
+  const fake = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (c) => (raw += c));
+    req.on('end', () => {
+      const body = raw ? JSON.parse(raw) : null;
+      calls.push({ method: req.method, url: req.url, body, apikey: req.headers.apikey });
+      const send = (o) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+      const u = req.url;
+      if (u === '/instance/create') return send({ instance: { instanceName: body.instanceName, status: 'created' }, hash: 'tok', qrcode: { base64: 'data:image/png;base64,QUFB', code: '2@x' } });
+      if (u.startsWith('/webhook/set/')) return send({ webhook: body.webhook });
+      if (u.startsWith('/instance/connect/')) return send({ base64: 'data:image/png;base64,QkJC', code: '2@y' });
+      if (u.startsWith('/instance/connectionState/')) return send({ instance: { state } });
+      if (u.startsWith('/instance/fetchInstances')) return send([{ ownerJid: '5551988887777@s.whatsapp.net', profileName: 'Vero Teste' }]);
+      if (u.startsWith('/message/sendText/')) return send({ key: { id: `EVO-T-${calls.length}` }, status: 'PENDING' });
+      if (u.startsWith('/message/sendMedia/')) return send({ key: { id: `EVO-M-${calls.length}` } });
+      if (u.startsWith('/message/sendWhatsAppAudio/')) return send({ key: { id: `EVO-A-${calls.length}` } });
+      if (u.startsWith('/chat/getBase64FromMediaMessage/')) return send({ base64: Buffer.from('foto-recebida').toString('base64'), mimetype: 'image/jpeg' });
+      if (u.startsWith('/instance/logout/') || u.startsWith('/instance/delete/')) {
+        state = 'close';
+        return send({ status: 'SUCCESS' });
+      }
+      res.writeHead(404); res.end('{}');
+    });
+  });
+  await new Promise((r) => fake.listen(0, '127.0.0.1', r));
+  const evoUrl = `http://127.0.0.1:${fake.address().port}`;
+  try {
+    // Sem servidor nem modo de teste: não cria
+    assert.equal((await call('c1', 'POST', '/api/whatsapp/lite/instancias', { name: 'Meu número' })).status, 400);
+    assert.equal((await call('c1', 'PUT', '/api/whatsapp/lite/config', { url: evoUrl, key: 'chave' })).status, 403, 'só o administrador configura');
+    assert.equal((await call('admin', 'PUT', '/api/whatsapp/lite/config', { url: evoUrl, key: 'chave-global' })).status, 200);
+    // Especialista cria a instância e recebe o QR Code
+    const inst = await call('c1', 'POST', '/api/whatsapp/lite/instancias', { name: 'Meu número' });
+    assert.equal(inst.status, 200, JSON.stringify(inst.data));
+    assert.match(inst.data.qr, /^data:image\/png;base64,/);
+    assert.equal(inst.data.status, 'aguardando');
+    const created = calls.find((c) => c.url === '/instance/create');
+    assert.equal(created.apikey, 'chave-global');
+    assert.equal(created.body.integration, 'WHATSAPP-BAILEYS');
+    assert.deepEqual(created.body.webhook.events.sort(), ['CONNECTION_UPDATE', 'MESSAGES_UPDATE', 'MESSAGES_UPSERT', 'QRCODE_UPDATED']);
+    const token = created.body.webhook.url.match(/\/api\/whatsapp\/lite\/webhook\/([^/]+)$/)[1];
+    const hook = (b) => fetch(`${base}/api/whatsapp/lite/webhook/${token}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then(async (r) => ({ status: r.status, data: await r.json() }));
+    assert.equal((await fetch(`${base}/api/whatsapp/lite/webhook/errado`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 401);
+    // Conectou (evento do servidor) e o status mostra o número
+    await hook({ event: 'connection.update', instance: 'x', data: { state: 'open', wuid: '5551988887777@s.whatsapp.net', profileName: 'Vero Teste' } });
+    state = 'open';
+    const st = await call('c1', 'GET', `/api/whatsapp/lite/instancias/${inst.data.id}`);
+    assert.equal(st.data.status, 'conectado');
+    assert.equal(st.data.phone, '5551988887777');
+    // Mensagem de cliente do CRM entra na conversa ligada ao lead; número desconhecido é ignorado (padrão: só cadastros)
+    const lead = await call('c1', 'POST', '/api/cadastros', { name: 'Lead WhatsApp Lite', phone1: '11 93817-5701', origin: 'indicacao', relationship: 'lead' });
+    const up = (id, from, msg, fromMe = false) => hook({ event: 'messages.upsert', data: { key: { remoteJid: `${from}@s.whatsapp.net`, fromMe, id }, pushName: 'Cliente', message: msg, messageTimestamp: Math.floor(Date.now() / 1000) } });
+    assert.equal((await up('IN-1', '5511938175701', { conversation: 'Oi, quero saber do consórcio' })).data.mensagens, 1);
+    assert.equal((await up('IN-1', '5511938175701', { conversation: 'repetida' })).data.mensagens, 0, 'sem duplicar');
+    assert.equal((await up('IN-2', '5521977776666', { conversation: 'número pessoal' })).data.mensagens, 0, 'número fora do CRM não é registrado');
+    await up('IN-3', '5511938175701', { imageMessage: { caption: 'Meu contracheque', mimetype: 'image/jpeg' } });
+    await up('IN-4', '120363@g.us', { conversation: 'grupo' });
+    const list = await call('c1', 'GET', '/api/whatsapp/conversas?canal=lite');
+    const conv = list.data.find((x) => x.contact_id === lead.data.id);
+    assert.ok(conv, 'conversa ligada ao lead');
+    assert.equal(conv.channel, 'lite');
+    assert.equal(conv.unread, 2);
+    assert.equal(conv.owner_initials, conv.owner_name.split(/\s+/).slice(0, 2).map((p) => p[0]).join('').toUpperCase(), 'iniciais do responsável');
+    assert.ok(conv.stage && conv.stage.name, 'etapa do lead no pipeline');
+    assert.equal(list.data.length, 1);
+    assert.equal((await call('c1', 'GET', '/api/whatsapp/conversas?filtro=nao_lidas&canal=lite')).data.length, 1);
+    assert.equal((await call('c2', 'GET', '/api/whatsapp/conversas?canal=lite')).data.length, 0, 'c2 sem acesso à instância');
+    assert.ok((await call('gestor', 'GET', '/api/whatsapp/conversas?canal=lite')).data.some((x) => x.id === conv.id), 'líder vê');
+    // O líder acompanhando não apaga o aviso de não lida do responsável
+    assert.equal((await call('gestor', 'GET', `/api/whatsapp/conversas/${conv.id}`)).data.conversation.contact_visible, true);
+    assert.equal((await call('c1', 'GET', '/api/whatsapp/conversas?canal=lite')).data[0].unread, 2);
+    // Abrir a conversa zera as não lidas; foto recebida vem do servidor e fica guardada
+    const open = await call('c1', 'GET', `/api/whatsapp/conversas/${conv.id}`);
+    assert.equal(open.data.can_send, true);
+    const img = open.data.messages.find((m) => m.kind === 'image');
+    assert.ok(img.media_url);
+    const media = await fetch(base + img.media_url, { headers: { Cookie: sessions.c1 } });
+    assert.equal(media.status, 200);
+    assert.equal(Buffer.from(await media.arrayBuffer()).toString(), 'foto-recebida');
+    await fetch(base + img.media_url, { headers: { Cookie: sessions.c1 } });
+    assert.equal(calls.filter((c) => c.url.startsWith('/chat/getBase64FromMediaMessage/')).length, 1, 'segunda vez sai do CRM');
+    // Envio: texto, foto e áudio pela instância
+    const t = await call('c1', 'POST', `/api/whatsapp/conversas/${conv.id}/mensagens`, { body: 'Olá! Vamos agendar?' });
+    assert.equal(t.status, 200, JSON.stringify(t.data));
+    assert.equal(t.data.status, 'enviada');
+    assert.deepEqual(calls.find((c) => c.url.startsWith('/message/sendText/')).body, { number: '5511938175701', text: 'Olá! Vamos agendar?' });
+    const png = Buffer.from('imagem-png').toString('base64');
+    const f = await call('c1', 'POST', `/api/whatsapp/conversas/${conv.id}/mensagens`, { body: 'Simulação', attachment: { name: 'simulacao.png', mime: 'image/png', data: png } });
+    assert.equal(f.data.kind, 'image');
+    assert.equal(calls.find((c) => c.url.startsWith('/message/sendMedia/')).body.mediatype, 'image');
+    const a = await call('c1', 'POST', `/api/whatsapp/conversas/${conv.id}/mensagens`, { voice: true, duration: 4, attachment: { name: 'audio.webm', mime: 'audio/webm', data: png } });
+    assert.equal(a.data.kind, 'audio');
+    assert.ok(calls.some((c) => c.url.startsWith('/message/sendWhatsAppAudio/')));
+    const sent = await fetch(base + f.data.media_url, { headers: { Cookie: sessions.c1 } });
+    assert.equal(Buffer.from(await sent.arrayBuffer()).toString(), 'imagem-png', 'arquivo enviado fica no histórico');
+    // Resposta dada pelo celular (fromMe) entra como enviada e marca a conversa como vista
+    await up('IN-PHONE-0', '5511938175701', { conversation: 'Tudo certo?' });
+    await up('OUT-PHONE-1', '5511938175701', { conversation: 'Respondi pelo celular' }, true);
+    const viaPhone = (await call('gestor', 'GET', '/api/whatsapp/conversas?canal=lite')).data.find((x) => x.id === conv.id);
+    assert.equal(viaPhone.unread, 0);
+    assert.equal(viaPhone.last_direction || 'out', 'out');
+    // Status de leitura pelo webhook
+    await hook({ event: 'messages.update', data: { keyId: t.data.wamid, status: 'READ' } });
+    const after = await call('c1', 'GET', `/api/whatsapp/conversas/${conv.id}`);
+    assert.equal(after.data.messages.find((m) => m.id === t.data.id).status, 'lida');
+    // Histórico do lead
+    const hist = (await call('c1', 'GET', `/api/cadastros/${lead.data.id}/historico`)).data.rows;
+    assert.ok(hist.some((h) => h.source === 'whatsapp' && /quero saber do consórcio/.test(h.notes || '')), 'mensagem no histórico do lead');
+    // Acesso dos membros: Só ver não envia; Ver e enviar envia
+    const c2 = await userId('c2@t.com');
+    const mem = await call('c1', 'PUT', `/api/whatsapp/lite/instancias/${inst.data.id}/acesso`, { user_id: c2, level: 'ver' });
+    assert.equal(mem.status, 200, JSON.stringify(mem.data));
+    assert.equal(mem.data.members.find((m) => m.id === c2).level, 'ver');
+    assert.equal(mem.data.members[0].role_label, 'Proprietário');
+    assert.equal((await call('c2', 'GET', '/api/whatsapp/conversas?canal=lite')).data.length, 1);
+    const seen = (await call('c2', 'GET', `/api/whatsapp/conversas/${conv.id}`)).data;
+    assert.equal(seen.can_send, false);
+    assert.equal(seen.conversation.contact_visible, false, 'quem só vê o número não abre o cadastro de outro especialista');
+    assert.equal((await call('c2', 'POST', `/api/whatsapp/conversas/${conv.id}/mensagens`, { body: 'oi' })).status, 403);
+    assert.equal((await call('c2', 'PUT', `/api/whatsapp/lite/instancias/${inst.data.id}/acesso`, { user_id: c2, level: 'enviar' })).status, 403, 'só o dono, o líder ou o administrador mudam o acesso');
+    await call('c1', 'PUT', `/api/whatsapp/lite/instancias/${inst.data.id}/acesso`, { user_id: c2, level: 'enviar' });
+    assert.equal((await call('c2', 'POST', `/api/whatsapp/conversas/${conv.id}/mensagens`, { body: 'Sou do time da Vero' })).status, 200);
+    // Liberar todos os números (não só cadastros)
+    await call('c1', 'PATCH', `/api/whatsapp/lite/instancias/${inst.data.id}`, { only_known: false });
+    assert.equal((await up('IN-5', '5521977776666', { conversation: 'número novo' })).data.mensagens, 1);
+    // Tela Integrações: especialista vê as de uso pessoal; administrador vê todas
+    const pc = await call('c1', 'GET', '/api/integracoes/painel');
+    const keys = pc.data.groups.flatMap((g) => g.cards.map((c) => c.key));
+    assert.deepEqual(keys.sort(), ['google_agenda', 'instagram', 'linkedin', 'whatsapp_lite']);
+    assert.equal(pc.data.groups.find((g) => g.key === 'mensageria').cards.find((c) => c.key === 'whatsapp_lite').status, 'ativo');
+    const pa = await call('admin', 'GET', '/api/integracoes/painel');
+    assert.deepEqual(pa.data.groups.map((g) => g.key), ['mensageria', 'voz', 'marketing', 'produtividade', 'sistema']);
+    // Desconectar e excluir (as conversas ficam no CRM)
+    assert.equal((await call('c2', 'POST', `/api/whatsapp/lite/instancias/${inst.data.id}/desconectar`)).status, 403);
+    assert.equal((await call('c1', 'POST', `/api/whatsapp/lite/instancias/${inst.data.id}/desconectar`)).data.status, 'desconectado');
+    assert.equal((await call('c1', 'DELETE', `/api/whatsapp/lite/instancias/${inst.data.id}`)).status, 200);
+    assert.ok(calls.some((c) => c.method === 'DELETE' && c.url.startsWith('/instance/delete/')));
+    assert.equal(appDb.prepare('SELECT COUNT(*) AS n FROM wa_conversations WHERE id = ?').get(conv.id).n, 1);
+  } finally {
+    await call('admin', 'PUT', '/api/whatsapp/lite/config', { url: '', clear_key: true });
+    fake.close();
+  }
+});

@@ -20,6 +20,8 @@ Situação nesta versão:
 | Simulador | Fluxo de link e retorno implementado no CRM. **Depende de implementação no simulador: integração pendente.** Enquanto isso, a simulação pode ser registrada manualmente. |
 | Meta Ads (Lead Ads) | **Conector direto não implementado.** Leads podem chegar pela API de entrada de leads por meio de uma ferramenta intermediária. |
 | WhatsApp | **API oficial do WhatsApp Business (Cloud API da Meta):** webhook de recebimento e envio de mensagens implementados (seção 10); precisa da conta da Meta conectada (número, token e App Secret). Há também o endpoint genérico de registro de mensagens de outros provedores (seção 4). |
+| WhatsApp Lite (QR Code) | **Número do próprio especialista (Business ou pessoal) lido por QR Code** num servidor compatível com a Evolution API v2 (seção 18). Precisa do servidor configurado pelo administrador; sem ele, há o modo de teste. |
+| Instagram, LinkedIn, Google Ads, LinkedIn Ads | Aparecem na tela Integrações como **Em breve**. |
 | API de entrada de leads | Implementada (endpoint próprio do CRM). |
 | Qualificação pela R1 (transcrição) | Endpoint implementado no CRM. **O modelo que lê a transcrição da reunião ainda não existe: integração futura.** |
 
@@ -304,3 +306,58 @@ A ponte da ferramenta de diagnóstico envia, junto com cada salvamento, a precif
 - **Variáveis na Vercel:** `DATABASE_URL` (obrigatória: Supabase › **Connect** › **Session pooler**, porta 5432 — a conexão direta é só IPv6 e o pooler de transação não guarda o schema da sessão), `CRM_SECRET_KEY` (sem ela, uma chave é criada e guardada no banco), `PUBLIC_URL=https://crm.veroconsorciosbr.com.br`, `CRON_SECRET`, as do Google e do SMTP do `config.env`, e para a **versão de teste** `CRM_DEMO=1` + `DEMO_PASSWORD` (banco vazio recebe os dados de demonstração na primeira requisição).
 - **Limites da Vercel:** requisições e respostas de até 4,5 MB (anexos de até ~3 MB, por causa da codificação em base64); a primeira requisição depois de um tempo parado é mais lenta (a função "acorda" e conecta no banco); a verificação de presença da R1 pelo Meet roda quando o CRM está em uso.
 - **Testes no Postgres:** `TEST_DATABASE_URL=postgresql://… npm run test:pg` roda a suíte inteira num schema limpo (apaga o schema `crm` desse banco: use um banco de teste).
+
+## 18. Tela Integrações e WhatsApp Lite (QR Code)
+
+### 18.1 Tela Integrações (menu Integrações)
+
+Cartões por categoria, com a situação de cada conexão e o botão Conectar/Gerenciar (`GET /api/integracoes/painel`):
+
+| Categoria | Integrações | Quem vê |
+|---|---|---|
+| Mensageria | WhatsApp Lite, WhatsApp Business (API oficial), Instagram (em breve), LinkedIn (em breve) | WhatsApp Lite, Instagram e LinkedIn: todos (cada usuário conecta o seu). API oficial: líder e administrador |
+| Voz | Discadora | Líder e administrador |
+| Marketing | Meta Ads, Google Ads (em breve), LinkedIn Ads (em breve) | Líder e administrador |
+| Produtividade | Google Agenda | Todos (cada usuário conecta a sua) |
+| Sistema | E-mail (SMTP), IA generativa, API de leads, Conexão BI | Líder e administrador |
+
+- **Especialista e leitura** veem só as integrações de uso pessoal (marcadas "Usuário"). **Líder e administrador** veem todas.
+- Credenciais da empresa (Meta, discadora, SMTP, IA, BI) continuam só com o administrador, em Configurações › Integrações; o líder vê a situação.
+
+### 18.2 WhatsApp Lite: como funciona
+
+- Cada usuário cria uma **instância** (Integrações › WhatsApp Lite › Nova instância), dá um nome e lê o **QR Code** com o WhatsApp do celular (Business ou pessoal) em **Aparelhos conectados › Conectar um aparelho**. A tela se atualiza sozinha quando conecta e mostra o número.
+- As conversas vão para **Comunicação › WhatsApp**, junto com as do número oficial, com o canal e a instância indicados.
+- **Privacidade (padrão):** só entram as conversas com números que já estão no CRM (lead ou cliente). Mensagens de amigos e família do número pessoal são ignoradas. O dono pode trocar para "Registrar todas as conversas" no menu ⋯ da instância.
+- Grupos, listas de transmissão e canais são ignorados.
+
+### 18.3 Acesso dos membros
+
+| Nível | O que faz |
+|---|---|
+| Sem acesso | Não vê as conversas do número |
+| Só ver | Lê as conversas (não responde e não abre o cadastro de lead de outro especialista) |
+| Ver e enviar | Lê e responde pelo número |
+
+- O **dono** da instância, o **líder** e o **administrador** têm sempre acesso completo e são os únicos que mudam o acesso, desconectam ou excluem.
+- "Acesso para todos" define um nível mínimo para a equipe inteira; o nível individual mais alto prevalece.
+- Abrir a conversa zera as não lidas só para quem atende (o responsável). O líder acompanhando não apaga o aviso do especialista. Uma resposta dada pelo celular também marca a conversa como vista.
+
+### 18.4 Servidor (Evolution API v2)
+
+O WhatsApp Lite usa um servidor compatível com a **Evolution API v2** (Baileys), hospedado pela Vero ou contratado (por exemplo, um serviço "EvoGo"). O CRM não assume nenhum fornecedor.
+
+- **Configuração (administrador):** Integrações › WhatsApp Lite › *Servidor do WhatsApp Lite*: endereço (`https://…`) e chave global (`apikey`), guardada cifrada no banco. Ou no ambiente: `EVOLUTION_API_URL` e `EVOLUTION_API_KEY` (têm prioridade sobre a tela).
+- **Webhook:** o CRM cadastra sozinho, ao criar a instância, `https://SEU-CRM/api/whatsapp/lite/webhook/<token da instância>` com os eventos `QRCODE_UPDATED`, `CONNECTION_UPDATE`, `MESSAGES_UPSERT` e `MESSAGES_UPDATE`. O endereço precisa ser HTTPS público (`PUBLIC_URL`). Cada instância tem um token próprio; token desconhecido recebe 401.
+- **Chamadas usadas:** `POST /instance/create`, `POST /webhook/set/{instância}`, `GET /instance/connect/{instância}` (QR Code), `GET /instance/connectionState/{instância}`, `GET /instance/fetchInstances`, `DELETE /instance/logout/{instância}`, `DELETE /instance/delete/{instância}`, `POST /message/sendText`, `POST /message/sendMedia`, `POST /message/sendWhatsAppAudio` e `POST /chat/getBase64FromMediaMessage` (para baixar foto, áudio ou documento recebido).
+- **Modo de teste:** sem servidor configurado, o administrador pode ligar o modo de teste: o QR Code é ilustrativo e o botão **Simular leitura** conecta a instância; as mensagens ficam só no CRM.
+
+### 18.5 Guia WhatsApp (Comunicação › WhatsApp)
+
+- **Lista:** filtros **Todas**, **Não lidas** e **Minhas** (do responsável que está vendo), busca por nome, número e texto das mensagens, filtro por canal/número. Cada conversa mostra a foto/iniciais, as não lidas, as **iniciais do responsável** (ex.: GB) e a **etapa do lead no pipeline** (Lead, Tentativa de contato, Qualificação, R1, R2, Negociação…), identificada pelo número do contato.
+- **Topo da conversa:** nome, número, etapa no pipeline, responsável e o canal (WhatsApp oficial ou WhatsApp Lite · nome da instância).
+- **Mensagens:** separadores por dia, eventos do negócio ("Negócio criado em…", mudanças de etapa), confirmações de envio/entrega/leitura, foto, vídeo, áudio e documento.
+- **Envio:** texto com emoji, anexos (foto, vídeo, documento) com legenda, gravação de áudio pelo microfone e modelos aprovados (número oficial). Limite de **3 MB por arquivo** (`WA_MAX_FILE_MB`), por causa do limite de 4,5 MB por requisição da Vercel. No número oficial, áudio precisa ser OGG ou MP3 (a gravação do navegador em WebM não é aceita pela Meta).
+- **Ver:** painel ao lado com o lead (etapa, responsável, crédito, próxima ação), a **IA Vero** (perguntas sobre a conversa e o lead, com "Usar como resposta") e o **Histórico**. Botões para **converter a conversa**: Agendar reunião (R1/R2), Gerar proposta e Fechamento.
+- **Pipeline:** o cartão do lead com conversa no WhatsApp mostra o ícone do WhatsApp (com as não lidas); clicar abre a conversa.
+
