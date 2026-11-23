@@ -19,14 +19,11 @@ const { notify, managersOf } = require('./notifications');
 const clean = (v) => cleanRaw(v) ?? null;
 const AGENT_USER = { id: null, role: 'admin', name: 'IA Vero (WhatsApp)', modules: null };
 const TZ = 'America/Sao_Paulo';
-const MODELS = [
-  ['claude-opus-5-5', 'Claude Opus 5.5 (melhor qualidade)'],
-  ['claude-sonnet-5-5', 'Claude Sonnet 5.5 (equilíbrio entre qualidade e custo)'],
-  ['claude-haiku-5-5', 'Claude Haiku 5.5 (mais barato e rápido)'],
-];
+const llm = require('./llm');
+const MODELS = llm.CLAUDE_MODELS;
 const DEFAULT_FIT = 'Tem fit quem demonstra interesse real, tem uma necessidade clara (imóvel, veículo, serviço, reforma ou organização financeira), pretende começar em até 12 meses e consegue investir pelo menos R$ 500 por mês.';
 const DEFAULTS = {
-  enabled: false, channel: 'lite', instance_id: null, name: 'Vero', model: 'claude-opus-5-5', r1_minutes: 45, days: [1, 2, 3, 4, 5],
+  enabled: false, channel: 'lite', instance_id: null, name: 'Vero', provider: 'gemini', model: 'claude-opus-5-5', gemini_model: llm.GEMINI_DEFAULT, r1_minutes: 45, days: [1, 2, 3, 4, 5],
   start: '09:00', end: '18:00', notice_hours: 2, fit: DEFAULT_FIT, instructions: '',
 };
 const STATUS_LABEL = { ativa: 'IA atendendo', humano: 'Com o especialista', pausada: 'Especialista assumiu' };
@@ -44,15 +41,15 @@ function config(db) {
   return c;
 }
 
-/** O agente está ligado e pronto para responder (chave da IA e biblioteca presentes). */
+/** O agente está ligado e pronto para responder (chave do provedor escolhido e, no Claude, a biblioteca). */
 function ready(db) {
   const c = config(db);
   if (!c.enabled) return { ok: false, reason: 'desligado', cfg: c };
-  const llm = require('./assistant').llmConfig(db);
-  if (!llm.key) return { ok: false, reason: 'sem_chave', cfg: c };
-  if (!llm.sdk) return { ok: false, reason: 'sem_biblioteca', cfg: c };
-  return { ok: true, cfg: c, llm };
+  const av = llm.availability(db, c.provider);
+  if (!av.ok) return { ok: false, reason: av.reason, cfg: c };
+  return { ok: true, cfg: c };
 }
+const modelOf = (cfg) => (llm.providerOf(cfg.provider) === 'claude' ? cfg.model || llm.DEFAULTS.claude : cfg.gemini_model || llm.GEMINI_DEFAULT);
 
 /** A conversa é do número central atendido pelo agente? */
 function handlesConversation(db, w) {
@@ -76,7 +73,7 @@ function view(db, user) {
   if (!isLead(user)) throw forbidden('O agente de IA é configurado pela liderança.');
   const c = config(db);
   const r = ready(db);
-  const llm = require('./assistant').llmConfig(db);
+  const prov = llm.providersStatus(db);
   const instances = db.prepare("SELECT id, name, phone, status FROM wa_instances ORDER BY status = 'conectado' DESC, name").all();
   const wa = require('./whatsapp');
   const since = new Date(Date.now() - 30 * 86400000).toISOString();
@@ -87,7 +84,8 @@ function view(db, user) {
   return {
     config: { ...c },
     ready: r.ok, reason: r.ok ? null : r.reason,
-    llm: { has_key: !!llm.key, sdk: llm.sdk },
+    llm: { provider: llm.providerOf(c.provider), model: modelOf(c), has_key: prov[llm.providerOf(c.provider)].has_key, sdk: prov.claude.sdk },
+    providers: { claude: { has_key: prov.claude.has_key, from_env: prov.claude.from_env, sdk: prov.claude.sdk }, gemini: { has_key: prov.gemini.has_key, from_env: prov.gemini.from_env, note: prov.gemini.free_tier_note } },
     can_edit: user.role === 'admin',
     official: (() => {
       const o = wa.waConfig(db);
@@ -116,9 +114,22 @@ function save(db, user, data = {}) {
   }
   if (data.instance_id !== undefined) next.instance_id = data.instance_id ? Number(data.instance_id) : null;
   if (data.name !== undefined) next.name = String(clean(data.name) || 'Vero').slice(0, 40);
+  if (data.provider !== undefined) {
+    if (!['gemini', 'claude'].includes(data.provider)) throw badRequest('Provedor de IA inválido: use gemini ou claude.');
+    next.provider = data.provider;
+  }
   if (data.model !== undefined) {
     if (!MODELS.some(([m]) => m === data.model)) throw badRequest('Modelo inválido.');
     next.model = data.model;
+  }
+  if (data.gemini_model !== undefined) {
+    const m = String(data.gemini_model || '').trim().replace(/^models\//, '');
+    if (!/^gemini-[a-z0-9.-]+$/i.test(m)) throw badRequest('Modelo do Gemini inválido (ex.: gemini-3.8-flash).');
+    next.gemini_model = m;
+  }
+  // Chaves (as mesmas da IA generativa): podem ser informadas aqui também
+  if (data.gemini_api_key || data.api_key) {
+    require('./assistant').saveConfig(db, user, { ...(data.gemini_api_key ? { gemini_api_key: data.gemini_api_key } : {}), ...(data.api_key ? { api_key: data.api_key } : {}) });
   }
   if (data.r1_minutes !== undefined) {
     const m = Number(data.r1_minutes);
@@ -149,7 +160,7 @@ function save(db, user, data = {}) {
     }
   }
   setSetting(db, 'wa_agent', next);
-  audit(db, user, 'integration', null, 'agente_ia_whatsapp', { ligado: next.enabled, canal: next.channel, modelo: next.model });
+  audit(db, user, 'integration', null, 'agente_ia_whatsapp', { ligado: next.enabled, canal: next.channel, provedor: next.provider, modelo: modelOf(next) });
   return view(db, user);
 }
 
@@ -223,7 +234,7 @@ async function onInbound(db, convId, msgId) {
       const last = db.prepare("SELECT MAX(id) AS id FROM wa_messages WHERE conversation_id = ? AND direction = 'in'").get(convId).id;
       if (!last || (w.ai_seen_id && w.ai_seen_id >= last)) break;
       db.prepare('UPDATE wa_conversations SET ai_seen_id = ? WHERE id = ?').run(last, convId);
-      result = await runTurn(db, r.cfg, r.llm, w);
+      result = await runTurn(db, r.cfg, w);
       turns++;
     }
     return result;
@@ -531,7 +542,7 @@ function history(db, w) {
   return msgs;
 }
 
-async function runTurn(db, cfg, llm, w0) {
+async function runTurn(db, cfg, w0) {
   const started = Date.now();
   let w = tx(db, () => ensureLead(db, w0));
   if (!w.ai_status) setStatus(db, w.id, 'ativa', 'Atendimento iniciado pela IA');
@@ -545,55 +556,26 @@ async function runTurn(db, cfg, llm, w0) {
   const ctx = leadContext(db, w);
   const messages = history(db, w);
   if (!messages.length || messages[messages.length - 1].role !== 'user') return { skipped: 'sem_mensagem' };
-  const client = require('./assistant').llmClient(llm);
-  const sys = [
-    { type: 'text', text: systemPrompt(db, cfg), cache_control: { type: 'ephemeral' } },
-    { type: 'text', text: `Dados do lead no CRM (atualizados agora):\n${JSON.stringify(ctx.data)}` },
-  ];
-  const toolDefs = tools(db);
-  const usage = { in: 0, out: 0 };
+  let usage = { in: 0, out: 0 };
   let reply = '';
   try {
-    for (let i = 0; i < 6; i++) {
-      if (Date.now() - started > MAX_TURN_MS) throw new Error('tempo esgotado');
-      const model = cfg.model || 'claude-opus-5-5';
-      const res = await client.beta.messages.create({
-        model,
-        max_tokens: 2000,
-        // Modelo reserva do lado da Anthropic (o Haiku não tem: o parâmetro não vai para ele)
-        ...(/haiku/.test(model) ? {} : { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' }),
-        output_config: { effort: 'low' },
-        system: sys,
-        tools: toolDefs,
-        messages,
-      });
-      usage.in += (res.usage?.input_tokens || 0) + (res.usage?.cache_read_input_tokens || 0) + (res.usage?.cache_creation_input_tokens || 0);
-      usage.out += res.usage?.output_tokens || 0;
-      if (res.stop_reason === 'refusal') {
-        ctx.handoff = { status: 'humano', reason: 'A IA não pôde responder (recusa do modelo)' };
-        break;
-      }
-      const content = res.content || [];
-      const text = content.filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
-      const uses = content.filter((b) => b.type === 'tool_use');
-      if (res.stop_reason === 'tool_use' && uses.length) {
-        messages.push({ role: 'assistant', content });
-        const results = [];
-        for (const u of uses) {
-          const out = await runTool(db, cfg, w, ctx, u.name, u.input || {});
-          results.push({ type: 'tool_result', tool_use_id: u.id, content: JSON.stringify(out), ...(out && out.erro ? { is_error: true } : {}) });
-        }
-        // Dados do lead mudaram (triagem, etapa): o contexto da próxima chamada vai atualizado
+    const r = await llm.run(db, {
+      provider: cfg.provider, model: modelOf(cfg), system: systemPrompt(db, cfg),
+      context: `Dados do lead no CRM (atualizados agora):\n${JSON.stringify(ctx.data)}`,
+      messages, tools: tools(db), deadline: started + MAX_TURN_MS,
+      onTool: async (name, input) => {
+        const out = await runTool(db, cfg, w, ctx, name, input || {});
+        // Dados do lead mudaram (triagem, etapa): os próximos passos usam o contexto atualizado
         Object.assign(ctx, leadContext(db, db.prepare('SELECT * FROM wa_conversations WHERE id = ?').get(w.id)), { handoff: ctx.handoff });
-        messages.push({ role: 'user', content: results });
-        continue;
-      }
-      reply = text;
-      break;
-    }
+        return out;
+      },
+    });
+    usage = r.usage;
+    if (r.stop === 'recusa') ctx.handoff = { status: 'humano', reason: 'A IA não pôde responder (recusa do modelo)' };
+    reply = r.text;
   } catch (e) {
-    log(db, w, 'erro', e.message, usage);
-    ctx.handoff = { status: 'humano', reason: 'A IA ficou indisponível' };
+    log(db, w, 'erro', `${llm.PROVIDERS[llm.providerOf(cfg.provider)]}: ${e.message}`, usage);
+    ctx.handoff = { status: 'humano', reason: e.kind === 'rate_limit' ? 'Limite de uso da IA atingido (tente mais tarde ou troque o provedor)' : e.kind === 'auth' ? 'Chave da IA inválida' : 'A IA ficou indisponível' };
     reply = 'Obrigada pela mensagem! Um especialista da nossa equipe vai continuar o seu atendimento em instantes.';
   }
   w = db.prepare('SELECT * FROM wa_conversations WHERE id = ?').get(w.id);

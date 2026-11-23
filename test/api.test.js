@@ -2662,7 +2662,7 @@ test('IA Vero: insights do lead (próximo passo, canal, BANT, objeções), chat 
   const seen = [];
   assistant.setClientFactory(() => ({ beta: { messages: { create: async (req) => { seen.push(req); return { stop_reason: 'end_turn', content: [{ type: 'thinking', thinking: '...' }, { type: 'text', text: 'Resposta da IA generativa.' }] }; } } } }));
   try {
-    const cfg = await call('admin', 'PUT', '/api/ia/config', { enabled: true, api_key: 'sk-ant-teste' });
+    const cfg = await call('admin', 'PUT', '/api/ia/config', { enabled: true, provider: 'claude', api_key: 'sk-ant-teste' });
     assert.equal(cfg.status, 200, JSON.stringify(cfg.data));
     assert.equal(cfg.data.generative, true);
     const g = await call('c1', 'POST', `/api/ia/leads/${c.data.id}/conversa`, { message: 'Como conduzir a próxima conversa?' });
@@ -2684,7 +2684,7 @@ test('IA Vero: insights do lead (próximo passo, canal, BANT, objeções), chat 
     assert.match(e.data.note, /motor interno/);
   } finally {
     assistant.setClientFactory(null);
-    await call('admin', 'PUT', '/api/ia/config', { enabled: false });
+    await call('admin', 'PUT', '/api/ia/config', { enabled: false, provider: 'gemini', clear_claude_key: true });
   }
 });
 
@@ -3279,7 +3279,7 @@ test('Agente de IA no WhatsApp: lead novo no número central, triagem, horários
   } } } }));
   try {
     await call('admin', 'PUT', '/api/ia/config', { api_key: 'sk-ant-teste' });
-    const cfg = await call('admin', 'PUT', '/api/whatsapp/agente', { enabled: true, channel: 'lite', instance_id: inst.data.id, model: 'claude-sonnet-5-5', notice_hours: 0, days: [0, 1, 2, 3, 4, 5, 6], start: '07:00', end: '22:00', r1_minutes: 45 });
+    const cfg = await call('admin', 'PUT', '/api/whatsapp/agente', { enabled: true, channel: 'lite', instance_id: inst.data.id, provider: 'claude', model: 'claude-sonnet-5-5', notice_hours: 0, days: [0, 1, 2, 3, 4, 5, 6], start: '07:00', end: '22:00', r1_minutes: 45 });
     assert.equal(cfg.status, 200, JSON.stringify(cfg.data));
     assert.equal(cfg.data.ready, true);
     assert.equal(appDb.prepare('SELECT only_known FROM wa_instances WHERE id = ?').get(inst.data.id).only_known, 0, 'número central registra leads novos');
@@ -3397,8 +3397,144 @@ test('Agente de IA no WhatsApp: lead novo no número central, triagem, horários
   } finally {
     assistant.setClientFactory(null);
     delete process.env.WA_AGENT_DEBOUNCE_MS;
+    await call('admin', 'PUT', '/api/whatsapp/agente', { enabled: false, provider: 'gemini', model: 'claude-opus-5-5' });
+    await call('admin', 'PUT', '/api/ia/config', { clear_claude_key: true });
+    await call('admin', 'PUT', '/api/whatsapp/lite/config', { sandbox: false });
+  }
+});
+
+test('IA com Gemini (padrão) e troca para o Claude: agente do WhatsApp e IA Vero pela API REST do Gemini', async () => {
+  const llm = require('../server/services/llm');
+  const assistant = require('../server/services/assistant');
+  process.env.WA_AGENT_DEBOUNCE_MS = '0';
+  await call('admin', 'PUT', '/api/whatsapp/lite/config', { url: '', clear_key: true, sandbox: true });
+  const inst = await call('admin', 'POST', '/api/whatsapp/lite/instancias', { name: 'Central Gemini' });
+  await call('admin', 'POST', `/api/whatsapp/lite/instancias/${inst.data.id}/simular-conexao`, { phone: '5151999991111' });
+  const token = appDb.prepare('SELECT webhook_token FROM wa_instances WHERE id = ?').get(inst.data.id).webhook_token;
+  let seq = 0;
+  const say = (from, text, pushName = 'Gil') => fetch(`${base}/api/whatsapp/lite/webhook/${token}`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event: 'messages.upsert', data: { key: { remoteJid: `${from}@s.whatsapp.net`, fromMe: false, id: `GM-${++seq}` }, pushName, message: { conversation: text }, messageTimestamp: Math.floor(Date.now() / 1000) } }) }).then((r) => r.json());
+
+  // Padrão: Gemini (sem chave ainda: o agente não fica pronto)
+  const st0 = (await call('admin', 'GET', '/api/ia/status')).data;
+  assert.equal(st0.provider, 'gemini');
+  assert.equal(st0.model, 'gemini-3.8-flash');
+  assert.equal(st0.providers.gemini.has_key, false);
+  const off = await call('admin', 'PUT', '/api/whatsapp/agente', { enabled: true, channel: 'lite', instance_id: inst.data.id, notice_hours: 0, days: [0, 1, 2, 3, 4, 5, 6], start: '07:00', end: '22:00' });
+  assert.equal(off.data.config.provider, 'gemini');
+  assert.equal(off.data.ready, false);
+  assert.equal(off.data.reason, 'sem_chave');
+
+  // API do Gemini simulada no formato REST oficial
+  const reqs = [];
+  let mode = 'ok';
+  llm.setGeminiFetch(async (url, init) => {
+    const body = init.body ? JSON.parse(init.body) : null;
+    reqs.push({ url, headers: init.headers, body });
+    const json = (status, data) => ({ ok: status < 400, status, json: async () => data });
+    if (/\/models\?/.test(url)) {
+      return json(200, { models: [
+        { name: 'models/gemini-3.8-flash', displayName: 'Gemini 3.8 Flash', supportedGenerationMethods: ['generateContent', 'countTokens'] },
+        { name: 'models/gemini-3.5-flash-lite', displayName: 'Gemini 3.5 Flash-Lite', supportedGenerationMethods: ['generateContent'] },
+        { name: 'models/gemini-embedding-001', supportedGenerationMethods: ['embedContent'] },
+      ] });
+    }
+    if (mode === 'limite') return json(429, { error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'Quota exceeded' } });
+    const usage = { usageMetadata: { promptTokenCount: 800, candidatesTokenCount: 40, thoughtsTokenCount: 20 } };
+    const last = body.contents[body.contents.length - 1];
+    const fr = last.parts.find((p) => p.functionResponse);
+    if (fr) return json(200, { candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ text: 'Anotado! E quanto você consegue investir por mês?' }] } }], ...usage });
+    if (/IA Vero/.test(body.systemInstruction.parts[0].text)) return json(200, { candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ text: 'Sugestão do Gemini para o lead.' }] } }], ...usage });
+    const text = last.parts[0].text || '';
+    if (/apartamento/.test(text)) {
+      return json(200, { candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ functionCall: { id: 'fc-1', name: 'salvar_triagem', args: { interesse: 'sim', dor: 'sim', dor_descricao: 'comprar apartamento', impacto: 'curto' } }, thoughtSignature: 'c2lnLTE=' }] } }], ...usage });
+    }
+    return json(200, { candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ text: 'pensando...', thought: true }, { text: 'Olá! Sou a Vero, assistente virtual. Como posso ajudar?' }] } }], ...usage });
+  });
+  try {
+    // Chave do Gemini informada na própria tela do agente
+    const on = await call('admin', 'PUT', '/api/whatsapp/agente', { gemini_api_key: 'AIza-teste-gemini' });
+    assert.equal(on.data.ready, true, JSON.stringify(on.data.reason));
+    assert.equal(on.data.llm.provider, 'gemini');
+    assert.equal(on.data.llm.model, 'gemini-3.8-flash');
+    const models = await call('admin', 'GET', '/api/ia/modelos-gemini');
+    assert.deepEqual(models.data.models.map((m) => m.value), ['gemini-3.8-flash', 'gemini-3.5-flash-lite'], 'só modelos de texto');
+    assert.equal((await call('c1', 'GET', '/api/ia/modelos-gemini')).status, 403);
+
+    // 1) Primeira mensagem: resposta de texto (o raciocínio do modelo não vai para o cliente)
+    reqs.length = 0;
+    const r1 = await say('5511966001100', 'Oi');
+    assert.equal(r1.agente, 1, JSON.stringify(r1));
+    const g = reqs[0];
+    assert.match(g.url, /^https:\/\/generativelanguage\.googleapis\.com\/v1\/models\/gemini-3\.8-flash:generateContent$/);
+    assert.equal(g.headers['x-goog-api-key'], 'AIza-teste-gemini');
+    assert.ok(!JSON.stringify(g.body).includes('AIza-teste-gemini'), 'a chave vai só no cabeçalho');
+    assert.match(g.body.systemInstruction.parts[0].text, /assistente virtual/);
+    const decls = g.body.tools[0].functionDeclarations;
+    assert.ok(decls.find((d) => d.name === 'salvar_triagem').parametersJsonSchema.properties.impacto.enum.includes('curto'));
+    assert.equal(decls.find((d) => d.name === 'horarios_r1').parametersJsonSchema, undefined, 'sem parâmetros');
+    assert.equal(g.body.contents[0].role, 'user');
+    const conv = appDb.prepare("SELECT * FROM wa_conversations WHERE peer = '5511966001100'").get();
+    const out1 = appDb.prepare("SELECT body, ai FROM wa_messages WHERE conversation_id = ? AND direction = 'out'").get(conv.id);
+    assert.equal(out1.body, 'Olá! Sou a Vero, assistente virtual. Como posso ajudar?');
+    assert.equal(out1.ai, 1);
+
+    // 2) Chamada de função: triagem salva e o conteúdo do modelo volta igual (com a assinatura), resultado com papel "user"
+    reqs.length = 0;
+    await say('5511966001100', 'Quero um apartamento em até 3 meses');
+    assert.equal(reqs.length, 2);
+    const second = reqs[1].body.contents;
+    const modelTurn = second[second.length - 2];
+    assert.equal(modelTurn.role, 'model');
+    assert.equal(modelTurn.parts[0].thoughtSignature, 'c2lnLTE=');
+    const resp = second[second.length - 1];
+    assert.equal(resp.role, 'user');
+    assert.equal(resp.parts[0].functionResponse.name, 'salvar_triagem');
+    assert.equal(resp.parts[0].functionResponse.id, 'fc-1');
+    assert.equal(resp.parts[0].functionResponse.response.salvo, true);
+    assert.equal(second.filter((x) => x.role === 'model')[0].parts[0].text, 'Olá! Sou a Vero, assistente virtual. Como posso ajudar?', 'histórico: IA = model');
+    const opp = appDb.prepare("SELECT triage FROM opportunities WHERE contact_id = ? AND status = 'aberta'").get(conv.contact_id);
+    assert.equal(JSON.parse(opp.triage).impacto, 'curto');
+    const log = appDb.prepare("SELECT tokens_in, tokens_out FROM wa_agent_log WHERE conversation_id = ? AND action = 'respondeu' ORDER BY id DESC LIMIT 1").get(conv.id);
+    assert.equal(log.tokens_in, 1600);
+    assert.equal(log.tokens_out, 120);
+
+    // 3) Limite do plano gratuito: cortesia e passagem ao especialista com o motivo
+    mode = 'limite';
+    await say('5511966002200', 'Olá', 'Lia');
+    const conv2 = appDb.prepare("SELECT * FROM wa_conversations WHERE peer = '5511966002200'").get();
+    assert.equal(conv2.ai_status, 'humano');
+    assert.match(conv2.ai_reason, /Limite de uso/);
+    mode = 'ok';
+
+    // 4) IA Vero do painel do lead com o Gemini
+    await call('admin', 'PUT', '/api/ia/config', { enabled: true });
+    const lead = await call('c1', 'POST', '/api/cadastros', { name: 'Lead IA Gemini', phone1: '11 96600-3300', origin: 'site', relationship: 'lead' });
+    const chat = await call('c1', 'POST', `/api/ia/leads/${lead.data.id}/conversa`, { message: 'Qual o próximo passo?' });
+    assert.equal(chat.data.engine, 'gemini');
+    assert.equal(chat.data.answer, 'Sugestão do Gemini para o lead.');
+
+    // 5) Troca para o Claude a qualquer momento (mesma tela)
+    const seen = [];
+    assistant.setClientFactory(() => ({ beta: { messages: { create: async (req) => { seen.push(req); return { stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: 'text', text: 'Resposta do Claude.' }] }; } } } }));
+    const sw = await call('admin', 'PUT', '/api/whatsapp/agente', { provider: 'claude', model: 'claude-haiku-5-5', api_key: 'sk-ant-teste2' });
+    assert.equal(sw.data.ready, true);
+    assert.equal(sw.data.llm.provider, 'claude');
+    const before = reqs.length;
+    await say('5511966004400', 'Oi', 'Rui');
+    assert.equal(reqs.length, before, 'o Gemini não é mais chamado');
+    assert.equal(seen[0].model, 'claude-haiku-5-5');
+    assert.equal(appDb.prepare("SELECT body FROM wa_messages WHERE conversation_id = (SELECT id FROM wa_conversations WHERE peer = '5511966004400') AND direction = 'out'").get().body, 'Resposta do Claude.');
+    // E volta para o Gemini
+    assert.equal((await call('admin', 'PUT', '/api/whatsapp/agente', { provider: 'gemini' })).data.llm.provider, 'gemini');
+    assert.equal((await call('admin', 'PUT', '/api/whatsapp/agente', { provider: 'openai' })).status, 400);
+    assert.equal((await call('admin', 'PUT', '/api/ia/config', { gemini_model: 'gpt-4' })).status, 400);
+  } finally {
+    llm.setGeminiFetch(null);
+    assistant.setClientFactory(null);
+    delete process.env.WA_AGENT_DEBOUNCE_MS;
     await call('admin', 'PUT', '/api/whatsapp/agente', { enabled: false });
-    await call('admin', 'PUT', '/api/ia/config', { clear_key: true });
+    await call('admin', 'PUT', '/api/ia/config', { enabled: false, clear_gemini_key: true, clear_claude_key: true });
     await call('admin', 'PUT', '/api/whatsapp/lite/config', { sandbox: false });
   }
 });

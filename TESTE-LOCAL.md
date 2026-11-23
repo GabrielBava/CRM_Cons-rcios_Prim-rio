@@ -263,8 +263,9 @@ cliques em `iniciar-windows.bat`. Ao fechar a área restrita, tudo é apagado.
       o lead é de outro especialista.
 11. **Agente de IA no WhatsApp** (dados de demonstração):
     - **Integrações › Agente de IA** como administrador: número central "Central Vero", números dos últimos 30 dias, horários
-      da R1, critério de fit e o aviso de que falta a chave da Anthropic (para a IA responder de verdade, cadastre a chave em
-      Configurações › Integrações › IA generativa).
+      da R1, critério de fit, o provedor (Gemini por padrão; troque para Claude e veja os campos mudarem) e o aviso de que
+      falta a chave (para a IA responder de verdade, crie a chave grátis no Google AI Studio e cole no campo "Chave da API
+      do Gemini"; com a chave, "Buscar os modelos da conta" lista os modelos disponíveis).
     - **Comunicação › WhatsApp** como `consultor1@demo.local`: **Juliana Prado** está com a marca **IA** e a faixa **IA
       atendendo** (teste **Assumir conversa** e **Devolver para a IA**); **Ricardo Souza** já teve a triagem feita e a R1
       agendada pela IA (etapa R1 no pipeline) e está "Com o especialista".

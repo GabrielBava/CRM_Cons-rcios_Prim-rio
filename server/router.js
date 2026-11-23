@@ -393,6 +393,7 @@ function createRouter(db) {
   add('POST', '/api/diagnosticos/:id/proposta', ({ user, params, body }) => diagnostics.generateProposal(db, user, params.id, body));
   add('GET', '/api/ia/status', ({ user }) => assistant.status(db, user));
   add('PUT', '/api/ia/config', ({ user, body }) => assistant.saveConfig(db, user, body));
+  add('GET', '/api/ia/modelos-gemini', ({ user }) => assistant.geminiModels(db, user));
   add('GET', '/api/ia/leads/:id', ({ user, params }) => assistant.insights(db, user, params.id));
   add('GET', '/api/ia/leads/:id/conversa', ({ user, params, query }) => assistant.history(db, user, params.id, query));
   add('POST', '/api/ia/leads/:id/conversa', ({ user, params, body }) => assistant.chat(db, user, params.id, body));

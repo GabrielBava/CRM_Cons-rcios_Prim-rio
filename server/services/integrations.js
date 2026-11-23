@@ -314,7 +314,8 @@ function panel(db, user, req) {
       ...(off?.configured ? { status: 'ativo', label: 'Ativo' } : off?.sandbox ? { status: 'teste', label: 'Modo de teste' } : { status: 'nao_configurado', label: 'Não configurado' }), action: off?.configured ? 'Gerenciar' : 'Conectar' },
     ...(lead ? (() => {
       const ag = safe(() => require('./waagent').ready(db)) || { ok: false, reason: 'desligado', cfg: {} };
-      const label = ag.ok ? `Atendendo · ${ag.cfg.channel === 'oficial' ? 'número oficial' : 'número central'}` : ag.reason === 'sem_chave' ? 'Falta a chave da IA' : ag.reason === 'sem_biblioteca' ? 'Falta a biblioteca da IA' : 'Desligado';
+      const prov = ag.cfg?.provider === 'claude' ? 'Claude' : 'Gemini';
+      const label = ag.ok ? `Atendendo · ${prov}` : ag.reason === 'sem_chave' ? `Falta a chave do ${prov}` : ag.reason === 'sem_biblioteca' ? 'Falta a biblioteca da IA' : 'Desligado';
       return [{ key: 'wa_agent', group: 'mensageria', name: 'Agente de IA', sub: 'Atende, qualifica e agenda a R1 no WhatsApp', icon: 'ia', scope: 'geral',
         status: ag.ok ? 'ativo' : ag.cfg?.enabled ? 'erro' : 'disponivel', label, action: ag.ok ? 'Gerenciar' : 'Configurar' }];
     })() : []),
@@ -328,7 +329,7 @@ function panel(db, user, req) {
       ...(g.connected ? { status: 'ativo', label: g.needs_reconnect ? 'Reconectar para o Meet' : `Conectado${g.google_email ? ` · ${g.google_email}` : ''}` } : g.configured ? { status: 'disponivel', label: 'Pronto para conectar' } : { status: 'nao_configurado', label: 'Não configurado' }),
       action: g.connected ? 'Gerenciar' : 'Conectar' },
     { key: 'email', group: 'sistema', name: 'E-mail (SMTP)', sub: smtp.from_email || 'Envio de e-mails do CRM', icon: 'email', scope: 'geral', ...(smtp.configured ? { status: 'ativo', label: 'Ativo' } : { status: 'nao_configurado', label: 'Não configurado' }), action: 'Configurar' },
-    { key: 'ia', group: 'sistema', name: 'IA generativa', sub: 'Claude · IA Vero no lead', icon: 'ia', scope: 'geral', ...(ai.generative ? { status: 'ativo', label: 'Ativa' } : { status: 'disponivel', label: 'Motor interno' }), action: 'Configurar' },
+    { key: 'ia', group: 'sistema', name: 'IA generativa', sub: 'Gemini ou Claude · IA Vero no lead', icon: 'ia', scope: 'geral', ...(ai.generative ? { status: 'ativo', label: `Ativa · ${ai.provider === 'claude' ? 'Claude' : 'Gemini'}` } : { status: 'disponivel', label: 'Motor interno' }), action: 'Configurar' },
     { key: 'api_leads', group: 'sistema', name: 'API de leads', sub: 'Site, formulários e conectores', icon: 'link', scope: 'geral', ...intStatus('api_leads'), action: 'Configurar' },
     { key: 'bi', group: 'sistema', name: 'Conexão BI', sub: 'Power BI, Looker Studio, Excel', icon: 'relatorios', scope: 'geral', ...intStatus('bi'), action: 'Configurar' },
   ].filter((c) => (lead || c.scope === 'usuario') && c.available !== false);

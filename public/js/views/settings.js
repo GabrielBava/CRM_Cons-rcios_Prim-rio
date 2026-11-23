@@ -135,16 +135,26 @@ function whatsappCard(w) {
   </section>`;
 }
 
-/** IA Vero: motor interno (sempre ligado) e, opcionalmente, a IA generativa da Anthropic (Claude) com a chave da empresa. */
+/**
+ * IA generativa (IA Vero do painel do lead e agente de IA do WhatsApp): Google Gemini ou Anthropic Claude, com a troca
+ * a qualquer momento. O motor interno funciona sempre, sem custo e sem enviar dados para fora.
+ */
 function aiCard(a) {
+  const p = a.providers || { gemini: {}, claude: {} };
+  const keyBadge = (x) => (x.has_key ? badge(x.from_env ? 'definida no servidor' : 'salva (cifrada)', 'ok') : badge('não informada', 'muted'));
   return html`<section class="card integ">
-    <div class="section-head"><h3>IA Vero (assistente do painel do lead)</h3>${badge(a.generative ? 'IA generativa ligada' : 'Motor interno', a.generative ? 'ok' : 'muted')}</div>
-    <p>A aba <strong>IA Vero</strong> do painel do lead sugere o próximo passo, o canal, perguntas SPIN, o checklist BANT, respostas para objeções no WhatsApp e o score. O <strong>motor interno</strong> funciona sempre, sem custo e sem enviar dados para fora. A base de conhecimento fica em <a href="#/ferramentas/ia">Ferramentas › Base da IA Vero</a>.</p>
-    <p class="small">Opcional: com a <strong>IA generativa</strong> (Claude, da Anthropic) ligada, as perguntas livres do chat são respondidas pelo modelo ${a.model}, com os dados do lead como contexto (nome, etapa, atividades e qualificação — sem CPF). Se o modelo estiver indisponível, a resposta sai do motor interno. Requer a biblioteca oficial instalada no servidor (<code>npm install @anthropic-ai/sdk</code>) e a chave da API.</p>
-    <ul class="small"><li>Biblioteca no servidor: ${a.sdk_installed ? badge('instalada', 'ok') : badge('não instalada', 'warn')}</li><li>Chave da API: ${a.has_key ? badge(a.from_env ? 'definida no config.env' : 'salva (cifrada)', 'ok') : badge('não informada', 'muted')}</li></ul>
+    <div class="section-head"><h3>IA generativa (IA Vero e agente do WhatsApp)</h3>${badge(a.generative ? `${a.provider_name} ligada` : 'Motor interno', a.generative ? 'ok' : 'muted')}</div>
+    <p>A aba <strong>IA Vero</strong> do painel do lead sugere o próximo passo, o canal, perguntas SPIN, o checklist BANT, respostas para objeções e o score. O <strong>motor interno</strong> funciona sempre, sem custo e sem enviar dados para fora. A base de conhecimento fica em <a href="#/ferramentas/ia">Ferramentas › Base da IA Vero</a>.</p>
+    <p class="small">Com a <strong>IA generativa</strong> ligada, as perguntas livres do chat são respondidas pelo provedor escolhido abaixo, com os dados do lead como contexto (sem CPF). Você pode trocar entre <strong>Google Gemini</strong> e <strong>Anthropic Claude</strong> a qualquer momento; as chaves também servem para o <a href="#/integracoes">agente de IA do WhatsApp</a>.</p>
+    <ul class="small"><li>Gemini: chave ${keyBadge(p.gemini)} · modelo <code>${a.gemini_model}</code></li><li>Claude: chave ${keyBadge(p.claude)} · biblioteca ${p.claude.sdk ? badge('instalada', 'ok') : badge('não instalada', 'warn')} · modelo <code>${a.claude_model}</code></li></ul>
+    ${p.gemini.free_tier_note ? html`<div class="alert small">${p.gemini.free_tier_note}</div>` : ''}
     ${a.can_configure ? html`<form data-ai-form class="grid" novalidate>
-      ${a.from_env ? '' : field({ name: 'api_key', label: a.has_key ? 'Chave da API (já salva; preencha só para trocar)' : 'Chave da API da Anthropic', type: 'password', placeholder: 'sk-ant-…' })}
-      ${field({ name: 'enabled', label: 'Ligar a IA generativa nas perguntas do chat (dados do lead são enviados à Anthropic)', type: 'checkbox', value: a.enabled, full: true })}
+      <div class="field"><label>Provedor da IA Vero</label><select name="provider"><option value="gemini" ${a.provider === 'gemini' ? 'selected' : ''}>Google Gemini (tem plano gratuito)</option><option value="claude" ${a.provider === 'claude' ? 'selected' : ''}>Anthropic Claude</option></select></div>
+      <div class="field"><label>Modelo do Gemini</label><input name="gemini_model" value="${a.gemini_model}" list="gemini-models" placeholder="gemini-3.8-flash"><datalist id="gemini-models"></datalist><small class="hint"><a href="#" data-gemini-models>Buscar os modelos da conta</a></small></div>
+      ${p.gemini.from_env ? '' : field({ name: 'gemini_api_key', label: p.gemini.has_key ? 'Chave do Gemini (já salva; preencha só para trocar)' : 'Chave da API do Gemini (Google AI Studio)', type: 'password', placeholder: 'AIza…' })}
+      <div class="field"><label>Modelo do Claude</label><select name="claude_model">${(p.claude.models || []).map((m) => html`<option value="${m.value}" ${a.claude_model === m.value ? 'selected' : ''}>${m.label}</option>`)}</select></div>
+      ${p.claude.from_env ? '' : field({ name: 'api_key', label: p.claude.has_key ? 'Chave do Claude (já salva; preencha só para trocar)' : 'Chave da API da Anthropic', type: 'password', placeholder: 'sk-ant-…' })}
+      ${field({ name: 'enabled', label: 'Ligar a IA generativa nas perguntas do chat da IA Vero (dados do lead são enviados ao provedor escolhido)', type: 'checkbox', value: a.enabled, full: true })}
       <div class="inline-actions full"><button class="btn primary" type="submit">Salvar</button></div>
     </form>` : ''}
   </section>`;
@@ -419,12 +429,31 @@ const RENDER = {
         toastError(ex);
       }
     });
+    on(box, 'click', '[data-gemini-models]', async (e) => {
+      e.preventDefault();
+      try {
+        const r = await get('/api/ia/modelos-gemini');
+        if (r.error || !r.models.length) return toastError(new Error(r.error || 'Salve a chave do Gemini e tente de novo.'));
+        const dl = box.querySelector('#gemini-models');
+        dl.innerHTML = '';
+        for (const m of r.models) {
+          const o = document.createElement('option');
+          o.value = m.value;
+          o.label = m.label;
+          dl.appendChild(o);
+        }
+        toast(`${r.models.length} modelo(s) disponível(is) na conta. Escolha no campo "Modelo do Gemini".`);
+      } catch (ex) {
+        toastError(ex);
+      }
+      return undefined;
+    });
     on(box, 'submit', '[data-ai-form]', async (e, f) => {
       e.preventDefault();
       try {
         const d = formData(f);
-        await put('/api/ia/config', { api_key: d.api_key || undefined, enabled: !!f.enabled.checked });
-        toast('IA Vero configurada.');
+        await put('/api/ia/config', { provider: d.provider, gemini_model: d.gemini_model || undefined, claude_model: d.claude_model || undefined, api_key: d.api_key || undefined, gemini_api_key: d.gemini_api_key || undefined, enabled: !!f.enabled.checked });
+        toast('IA generativa configurada.');
         redraw();
       } catch (ex) {
         toastError(ex);
