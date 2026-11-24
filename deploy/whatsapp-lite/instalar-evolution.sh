@@ -27,9 +27,22 @@ fi
 [ -n "$DOMINIO" ] || falha "informe o subdomínio do conector: sudo DOMINIO=whatsapp.veroconsorciosbr.com.br bash instalar.sh"
 
 export DEBIAN_FRONTEND=noninteractive
-etapa "Pacotes básicos"
-apt-get update -y -qq >/dev/null
-apt-get install -y -qq ca-certificates curl openssl >/dev/null
+# VPS recém-ligada: o Ubuntu costuma estar instalando atualizações automáticas; espera elas terminarem
+esperar_apt() {
+  command -v fuser >/dev/null 2>&1 || return 0
+  local avisou=0
+  for _ in $(seq 1 120); do
+    fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock >/dev/null 2>&1 || return 0
+    [ "$avisou" = 1 ] || { echo "O Ubuntu está instalando atualizações automáticas; aguardando terminar (até 10 minutos)..."; avisou=1; }
+    sleep 5
+  done
+}
+APT_OPCOES=(-y -qq -o DPkg::Lock::Timeout=600)
+
+etapa "Pacotes básicos (1 a 2 minutos; a tela fica parada, é normal)"
+esperar_apt
+apt-get update "${APT_OPCOES[@]}" >/dev/null
+apt-get install "${APT_OPCOES[@]}" ca-certificates curl openssl >/dev/null
 
 # ---------------------------------------------------------------- endereço do conector
 eh_ip() { [[ "$1" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; }
@@ -79,11 +92,12 @@ LIVRE_GB="$(df -Pk / | awk 'NR==2 {print int($4/1024/1024)}')"
 
 # ---------------------------------------------------------------- Docker
 if ! command -v docker >/dev/null 2>&1; then
-  etapa "Instalando o Docker (alguns minutos)"
+  etapa "Instalando o Docker (3 a 5 minutos; a tela fica parada, é normal)"
+  esperar_apt
   curl -fsSL https://get.docker.com | sh >/dev/null
 fi
 systemctl enable --now docker >/dev/null 2>&1 || true
-docker compose version >/dev/null 2>&1 || apt-get install -y -qq docker-compose-plugin >/dev/null 2>&1 || true
+docker compose version >/dev/null 2>&1 || apt-get install "${APT_OPCOES[@]}" docker-compose-plugin >/dev/null 2>&1 || true
 docker compose version >/dev/null 2>&1 || falha "o Docker Compose não ficou disponível nesta VPS."
 docker info >/dev/null 2>&1 || falha "o Docker não iniciou nesta VPS. Confira se o plano é uma VPS com virtualização KVM (o Docker não roda em alguns tipos de VPS)."
 
