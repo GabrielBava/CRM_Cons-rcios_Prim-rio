@@ -46,16 +46,32 @@ function liteConfig(db) {
  * Endereço do CRM que o conector usa para avisar as mensagens (webhook). Padrão: o endereço público do CRM. No teste
  * no computador (CRM e conector no Docker), o conector enxerga o CRM por outro nome (ex.: http://crm:3000).
  */
+const hostOf = (u) => {
+  try {
+    return new URL(String(u)).host.toLowerCase();
+  } catch {
+    return '';
+  }
+};
+
 function webhookBase(db, req) {
-  const set = String(process.env.EVOLUTION_WEBHOOK_BASE || getSetting(db, 'walite_webhook_base') || '').trim().replace(/\/+$/, '');
+  let set = String(process.env.EVOLUTION_WEBHOOK_BASE || getSetting(db, 'walite_webhook_base') || '').trim().replace(/\/+$/, '');
+  // Endereço do próprio conector colado por engano no campo do CRM: o conector mandaria os avisos para ele mesmo
+  if (set && hostOf(set) && hostOf(set) === hostOf(liteConfig(db).url)) set = '';
   return set || require('./meetings').publicUrl(db, req);
 }
+const hookUrl = (db, req, inst) => `${webhookBase(db, req)}/api/whatsapp/lite/webhook/${inst.webhook_token}`;
+const hookBody = (url) => ({ enabled: true, url, byEvents: false, base64: false, events: EVENTS });
+/** Endereço do webhook para mostrar na tela, sem o segredo da instância. */
+const maskHook = (u) => String(u || '').replace(/(\/webhook\/[A-Za-z0-9_-]{4})[A-Za-z0-9_-]+/, '$1…');
 
 async function saveConfig(db, user, data = {}) {
   if (user.role !== 'admin') throw forbidden('Só o administrador configura o servidor do WhatsApp Lite.');
   if (data.webhook_base !== undefined) {
     const b = clean(data.webhook_base);
     if (b && !/^https?:\/\/[^\s/]+(:\d+)?\/?$/i.test(b)) throw badRequest('Endereço do CRM para o webhook inválido (ex.: https://crm.seudominio.com.br).');
+    const connector = data.url !== undefined ? clean(data.url) : liteConfig(db).url;
+    if (b && hostOf(b) && hostOf(b) === hostOf(connector)) throw badRequest('Esse é o endereço do conector. No campo "Endereço do CRM para o webhook" vai o endereço do CRM: deixe em branco para usar o do próprio CRM.');
     setSetting(db, 'walite_webhook_base', b ? b.replace(/\/+$/, '') : '');
   }
   if (data.url !== undefined) {
@@ -184,7 +200,23 @@ function view(db, user, inst) {
     owner_id: inst.owner_id, owner_name: owner?.name || null, access_all: inst.access_all, access_all_label: LEVEL_LABEL[inst.access_all], only_known: !!inst.only_known,
     members_with_access: members, conversations: convs.n || 0, unread: convs.u || 0, connected_at: inst.connected_at, created_at: inst.created_at,
     my_access: accessOf(db, user, inst), can_manage: canManage(user, inst),
+    ...(canManage(user, inst) ? {
+      last_event_at: inst.last_event_at || null, ignored_count: inst.ignored_count || 0, ignored_at: inst.ignored_at || null,
+      ignored_reason: inst.ignored_reason || null, ignored_label: IGNORED_LABEL[inst.ignored_reason] || null,
+      ignored_who: inst.ignored_reason === 'lid' ? 'contato sem número visível' : fmtPhone(inst.ignored_peer),
+    } : {}),
   };
+}
+
+const IGNORED_LABEL = {
+  fora_do_crm: 'número fora do CRM (este número registra só conversas com cadastros do CRM)',
+  lid: 'o WhatsApp mandou a mensagem sem o número de quem escreveu, e o CRM ainda não conhecia esse contato',
+};
+
+/** Mensagem recebida que não entrou no CRM: conta e guarda o último motivo, para o administrador conferir. */
+function noteIgnored(db, inst, reason, who) {
+  db.prepare('UPDATE wa_instances SET ignored_count = COALESCE(ignored_count, 0) + 1, ignored_at = ?, ignored_reason = ?, ignored_peer = ? WHERE id = ?')
+    .run(nowIso(), reason, who || null, inst.id);
 }
 
 function overview(db, user, req) {
@@ -240,8 +272,7 @@ async function createInstance(db, user, req, data = {}) {
   let qr = null;
   try {
     if (cfg.configured) {
-      const url = `${webhookBase(db, req)}/api/whatsapp/lite/webhook/${token}`;
-      const webhook = { enabled: true, url, byEvents: false, base64: false, events: EVENTS };
+      const webhook = hookBody(`${webhookBase(db, req)}/api/whatsapp/lite/webhook/${token}`);
       const r = await evo(cfg, 'POST', '/instance/create', { instanceName: key, integration: 'WHATSAPP-BAILEYS', qrcode: true, groupsIgnore: true, rejectCall: false, alwaysOnline: false, readMessages: false, readStatus: false, syncFullHistory: false, webhook });
       // Versões anteriores da v2 ignoram o webhook na criação: confirma pela rota própria
       await evo(cfg, 'POST', `/webhook/set/${key}`, { webhook }).catch(() => null);
@@ -284,11 +315,13 @@ async function markConnected(db, cfg, inst, info = {}) {
 }
 
 /** Novo QR Code para (re)conectar o número. */
-async function reconnect(db, user, id) {
+async function reconnect(db, user, id, req) {
   const inst = loadInstance(db, user, id, { manage: true });
   const cfg = liteConfig(db);
   let qr;
   if (cfg.configured) {
+    // Aproveita para recadastrar o endereço de aviso do CRM (corrige um endereço antigo ou errado)
+    if (req) await evo(cfg, 'POST', `/webhook/set/${inst.instance_key}`, { webhook: hookBody(hookUrl(db, req, inst)) }).catch(() => null);
     const r = await evo(cfg, 'GET', `/instance/connect/${inst.instance_key}`);
     if (r?.instance?.state === 'open') {
       await markConnected(db, cfg, inst);
@@ -298,6 +331,42 @@ async function reconnect(db, user, id) {
   } else qr = sandboxQr(`${inst.instance_key}${Date.now()}`);
   db.prepare("UPDATE wa_instances SET qr = ?, qr_at = ?, status = CASE WHEN status = 'conectado' THEN status ELSE 'aguardando' END, updated_at = ? WHERE id = ?").run(qr, nowIso(), nowIso(), inst.id);
   return instanceStatus(db, user, inst.id);
+}
+
+/**
+ * Conferir recebimento: o conector está avisando o CRM? Confere o número, corrige o endereço de aviso (webhook)
+ * cadastrado no conector e testa se o CRM responde pelo endereço público que o conector usa.
+ */
+async function checkReceiving(db, user, id, req) {
+  const inst = loadInstance(db, user, id, { manage: true });
+  const cfg = liteConfig(db);
+  if (!cfg.configured) throw badRequest('Sem o servidor do WhatsApp Lite configurado (modo de teste), não há recebimento para conferir.');
+  const expected = hookUrl(db, req, inst);
+  const out = { webhook: maskHook(expected), fixed: false, previous: null, state: null, crm_ok: false, crm_message: null };
+  const st = await evo(cfg, 'GET', `/instance/connectionState/${inst.instance_key}`).catch(() => null);
+  out.state = st?.instance?.state || st?.state || null;
+  if (out.state === 'open' && inst.status !== 'conectado') await markConnected(db, cfg, inst);
+  const found = await evo(cfg, 'GET', `/webhook/find/${inst.instance_key}`).catch(() => null);
+  const events = Array.isArray(found?.events) ? found.events : [];
+  if (!(found?.enabled && found?.url === expected && EVENTS.every((e) => events.includes(e)))) {
+    await evo(cfg, 'POST', `/webhook/set/${inst.instance_key}`, { webhook: hookBody(expected) });
+    out.fixed = true;
+    out.previous = found?.url ? `${maskHook(found.url)}${found.enabled ? '' : ' (desligado)'}` : 'nenhum';
+  }
+  // O CRM chama o próprio endereço público, o mesmo que o conector usa
+  try {
+    const r = await fetch(expected, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"event":"diagnostico"}', signal: AbortSignal.timeout(10000) });
+    const j = await r.json().catch(() => null);
+    out.crm_ok = r.ok && j?.evento === 'diagnostico';
+    if (!out.crm_ok) {
+      out.crm_message = `O endereço do CRM que o conector usa respondeu ${r.status}.${r.status === 401 || r.status === 403
+        ? ' Ele pode estar protegido por login (Vercel): defina PUBLIC_URL com o domínio do CRM ou preencha "Endereço do CRM para o webhook".' : ''}`;
+    }
+  } catch (e) {
+    out.crm_message = `O CRM não conseguiu acessar o endereço que o conector usa (${e.name === 'TimeoutError' ? 'sem resposta' : e.cause?.code || e.message}). Defina PUBLIC_URL com o endereço público do CRM.`;
+  }
+  audit(db, user, 'whatsapp_lite', inst.id, 'recebimento_conferido', { fixed: out.fixed, crm_ok: out.crm_ok });
+  return { ...out, instance: view(db, user, instRow(db, inst.id)) };
 }
 
 /** Modo de teste: simula a leitura do QR Code. */
@@ -349,7 +418,8 @@ function updateInstance(db, user, id, data = {}) {
     params.push(data.access_all);
   }
   if (data.only_known !== undefined) {
-    sets.push('only_known = ?');
+    // Mudou a regra: a contagem de mensagens que não entraram recomeça
+    sets.push('only_known = ?', 'ignored_count = 0', 'ignored_reason = NULL');
     params.push(data.only_known ? 1 : 0);
   }
   if (sets.length) db.prepare(`UPDATE wa_instances SET ${sets.join(', ')}, updated_at = ? WHERE id = ?`).run(...params, nowIso(), inst.id);
@@ -507,12 +577,17 @@ function parseMessage(d) {
   }
 }
 
-/** Número do cliente na mensagem (com o novo endereçamento "@lid", o número vem em senderPn/remoteJidAlt). */
-function peerOf(key = {}) {
+/**
+ * Quem é o cliente na mensagem: o número e, no endereçamento novo do WhatsApp, o LID (identificador sem número).
+ * O número vem em remoteJid ou, quando a mensagem chega pelo LID, em remoteJidAlt/senderPn; às vezes só vem o LID.
+ */
+function addressOf(key = {}) {
   const jid = String(key.remoteJid || '');
   if (/@g\.us$|@broadcast$|@newsletter$/.test(jid)) return null;
-  if (/@lid$/.test(jid)) return jidNumber(key.senderPn || key.remoteJidAlt || key.participantPn);
-  return jidNumber(jid);
+  const all = [jid, key.remoteJidAlt, key.senderPn, key.participantPn, key.senderLid, key.participantLid].map((x) => String(x || ''));
+  const pn = all.find((x) => /@(s\.whatsapp\.net|c\.us)$/.test(x));
+  const lid = all.find((x) => /@lid$/.test(x));
+  return { peer: pn ? jidNumber(pn) : null, lid: lid ? digits(lid.split('@')[0].split(':')[0]) || null : null };
 }
 
 function receiveWebhook(db, token, body = {}) {
@@ -521,6 +596,7 @@ function receiveWebhook(db, token, body = {}) {
   const ev = String(body.event || '').toLowerCase().replace(/_/g, '.');
   const items = Array.isArray(body.data) ? body.data : body.data?.messages && Array.isArray(body.data.messages) ? body.data.messages : [body.data || {}];
   const out = { evento: ev, mensagens: 0, status: 0 };
+  if (ev === 'diagnostico') return out;
   db.prepare('UPDATE wa_instances SET last_event_at = ? WHERE id = ?').run(nowIso(), inst.id);
   if (ev === 'qrcode.updated') {
     const qr = qrOf(body.data?.qrcode || body.data);
@@ -559,9 +635,17 @@ function receiveWebhook(db, token, body = {}) {
 function inbound(db, inst, d) {
   const key = d.key || {};
   const wamid = clean(key.id);
-  const peer = peerOf(key);
-  if (!wamid || !peer) return false;
+  const addr = addressOf(key);
+  if (!wamid || !addr) return false;
   if (db.prepare('SELECT 1 FROM wa_messages WHERE wamid = ?').get(wamid)) return false;
+  const { lid } = addr;
+  let { peer } = addr;
+  // Só o LID, sem o número: reconhece pelo LID já visto numa conversa (de preferência deste número conectado)
+  if (!peer && lid) peer = db.prepare("SELECT peer FROM wa_conversations WHERE channel = 'lite' AND lid = ? AND peer IS NOT NULL ORDER BY (instance_id = ?) DESC, id LIMIT 1").get(lid, inst.id)?.peer || null;
+  if (!peer) {
+    if (lid && !key.fromMe) noteIgnored(db, inst, 'lid', null);
+    return false;
+  }
   const parsed = parseMessage(d);
   if (!parsed) return false;
   const wa = require('./whatsapp');
@@ -570,7 +654,10 @@ function inbound(db, inst, d) {
   const cands = wa.waCandidates(peer);
   let conv = db.prepare(`SELECT * FROM wa_conversations WHERE channel = 'lite' AND instance_id = ? AND peer IN (${cands.map(() => '?').join(',')}) ORDER BY id LIMIT 1`).get(inst.id, ...cands);
   const agent = require('./waagent');
-  if (!conv && !contact && inst.only_known && !(agent.handlesInstance(db, inst.id) && agent.allowsPeer(db, peer))) return false;
+  if (!conv && !contact && inst.only_known && !(agent.handlesInstance(db, inst.id) && agent.allowsPeer(db, peer))) {
+    if (!key.fromMe) noteIgnored(db, inst, 'fora_do_crm', peer);
+    return false;
+  }
   const fromMe = !!key.fromMe;
   // Eco de uma mensagem que o próprio CRM acabou de enviar (o servidor às vezes avisa antes de responder o envio):
   // só registra o ID na mensagem que já está no CRM, sem duplicar e sem contar como resposta de uma pessoa
@@ -580,6 +667,7 @@ function inbound(db, inst, d) {
       .get(conv.id, recent, parsed.text);
     if (pend) {
       db.prepare('UPDATE wa_messages SET wamid = ? WHERE id = ?').run(wamid, pend.id);
+      if (lid && conv.lid !== lid) db.prepare('UPDATE wa_conversations SET lid = ? WHERE id = ?').run(lid, conv.id);
       return false;
     }
   }
@@ -593,6 +681,7 @@ function inbound(db, inst, d) {
         .run(`lite:${inst.id}:${peer}`, inst.id, peer, contact?.id ?? null, fromMe ? null : clean(d.pushName), contact?.owner_id ?? inst.owner_id, at).lastInsertRowid);
       conv = db.prepare('SELECT * FROM wa_conversations WHERE id = ?').get(id);
     }
+    if (lid && conv.lid !== lid) db.prepare('UPDATE wa_conversations SET lid = ? WHERE id = ?').run(lid, conv.id);
     let storeId = null;
     const b64 = d.message?.base64;
     if (parsed.media && b64) {
@@ -639,6 +728,6 @@ function startConversation(db, user, contact, instanceId) {
 }
 
 module.exports = {
-  liteConfig, saveConfig, overview, createInstance, instanceStatus, reconnect, simulateConnect, disconnect, removeInstance, updateInstance,
+  liteConfig, saveConfig, overview, createInstance, instanceStatus, reconnect, checkReceiving, simulateConnect, disconnect, removeInstance, updateInstance,
   members, setMemberAccess, accessOf, convAccess, visibleInstanceIds, send, mediaFor, receiveWebhook, startConversation, parseMessage, initials, LEVEL_LABEL, MAX_FILE,
 };

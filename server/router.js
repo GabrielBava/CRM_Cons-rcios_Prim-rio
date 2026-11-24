@@ -571,7 +571,8 @@ function createRouter(db) {
   add('GET', '/api/whatsapp/lite/instancias/:id', ({ user, params, query }) => walite.instanceStatus(db, user, params.id, { refresh: query.atualizar === '1' }));
   add('PATCH', '/api/whatsapp/lite/instancias/:id', ({ user, params, body }) => walite.updateInstance(db, user, params.id, body));
   add('DELETE', '/api/whatsapp/lite/instancias/:id', ({ user, params }) => walite.removeInstance(db, user, params.id));
-  add('POST', '/api/whatsapp/lite/instancias/:id/reconectar', ({ user, params }) => walite.reconnect(db, user, params.id));
+  add('POST', '/api/whatsapp/lite/instancias/:id/reconectar', ({ user, params, req }) => walite.reconnect(db, user, params.id, req));
+  add('POST', '/api/whatsapp/lite/instancias/:id/conferir', ({ user, params, req }) => walite.checkReceiving(db, user, params.id, req));
   add('POST', '/api/whatsapp/lite/instancias/:id/desconectar', ({ user, params }) => walite.disconnect(db, user, params.id));
   add('POST', '/api/whatsapp/lite/instancias/:id/simular-conexao', ({ user, params, body }) => walite.simulateConnect(db, user, params.id, body));
   add('GET', '/api/whatsapp/lite/instancias/:id/acesso', ({ user, params }) => walite.members(db, user, params.id));

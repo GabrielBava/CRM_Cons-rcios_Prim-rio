@@ -2,7 +2,7 @@
 // pessoal (WhatsApp Lite, Instagram, LinkedIn e Google Agenda); o líder e o administrador veem todas. O WhatsApp Lite
 // abre a janela própria: números conectados por QR Code, nova instância, QR e acesso dos membros.
 import { get, post, put, patch, del } from '../api.js';
-import { html, render, on, state, toast, toastError, confirmDialog, $ } from '../ui.js';
+import { html, render, on, state, toast, toastError, confirmDialog, modal, relTime, $ } from '../ui.js';
 import { icon } from '../icons.js';
 
 const TONE = { ativo: 'ok', teste: 'warn', aguardando: 'warn', disponivel: 'idle', nao_configurado: 'off', erro: 'err', em_breve: 'off' };
@@ -88,11 +88,13 @@ async function liteManager(onClose) {
         ${data.instances.length ? html`<div class="lite-list">${data.instances.map((i) => html`<div class="lite-row" data-id="${i.id}">
           <span class="avatar-ini">${i.initials}</span>
           <div class="lite-info"><strong>${i.name}</strong><small>${i.phone_label || 'Número ainda não conectado'}</small>
-            <small class="muted">${i.only_known ? 'Só conversas com cadastros do CRM' : 'Todas as conversas'} · ${i.access_all !== 'nenhum' ? `Acesso para todos: ${i.access_all_label}` : `${i.members_with_access} membro(s) com acesso`}${i.owner_name ? ` · Dono: ${i.owner_name}` : ''}</small></div>
+            <small class="muted">${i.only_known ? 'Só conversas com cadastros do CRM' : 'Todas as conversas'} · ${i.access_all !== 'nenhum' ? `Acesso para todos: ${i.access_all_label}` : `${i.members_with_access} membro(s) com acesso`}${i.owner_name ? ` · Dono: ${i.owner_name}` : ''}</small>
+            ${i.ignored_count ? html`<small class="lite-warn">${i.ignored_count} mensagem(ns) recebida(s) não entraram no CRM · última ${relTime(i.ignored_at)} · <button type="button" class="link" data-a="check" data-id="${i.id}">ver por quê</button></small>` : ''}</div>
           ${statusChip(i.status)}
           ${i.can_manage ? html`<button type="button" class="btn" data-a="qr" data-id="${i.id}">${i.status === 'conectado' ? 'Reconectar' : 'Conectar'}</button>
             <div class="menu-wrap"><button type="button" class="icon" data-a="more" data-id="${i.id}" aria-label="Mais opções">${icon('pontos', 18)}</button>
-              <div class="pop" hidden><button type="button" data-a="members" data-id="${i.id}">${icon('usuarios', 15)} Acesso dos membros</button>
+              <div class="pop" hidden>${data.sandbox ? '' : html`<button type="button" data-a="check" data-id="${i.id}">${icon('confirmar', 15)} Conferir recebimento</button>`}
+              <button type="button" data-a="members" data-id="${i.id}">${icon('usuarios', 15)} Acesso dos membros</button>
               <button type="button" data-a="known" data-id="${i.id}">${icon('filtro', 15)} ${i.only_known ? 'Registrar todas as conversas' : 'Só cadastros do CRM'}</button>
               ${i.status === 'conectado' ? html`<button type="button" data-a="logout" data-id="${i.id}">${icon('sair', 15)} Desconectar</button>` : ''}
               <button type="button" class="danger" data-a="remove" data-id="${i.id}">${icon('lixeira', 15)} Excluir</button></div></div>` : html`<span class="chip-sm muted">${i.my_access === 'enviar' ? 'Ver e enviar' : 'Só ver'}</span>`}
@@ -143,6 +145,33 @@ async function liteManager(onClose) {
         if (n.status === 'conectado') sh.poll(null);
       } catch { /* mantém a tela */ }
     }, 3000);
+  }
+
+  /** Resultado de "Conferir recebimento": cada etapa do caminho conector → CRM, com o que fazer. */
+  async function checkView(r) {
+    const i = r.instance;
+    const rows = [
+      [r.state === 'open', r.state === 'open' ? 'Número conectado ao WhatsApp.' : `Número não está conectado (${r.state || 'sem resposta do conector'}). Clique em Reconectar e leia o QR Code.`],
+      [true, r.fixed ? `Endereço de aviso do conector corrigido (antes: ${r.previous}).` : 'Endereço de aviso do conector está certo.'],
+      [r.crm_ok, r.crm_ok ? 'O CRM recebe os avisos do conector pelo endereço público.' : r.crm_message],
+      [!!i.last_event_at, i.last_event_at ? `Último aviso do conector: ${relTime(i.last_event_at)}.` : 'O conector ainda não mandou nenhum aviso deste número.'],
+    ];
+    if (i.ignored_count) rows.push([false, `${i.ignored_count} mensagem(ns) recebida(s) não entraram no CRM. A última, ${relTime(i.ignored_at)}, de ${i.ignored_who}: ${i.ignored_label}.`]);
+    const offerAll = i.only_known && i.ignored_reason === 'fora_do_crm';
+    await modal({
+      title: `Conferir recebimento · ${i.name}`,
+      body: html`<ul class="lite-check">${rows.map(([ok, text]) => html`<li class="${ok ? 'ok' : 'bad'}"><span>${icon(ok ? 'confirmar' : 'parar', 16)}</span>${text}</li>`)}</ul>
+        <p class="hint">Para testar, peça para alguém mandar uma mensagem para este número e clique em Conferir recebimento de novo: o "Último aviso" deve mudar para "agora".${offerAll ? ' Para receber mensagens de leads novos (números que ainda não estão no CRM), registre todas as conversas deste número.' : ''}</p>`,
+      ...(offerAll ? {
+        submitLabel: 'Registrar todas as conversas',
+        cancelLabel: 'Fechar',
+        onSubmit: async () => {
+          await patch(`/api/whatsapp/lite/instancias/${i.id}`, { only_known: false });
+          toast('O número passa a registrar todas as conversas.');
+          return true;
+        },
+      } : {}),
+    });
   }
 
   async function membersView(id) {
@@ -220,6 +249,18 @@ async function liteManager(onClose) {
       if (a === 'newqr') return qrView(id, await post(`/api/whatsapp/lite/instancias/${id}/reconectar`));
       if (a === 'simulate') return qrView(id, await post(`/api/whatsapp/lite/instancias/${id}/simular-conexao`, {}));
       if (a === 'members') return membersView(id);
+      if (a === 'check') {
+        b.disabled = true;
+        const prev = b.innerHTML;
+        b.textContent = 'Conferindo…';
+        try {
+          await checkView(await post(`/api/whatsapp/lite/instancias/${id}/conferir`));
+        } finally {
+          b.disabled = false;
+          b.innerHTML = prev;
+        }
+        return list();
+      }
       if (a === 'lv') return sh.box.onlevel(b.dataset.user, b.dataset.lv);
       if (a === 'known') {
         const inst = data.instances.find((i) => i.id === id);

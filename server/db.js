@@ -1427,8 +1427,12 @@ const ADDED_COLUMNS = {
   // WhatsApp: canal (oficial = API da Meta; lite = QR Code), número conectado e número do cliente (no Lite)
   wa_conversations: [['channel', "TEXT NOT NULL DEFAULT 'oficial'"], ['instance_id', 'INTEGER REFERENCES wa_instances(id)'], ['peer', 'TEXT'],
     // Agente de IA: ativa (IA atendendo), humano (transferida ao especialista), pausada (especialista assumiu)
-    ['ai_status', 'TEXT'], ['ai_reason', 'TEXT'], ['ai_updated_at', 'TEXT'], ['ai_lock_at', 'TEXT'], ['ai_seen_id', 'INTEGER'], ['ai_turns', 'INTEGER NOT NULL DEFAULT 0']],
+    ['ai_status', 'TEXT'], ['ai_reason', 'TEXT'], ['ai_updated_at', 'TEXT'], ['ai_lock_at', 'TEXT'], ['ai_seen_id', 'INTEGER'], ['ai_turns', 'INTEGER NOT NULL DEFAULT 0'],
+    // Endereçamento novo do WhatsApp (LID): identificador do cliente que às vezes vem no lugar do número
+    ['lid', 'TEXT']],
   wa_messages: [['media_store_id', 'INTEGER REFERENCES wa_media(id)'], ['duration', 'INTEGER'], ['ai', 'INTEGER NOT NULL DEFAULT 0']],
+  // WhatsApp Lite: mensagens que não entraram no CRM (motivo e quando) para o administrador conferir
+  wa_instances: [['ignored_count', 'INTEGER NOT NULL DEFAULT 0'], ['ignored_at', 'TEXT'], ['ignored_reason', 'TEXT'], ['ignored_peer', 'TEXT']],
   contacts: [
     ['rg', 'TEXT'], ['birthplace', 'TEXT'], ['nationality', 'TEXT'], ['sex', 'TEXT'], ['marital_status', 'TEXT'],
     ['property_regime', 'TEXT'], ['mother_name', 'TEXT'], ['income_range', 'TEXT'], ['net_worth_range', 'TEXT'],
@@ -2481,6 +2485,7 @@ function migrate(db) {
   // Índices de colunas acrescentadas acima (só existem depois do ALTER TABLE nos bancos antigos)
   db.exec('CREATE INDEX IF NOT EXISTS idx_wa_conv_instance ON wa_conversations(instance_id, last_message_at)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_wa_conv_peer ON wa_conversations(peer)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_wa_conv_lid ON wa_conversations(lid)');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_proposals_public_token ON proposals(public_token) WHERE public_token IS NOT NULL');
   // Estratégias de lance anteriores ao histórico: registra a situação atual como o primeiro item do histórico
   db.exec(`INSERT INTO bid_strategy_history (contract_id, contact_id, will_bid, bid_type, bid_pct, use_embedded, use_fgts, notes, created_by, created_at)
