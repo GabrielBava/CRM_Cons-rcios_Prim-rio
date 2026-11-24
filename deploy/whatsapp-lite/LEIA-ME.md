@@ -52,7 +52,7 @@ conector com HTTPS automático e mostra no fim o **endereço** e a **chave** par
    - Se preferir, use o **console** do painel da Locaweb.
 2. **Cole os dois comandos abaixo**, um de cada vez, e aperte Enter:
    ```
-   curl -fsSL https://raw.githubusercontent.com/GabrielBava/CRM_Cons-rcios_Prim-rio/main/deploy/whatsapp-lite/instalar-evolution.sh -o instalar.sh
+   curl -fsSL https://raw.githubusercontent.com/gabrielbava/crm_cons-rcios_prim-rio/HEAD/deploy/whatsapp-lite/instalar-evolution.sh -o instalar.sh
    sudo DOMINIO=whatsapp.veroconsorciosbr.com.br bash instalar.sh
    ```
    **Se não conseguir colar** (o console pelo site da Locaweb às vezes não aceita), digite estes três comandos, mais
@@ -114,6 +114,20 @@ de especialistas cabem bem; se forem muitos números, suba o plano para 2 GB no 
    - as **Últimas ações** do agente.
 5. **Para valer:** quando estiver tudo certo, **apague os números do modo de teste** e salve. A partir daí, a IA atende
    todos os leads que escreverem para o número central.
+
+## Começar do zero (zerar a VPS)
+
+1. **Painel da Locaweb:** na VPS, use a opção de **reinstalar o sistema operacional** e escolha **Ubuntu 24.04**.
+   Tudo o que estava na VPS é apagado. Anote a **nova senha do root**, se o painel ou o e-mail trouxer uma.
+2. **No PowerShell do seu computador**, antes de entrar de novo, apague a "identidade" antiga da VPS, trocando pelo
+   IP dela. Sem isso, o `ssh` recusa a conexão com o aviso "REMOTE HOST IDENTIFICATION HAS CHANGED":
+   ```
+   ssh-keygen -R IP-DA-VPS
+   ```
+3. Siga de novo a partir do passo 3 (Instalar o conector na VPS). O registro A no DNS continua valendo, porque o IP
+   da VPS não muda ao reinstalar.
+4. **Se o WhatsApp já estava conectado,** a conexão se perde. No celular, remova o aparelho "Vero CRM" em
+   **Aparelhos conectados** e, no CRM, gere um novo QR Code para o número.
 
 ## Manutenção (na VPS)
 

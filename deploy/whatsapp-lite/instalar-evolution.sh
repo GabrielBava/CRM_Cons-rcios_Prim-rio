@@ -3,7 +3,7 @@
 # Cabe numa VPS de 1 GB (ex.: Locaweb "VPS 1 GB"): sem Redis, com memória de troca (swap) e registros limitados.
 #
 # Na VPS, como root (copie e cole as duas linhas):
-#   curl -fsSL https://raw.githubusercontent.com/GabrielBava/CRM_Cons-rcios_Prim-rio/main/deploy/whatsapp-lite/instalar-evolution.sh -o instalar.sh
+#   curl -fsSL https://raw.githubusercontent.com/gabrielbava/crm_cons-rcios_prim-rio/HEAD/deploy/whatsapp-lite/instalar-evolution.sh -o instalar.sh
 #   sudo DOMINIO=whatsapp.veroconsorciosbr.com.br bash instalar.sh
 #
 # DOMINIO: subdomínio com registro A apontando para o IP da VPS (o HTTPS automático depende disso).
@@ -91,7 +91,8 @@ LIVRE_GB="$(df -Pk / | awk 'NR==2 {print int($4/1024/1024)}')"
 [ "$LIVRE_GB" -ge 4 ] || aviso "só $LIVRE_GB GB livres no disco; o conector precisa de uns 3 GB."
 
 # ---------------------------------------------------------------- Docker
-# Docker dos pacotes do próprio Ubuntu (vêm do espelho da hospedagem): plano B quando o site do Docker não responde
+# Docker dos pacotes do próprio Ubuntu (vêm do espelho da hospedagem, mais confiável que o site do Docker, que já deu
+# tempo esgotado na VPS da Locaweb). O site do Docker (get.docker.com) fica para sistemas sem esses pacotes.
 docker_do_ubuntu() {
   rm -f /etc/apt/sources.list.d/docker.list /etc/apt/keyrings/docker.asc
   esperar_apt
@@ -102,9 +103,12 @@ docker_do_ubuntu() {
 if ! command -v docker >/dev/null 2>&1; then
   etapa "Instalando o Docker (3 a 5 minutos; a tela fica parada, é normal)"
   esperar_apt
-  if ! { curl -fsSL --max-time 60 https://get.docker.com -o /tmp/instalar-docker.sh && sh /tmp/instalar-docker.sh >/dev/null 2>&1; }; then
-    echo "O site do Docker não respondeu; instalando o Docker pelos pacotes do próprio Ubuntu..."
-    docker_do_ubuntu || falha "não foi possível instalar o Docker. Rode o instalador de novo em alguns minutos."
+  if apt-cache show docker-compose-v2 >/dev/null 2>&1 && docker_do_ubuntu; then
+    :
+  elif curl -fsSL --max-time 60 https://get.docker.com -o /tmp/instalar-docker.sh && sh /tmp/instalar-docker.sh >/dev/null 2>&1; then
+    :
+  else
+    falha "não foi possível instalar o Docker. Rode o instalador de novo em alguns minutos."
   fi
   rm -f /tmp/instalar-docker.sh
 fi
