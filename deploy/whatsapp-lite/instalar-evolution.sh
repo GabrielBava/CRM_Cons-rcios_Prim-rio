@@ -275,7 +275,10 @@ case "\${1:-situacao}" in
   registros|logs) docker compose logs --tail=200 -f evolution-api ;;
   reiniciar) docker compose restart ;;
   dados) cat DADOS-DO-CONECTOR.txt ;;
-  *) echo "Uso: vero-whatsapp situacao | registros | reiniciar | dados" ;;
+  diagnostico)
+    curl -fsSL https://raw.githubusercontent.com/gabrielbava/crm_cons-rcios_prim-rio/HEAD/deploy/whatsapp-lite/diagnostico.sh -o /tmp/vero-diagnostico.sh \
+      && bash /tmp/vero-diagnostico.sh ;;
+  *) echo "Uso: vero-whatsapp situacao | registros | reiniciar | dados | diagnostico" ;;
 esac
 EOF
 chmod 755 /usr/local/bin/vero-whatsapp
@@ -299,7 +302,14 @@ for tentativa in 1 2 3; do
     sleep 20
   fi
 done
-[ "$BAIXOU" = 1 ] || falha "não foi possível baixar os programas do conector. Rode o instalador de novo em alguns minutos."
+imagens_locais() {
+  local img
+  for img in $(docker compose config --images 2>/dev/null); do docker image inspect "$img" >/dev/null 2>&1 || return 1; done
+}
+if [ "$BAIXOU" != 1 ]; then
+  imagens_locais || falha "não foi possível baixar os programas do conector. Rode o instalador de novo em alguns minutos."
+  aviso "não deu para baixar atualizações agora; usando os programas que já estão nesta VPS."
+fi
 docker compose up -d --remove-orphans
 
 etapa "Aguardando o conector e o certificado HTTPS de https://$DOMINIO (até 5 minutos)"

@@ -137,6 +137,7 @@ de especialistas cabem bem; se forem muitos números, suba o plano para 2 GB no 
 | `vero-whatsapp registros` | Mostra os registros do conector ao vivo (Ctrl+C para sair) |
 | `vero-whatsapp reiniciar` | Reinicia o conector (o WhatsApp continua conectado) |
 | `vero-whatsapp dados` | Mostra o endereço e a chave para o CRM |
+| `vero-whatsapp diagnostico` | Confere números, webhook do CRM, últimas mensagens e erros (sem mostrar a chave nem os números completos) |
 
 - **Reiniciar a VPS:** o conector volta sozinho.
 - **Mudar algo ou corrigir o domínio:** rode `sudo DOMINIO=... bash instalar.sh` de novo. A chave, as senhas e os
@@ -145,6 +146,21 @@ de especialistas cabem bem; se forem muitos números, suba o plano para 2 GB no 
   de uma licença; confira isso antes de atualizar.
 - **Arquivos:** ficam em `/opt/vero-whatsapp`. O `.env` guarda a chave do conector e a senha do banco: não publique
   nem envie esse arquivo.
+
+## Se o CRM envia, mas não recebe as respostas
+
+O envio vai do CRM para o conector; o recebimento é o caminho de volta: o conector avisa o CRM (webhook) a cada
+mensagem. Para ver onde parou, rode na VPS:
+```
+curl -fsSL https://raw.githubusercontent.com/gabrielbava/crm_cons-rcios_prim-rio/HEAD/deploy/whatsapp-lite/diagnostico.sh -o diagnostico.sh
+bash diagnostico.sh
+```
+- **"Teste do CRM: 200 · OK"** e as respostas aparecem como **RECEBIDA**: o caminho está certo; confira o filtro da
+  conversa no CRM e se o número do lead no cadastro é o mesmo do WhatsApp.
+- **"o CRM não reconhece este número"**: o número foi apagado ou recriado no CRM. Desconecte e conecte de novo pelo CRM.
+- **"Webhook: NÃO CADASTRADO"** ou **"FALHOU"**: o conector não está conseguindo avisar o CRM; mande o print.
+- **"LID SEM número"**: o WhatsApp mandou a resposta sem o número de quem escreveu (endereçamento novo); mande o print.
+- **Nenhuma RECEBIDA**: as respostas nem chegaram ao conector; desconecte e conecte o número de novo.
 
 ## Cuidados
 
