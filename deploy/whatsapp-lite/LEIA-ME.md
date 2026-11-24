@@ -150,7 +150,14 @@ de especialistas cabem bem; se forem muitos números, suba o plano para 2 GB no 
 ## Se o CRM envia, mas não recebe as respostas
 
 O envio vai do CRM para o conector; o recebimento é o caminho de volta: o conector avisa o CRM (webhook) a cada
-mensagem. Para ver onde parou, rode na VPS:
+mensagem.
+
+**Primeiro, no CRM:** Integrações › WhatsApp Lite › no número, menu **⋯** › **Conferir recebimento**. O CRM confere a
+conexão, corrige o endereço de aviso no conector, testa se recebe e mostra as mensagens que não entraram e por quê.
+O caso mais comum é o número estar em **"Só conversas com cadastros do CRM"**: mensagens de leads novos (números que
+ainda não estão no CRM) não entram. Para o número central, use **Registrar todas as conversas**.
+
+**Se ainda não resolver**, rode o diagnóstico na VPS:
 ```
 curl -fsSL https://raw.githubusercontent.com/gabrielbava/crm_cons-rcios_prim-rio/HEAD/deploy/whatsapp-lite/diagnostico.sh -o diagnostico.sh
 bash diagnostico.sh

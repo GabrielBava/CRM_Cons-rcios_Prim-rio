@@ -3086,6 +3086,7 @@ test('WhatsApp Lite (QR Code): instância no servidor Evolution, conexão, mensa
   const http = require('node:http');
   const calls = [];
   let state = 'connecting';
+  let hookFound = null;
   const fake = http.createServer((req, res) => {
     let raw = '';
     req.on('data', (c) => (raw += c));
@@ -3097,6 +3098,7 @@ test('WhatsApp Lite (QR Code): instância no servidor Evolution, conexão, mensa
       const u = req.url;
       if (u === '/instance/create') return send({ instance: { instanceName: body.instanceName, status: 'created' }, hash: 'tok', qrcode: { base64: 'data:image/png;base64,QUFB', code: '2@x' } });
       if (u.startsWith('/webhook/set/')) return send({ webhook: body.webhook });
+      if (u.startsWith('/webhook/find/')) return send(hookFound);
       if (u.startsWith('/instance/connect/')) return send({ base64: 'data:image/png;base64,QkJC', code: '2@y' });
       if (u.startsWith('/instance/connectionState/')) return send({ instance: { state } });
       if (u.startsWith('/instance/fetchInstances')) return send([{ ownerJid: '5551988887777@s.whatsapp.net', profileName: 'Vero Teste' }]);
@@ -3133,6 +3135,9 @@ test('WhatsApp Lite (QR Code): instância no servidor Evolution, conexão, mensa
     assert.equal(saved.status, 200);
     assert.deepEqual(saved.data.check, { ok: true, instances: 1 });
     assert.equal((await call('admin', 'PUT', '/api/whatsapp/lite/config', { sandbox: false })).data.check, null, 'sem mudar endereço nem chave, não confere de novo');
+    const same = await call('admin', 'PUT', '/api/whatsapp/lite/config', { webhook_base: evoUrl });
+    assert.equal(same.status, 400, 'o endereço do conector não vai no campo do endereço do CRM');
+    assert.match(same.data.error, /endereço do conector/);
     calls.length = 0;
     // Especialista cria a instância e recebe o QR Code
     const inst = await call('c1', 'POST', '/api/whatsapp/lite/instancias', { name: 'Meu número' });
@@ -3225,8 +3230,53 @@ test('WhatsApp Lite (QR Code): instância no servidor Evolution, conexão, mensa
     assert.equal((await call('c2', 'PUT', `/api/whatsapp/lite/instancias/${inst.data.id}/acesso`, { user_id: c2, level: 'enviar' })).status, 403, 'só o dono, o líder ou o administrador mudam o acesso');
     await call('c1', 'PUT', `/api/whatsapp/lite/instancias/${inst.data.id}/acesso`, { user_id: c2, level: 'enviar' });
     assert.equal((await call('c2', 'POST', `/api/whatsapp/conversas/${conv.id}/mensagens`, { body: 'Sou do time da Vero' })).status, 200);
-    // Liberar todos os números (não só cadastros)
+    // Endereçamento novo do WhatsApp (LID): o LID que vem junto com o número fica guardado na conversa; depois, a
+    // mensagem que chega só com o LID (sem o número) entra na mesma conversa
+    const raw = (id, key, text) => hook({ event: 'messages.upsert', data: { key: { id, fromMe: false, ...key }, pushName: 'Cliente', message: { conversation: text }, messageTimestamp: Math.floor(Date.now() / 1000) } });
+    assert.equal((await raw('LID-1', { remoteJid: '5511938175701@s.whatsapp.net', remoteJidAlt: '987654321012345@lid' }, 'com número e LID')).data.mensagens, 1);
+    assert.equal(appDb.prepare('SELECT lid FROM wa_conversations WHERE id = ?').get(conv.id).lid, '987654321012345');
+    assert.equal((await raw('LID-2', { remoteJid: '987654321012345@lid' }, 'só com o LID')).data.mensagens, 1);
+    assert.ok((await call('c1', 'GET', `/api/whatsapp/conversas/${conv.id}`)).data.messages.some((m) => m.body === 'só com o LID'), 'mensagem só com o LID na conversa do lead');
+    assert.equal((await raw('LID-3', { remoteJid: '5511938175701@lid', senderPn: '5511938175701@s.whatsapp.net' }, 'LID com senderPn')).data.mensagens, 1);
+    // LID desconhecido e número fora do CRM não entram, mas ficam contados (com o motivo) para o administrador conferir
+    assert.equal((await raw('LID-4', { remoteJid: '111122223333444@lid' }, 'LID novo')).data.mensagens, 0);
+    let row = (await call('c1', 'GET', '/api/whatsapp/lite')).data.instances.find((i) => i.id === inst.data.id);
+    assert.equal(row.ignored_reason, 'lid');
+    assert.equal(row.ignored_count, 3, 'IN-2 e IN-4 (fora do CRM) e LID-4');
+    await up('IN-6', '5521977776666', { conversation: 'de novo' });
+    row = (await call('c1', 'GET', '/api/whatsapp/lite')).data.instances.find((i) => i.id === inst.data.id);
+    assert.equal(row.ignored_count, 4);
+    assert.equal(row.ignored_reason, 'fora_do_crm');
+    assert.match(row.ignored_label, /fora do CRM/);
+    assert.match(row.ignored_who, /97777-6666/);
+    assert.ok(row.last_event_at);
+    // Conferir recebimento: corrige o endereço de aviso cadastrado no conector e testa o CRM pelo endereço público
+    hookFound = { enabled: true, url: 'https://conector.errado/api/whatsapp/lite/webhook/abcdefghijkl', events: ['MESSAGES_UPSERT'] };
+    calls.length = 0;
+    const chk = await call('c1', 'POST', `/api/whatsapp/lite/instancias/${inst.data.id}/conferir`);
+    assert.equal(chk.status, 200, JSON.stringify(chk.data));
+    assert.equal(chk.data.state, 'open');
+    assert.equal(chk.data.fixed, true);
+    assert.equal(chk.data.previous, 'https://conector.errado/api/whatsapp/lite/webhook/abcd…');
+    assert.equal(chk.data.crm_ok, true, chk.data.crm_message);
+    assert.equal(chk.data.instance.ignored_count, 4);
+    const reset = calls.find((c) => c.url.startsWith('/webhook/set/'));
+    assert.ok(reset.body.webhook.url.endsWith(`/api/whatsapp/lite/webhook/${token}`));
+    assert.deepEqual(reset.body.webhook.events.sort(), ['CONNECTION_UPDATE', 'MESSAGES_UPDATE', 'MESSAGES_UPSERT', 'QRCODE_UPDATED']);
+    assert.ok(!chk.data.webhook.includes(token), 'o segredo da instância não aparece na tela');
+    assert.equal((await call('c1', 'GET', '/api/whatsapp/lite')).data.instances.find((i) => i.id === inst.data.id).last_event_at, row.last_event_at, 'o teste do CRM não conta como aviso do conector');
+    hookFound = reset.body.webhook;
+    calls.length = 0;
+    assert.equal((await call('c1', 'POST', `/api/whatsapp/lite/instancias/${inst.data.id}/conferir`)).data.fixed, false, 'endereço certo: não recadastra');
+    assert.ok(!calls.some((c) => c.url.startsWith('/webhook/set/')));
+    assert.equal((await call('c2', 'POST', `/api/whatsapp/lite/instancias/${inst.data.id}/conferir`)).status, 403);
+    // Reconectar também recadastra o endereço de aviso
+    calls.length = 0;
+    await call('c1', 'POST', `/api/whatsapp/lite/instancias/${inst.data.id}/reconectar`);
+    assert.ok(calls.some((c) => c.url.startsWith('/webhook/set/')));
+    // Liberar todos os números (não só cadastros): a contagem de mensagens que não entraram recomeça
     await call('c1', 'PATCH', `/api/whatsapp/lite/instancias/${inst.data.id}`, { only_known: false });
+    assert.equal((await call('c1', 'GET', '/api/whatsapp/lite')).data.instances.find((i) => i.id === inst.data.id).ignored_count, 0);
     assert.equal((await up('IN-5', '5521977776666', { conversation: 'número novo' })).data.mensagens, 1);
     // Tela Integrações: especialista vê as de uso pessoal; administrador vê todas
     const pc = await call('c1', 'GET', '/api/integracoes/painel');

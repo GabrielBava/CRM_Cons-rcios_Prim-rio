@@ -2001,6 +2001,13 @@ html.nav-collapsed { --sidebar-w: 74px; }
 .lite-row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-card-2); flex-wrap: wrap; }
 .lite-info { flex: 1; min-width: 180px; display: flex; flex-direction: column; gap: 2px; }
 .lite-info small { font-size: var(--fs-xs); }
+.lite-info .lite-warn { color: var(--warning, #b45309); }
+.lite-info .lite-warn .link { background: none; border: 0; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; }
+.lite-check { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.lite-check li { display: flex; gap: 10px; align-items: flex-start; line-height: 1.4; overflow-wrap: anywhere; }
+.lite-check li span { flex: none; display: inline-flex; margin-top: 1px; }
+.lite-check li.ok span { color: var(--success, #15803d); }
+.lite-check li.bad span { color: var(--danger, #b91c1c); }
 .avatar-ini { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: var(--bg-active); color: var(--text); font-weight: 600; font-size: .8rem; flex: none; border: 1px solid var(--border); }
 .avatar-ini.sm { width: 30px; height: 30px; font-size: .7rem; }
 .lite-status { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 99px; font-size: var(--fs-xs); background: var(--pill-bg); border: 1px solid var(--border); }
