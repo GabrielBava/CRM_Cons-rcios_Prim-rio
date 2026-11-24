@@ -112,14 +112,14 @@ async function checkServer(cfg) {
 
 /* ------------------------- Servidor (Evolution API v2) ------------------------- */
 
-async function evo(cfg, method, path, body) {
+async function evo(cfg, method, path, body, timeoutMs = 25000) {
   let res;
   try {
     res = await fetch(`${cfg.url}${path}`, {
       method,
       headers: { apikey: cfg.key, 'Content-Type': 'application/json' },
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(25000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (e) {
     throw new HttpError(502, `Não foi possível falar com o conector do WhatsApp Lite (${e.cause?.code || e.message}). Confira se ele está ligado: no teste no computador, o conector leva até 1 minuto para ficar pronto depois de iniciar.`);
@@ -214,9 +214,13 @@ const IGNORED_LABEL = {
 };
 
 /** Mensagem recebida que não entrou no CRM: conta e guarda o último motivo, para o administrador conferir. */
-function noteIgnored(db, inst, reason, who) {
-  db.prepare('UPDATE wa_instances SET ignored_count = COALESCE(ignored_count, 0) + 1, ignored_at = ?, ignored_reason = ?, ignored_peer = ? WHERE id = ?')
-    .run(nowIso(), reason, who || null, inst.id);
+function noteIgnored(db, inst, reason, who, wamid) {
+  // A mesma mensagem pode chegar pelo aviso do conector e pela busca de mensagens: conta uma vez só
+  const seen = String(db.prepare('SELECT ignored_seen FROM wa_instances WHERE id = ?').get(inst.id)?.ignored_seen || '').split(',').filter(Boolean);
+  if (wamid && seen.includes(wamid)) return;
+  const keep = wamid ? [...seen, wamid].slice(-60).join(',') : seen.join(',');
+  db.prepare('UPDATE wa_instances SET ignored_count = COALESCE(ignored_count, 0) + 1, ignored_at = ?, ignored_reason = ?, ignored_peer = ?, ignored_seen = ? WHERE id = ?')
+    .run(nowIso(), reason, who || null, keep || null, inst.id);
 }
 
 function overview(db, user, req) {
@@ -363,9 +367,21 @@ async function checkReceiving(db, user, id, req) {
         ? ' Ele pode estar protegido por login (Vercel): defina PUBLIC_URL com o domínio do CRM ou preencha "Endereço do CRM para o webhook".' : ''}`;
     }
   } catch (e) {
-    out.crm_message = `O CRM não conseguiu acessar o endereço que o conector usa (${e.name === 'TimeoutError' ? 'sem resposta' : e.cause?.code || e.message}). Defina PUBLIC_URL com o endereço público do CRM.`;
+    out.crm_message = `O CRM não conseguiu acessar o endereço que o conector usa (${e.name === 'TimeoutError' ? 'sem resposta' : e.cause?.code || e.cause?.message || e.message}). Defina PUBLIC_URL com o endereço público do CRM.`;
   }
-  audit(db, user, 'whatsapp_lite', inst.id, 'recebimento_conferido', { fixed: out.fixed, crm_ok: out.crm_ok });
+  // Busca as mensagens direto no conector (o caminho do envio) e compara com o último aviso que chegou
+  try {
+    const sync = await syncInstance(db, instRow(db, inst.id), { force: true, timeoutMs: 15000 });
+    out.sync_ok = true;
+    out.sync_new = sync?.mensagens || 0;
+    const lastEv = instRow(db, inst.id).last_event_at;
+    const lastMsg = sync?.conector_ultima;
+    out.webhook_late = !!(lastMsg && (!lastEv || Date.parse(lastEv) < Date.parse(lastMsg) - 120000));
+  } catch (e) {
+    out.sync_ok = false;
+    out.sync_message = e.message;
+  }
+  audit(db, user, 'whatsapp_lite', inst.id, 'recebimento_conferido', { fixed: out.fixed, crm_ok: out.crm_ok, sync: out.sync_new });
   return { ...out, instance: view(db, user, instRow(db, inst.id)) };
 }
 
@@ -620,15 +636,72 @@ function receiveWebhook(db, token, body = {}) {
     return require('./whatsapp').runAgent(db, jobs, out);
   } else if (ev === 'messages.update') {
     for (const d of items) {
-      const id = d.keyId || d.key?.id || d.messageId;
-      const st = STATUS_MAP[d.status] || STATUS_MAP[d.update?.status];
-      const row = id && st && db.prepare('SELECT id, status FROM wa_messages WHERE wamid = ?').get(String(id));
-      if (!row || (ORDER[st] ?? 0) < (ORDER[row.status] ?? 0)) continue;
-      db.prepare('UPDATE wa_messages SET status = ?, status_at = ? WHERE id = ?').run(st, nowIso(), row.id);
-      out.status++;
+      if (applyStatus(db, d.keyId || d.key?.id || d.messageId, d.status ?? d.update?.status)) out.status++;
     }
   }
   return out;
+}
+
+/** Status de entrega/leitura de uma mensagem enviada (só avança: enviada → entregue → lida). */
+function applyStatus(db, wamid, raw) {
+  const st = STATUS_MAP[raw];
+  const row = wamid && st && db.prepare('SELECT id, status FROM wa_messages WHERE wamid = ?').get(String(wamid));
+  if (!row || row.status === st || (ORDER[st] ?? 0) < (ORDER[row.status] ?? 0)) return false;
+  db.prepare('UPDATE wa_messages SET status = ?, status_at = ? WHERE id = ?').run(st, nowIso(), row.id);
+  return true;
+}
+
+/*
+ * Busca de mensagens no conector. O caminho normal é o aviso do conector (webhook); se ele não chega ao CRM (rede da
+ * VPS, endereço errado), as mensagens e os status de entrega são buscados no conector, o mesmo caminho do envio,
+ * a cada poucos segundos enquanto a tela do WhatsApp está aberta. Mensagens já registradas não se repetem.
+ */
+const SYNC_EVERY_MS = Number(process.env.WA_LITE_SYNC_MS || 6000);
+const SYNC_OVERLAP_MS = 3 * 60 * 1000;
+
+async function syncInstance(db, inst, { force = false, timeoutMs = 8000 } = {}) {
+  const cfg = liteConfig(db);
+  if (!cfg.configured || !inst || (!inst.connected_at && inst.status !== 'conectado')) return null;
+  const now = Date.now();
+  const last = inst.synced_at ? Date.parse(inst.synced_at) : 0;
+  if (!force && now - last < SYNC_EVERY_MS) return null;
+  // Uma busca por vez por número (várias telas abertas ou instâncias da Vercel)
+  const claimed = db.prepare("UPDATE wa_instances SET synced_at = ? WHERE id = ? AND COALESCE(synced_at, '') = ?").run(new Date(now).toISOString(), inst.id, inst.synced_at || '').changes;
+  if (!claimed) return null;
+  const from = last ? last - SYNC_OVERLAP_MS : now - 24 * 3600 * 1000;
+  const out = { mensagens: 0, status: 0, conector_ultima: null };
+  for (let page = 1; page <= 3; page++) {
+    const r = await evo(cfg, 'POST', `/chat/findMessages/${inst.instance_key}`, {
+      where: { messageTimestamp: { gte: new Date(from).toISOString(), lte: new Date(now + 5 * 60 * 1000).toISOString() } }, offset: 100, page,
+    }, timeoutMs);
+    const recs = Array.isArray(r?.messages?.records) ? r.messages.records : [];
+    for (const m of recs.slice().reverse()) {
+      const ts = Number(m.messageTimestamp) * 1000;
+      if (ts && (!out.conector_ultima || ts > Date.parse(out.conector_ultima))) out.conector_ultima = new Date(ts).toISOString();
+      const res = inbound(db, inst, m);
+      if (res) out.mensagens++;
+      if (m.key?.fromMe && Array.isArray(m.MessageUpdate)) {
+        const best = m.MessageUpdate.map((u) => u.status).filter((x) => STATUS_MAP[x]).sort((a, b) => (ORDER[STATUS_MAP[a]] ?? 0) - (ORDER[STATUS_MAP[b]] ?? 0)).pop();
+        if (best && applyStatus(db, m.key.id, best)) out.status++;
+      }
+    }
+    if (page >= Number(r?.messages?.pages || 1)) break;
+  }
+  return out;
+}
+
+/** Antes de listar as conversas: busca as mensagens novas de cada número conectado (com intervalo mínimo). */
+async function syncAll(db) {
+  if (!liteConfig(db).configured) return;
+  const insts = db.prepare("SELECT * FROM wa_instances WHERE status = 'conectado' OR connected_at IS NOT NULL").all();
+  await Promise.all(insts.map((i) => syncInstance(db, i).catch(() => null)));
+}
+
+/** Antes de mostrar uma conversa do WhatsApp Lite: busca as mensagens novas do número dela. */
+async function syncConversation(db, convId) {
+  const w = db.prepare("SELECT instance_id FROM wa_conversations WHERE id = ? AND channel = 'lite'").get(Number(convId));
+  if (!w?.instance_id || !liteConfig(db).configured) return;
+  await syncInstance(db, instRow(db, w.instance_id)).catch(() => null);
 }
 
 /** Mensagem do WhatsApp Lite (recebida do cliente ou enviada pelo celular) → conversa do CRM. */
@@ -643,7 +716,7 @@ function inbound(db, inst, d) {
   // Só o LID, sem o número: reconhece pelo LID já visto numa conversa (de preferência deste número conectado)
   if (!peer && lid) peer = db.prepare("SELECT peer FROM wa_conversations WHERE channel = 'lite' AND lid = ? AND peer IS NOT NULL ORDER BY (instance_id = ?) DESC, id LIMIT 1").get(lid, inst.id)?.peer || null;
   if (!peer) {
-    if (lid && !key.fromMe) noteIgnored(db, inst, 'lid', null);
+    if (lid && !key.fromMe) noteIgnored(db, inst, 'lid', null, wamid);
     return false;
   }
   const parsed = parseMessage(d);
@@ -655,7 +728,7 @@ function inbound(db, inst, d) {
   let conv = db.prepare(`SELECT * FROM wa_conversations WHERE channel = 'lite' AND instance_id = ? AND peer IN (${cands.map(() => '?').join(',')}) ORDER BY id LIMIT 1`).get(inst.id, ...cands);
   const agent = require('./waagent');
   if (!conv && !contact && inst.only_known && !(agent.handlesInstance(db, inst.id) && agent.allowsPeer(db, peer))) {
-    if (!key.fromMe) noteIgnored(db, inst, 'fora_do_crm', peer);
+    if (!key.fromMe) noteIgnored(db, inst, 'fora_do_crm', peer, wamid);
     return false;
   }
   const fromMe = !!key.fromMe;
@@ -728,6 +801,6 @@ function startConversation(db, user, contact, instanceId) {
 }
 
 module.exports = {
-  liteConfig, saveConfig, overview, createInstance, instanceStatus, reconnect, checkReceiving, simulateConnect, disconnect, removeInstance, updateInstance,
+  liteConfig, saveConfig, overview, createInstance, instanceStatus, reconnect, checkReceiving, syncInstance, syncAll, syncConversation, simulateConnect, disconnect, removeInstance, updateInstance,
   members, setMemberAccess, accessOf, convAccess, visibleInstanceIds, send, mediaFor, receiveWebhook, startConversation, parseMessage, initials, LEVEL_LABEL, MAX_FILE,
 };
