@@ -688,11 +688,16 @@ export async function openSimulator(contactId, oppId, originScreen) {
   }
 }
 
-/** "Gerar simulação": registra data, hora e quem gerou (os valores ficam no simulador). */
+/**
+ * "Gerar simulação": abre o Simulador de consórcio da Vero numa nova guia, já com o nome e o contato do cliente
+ * (?crm=<id do cadastro>), e registra aqui a data, a hora e quem gerou (os valores ficam no simulador).
+ * A guia abre antes da chamada à API para não ser bloqueada pelo navegador.
+ */
 export async function quickSimulation(contactId, oppId) {
+  window.open(new URL(`ferramentas/simulador-consorcio.html?crm=${Number(contactId)}`, document.baseURI).href, '_blank', 'noopener');
   try {
     const r = await post(`/api/cadastros/${contactId}/simulacao-rapida`, { opportunity_id: oppId || undefined });
-    toast(`Simulação ${r.code} registrada em ${fmtDateTime(r.created_at)}.`);
+    toast(`Simulação ${r.code} registrada em ${fmtDateTime(r.created_at)}. O simulador abriu numa nova guia com os dados do cliente.`);
     return r;
   } catch (e) {
     toastError(e);

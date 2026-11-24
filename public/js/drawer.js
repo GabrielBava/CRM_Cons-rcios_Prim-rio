@@ -8,7 +8,7 @@ import { activityForm, taskForm, lostDialog, completeTask, cancelTask, completeT
 import { qualProgress, qualBlocks, tempBadge, triageFields, triageOf, triageMissing, triageText } from './qualification.js';
 import { scheduleMeetingDialog, meetingLinks, meetingCard, bindMeetingCards, R1_STAGES, MEETING_LABEL } from './meeting.js';
 import { linkBadge, readTime, optionButtons, bindOptionButtons } from './proposal-actions.js';
-import { renderAiTab, renderProductsTab, renderDiagTab, renderFilesTab, renderReferralsTab, bindLeadTabs, copyText } from './leadtabs.js';
+import { renderAiTab, renderProductsTab, renderDiagTab, renderFilesTab, renderReferralsTab, bindLeadTabs, copyText, openSimulator } from './leadtabs.js';
 import { icon } from './icons.js';
 
 const YES_NO = [{ value: 'sim', label: 'Sim' }, { value: 'nao', label: 'Não' }, { value: 'nao_sabe', label: 'Não sabe' }];
@@ -308,7 +308,7 @@ export async function openLeadDrawer(contactId, { oppId = null, onChange = null,
     } else if (tab === 'propostas') {
       const props = c.proposals;
       const areaL = (a) => PROPOSAL_AREAS.find((x) => x.value === (a || 'consorcio'))?.label || 'Consórcio';
-      render(box, html`<div class="section-head"><h4>Propostas do lead</h4>${edit ? html`<button type="button" class="btn small primary" data-dact="prop-new">Gerar proposta</button>` : ''}</div>
+      render(box, html`<div class="section-head"><h4>Propostas do lead</h4><span class="grow"></span><button type="button" class="btn small" data-dact="sim-open" title="Abre o simulador da Vero numa nova guia, com o nome e o contato deste cliente">Simulador de consórcio</button>${edit ? html`<button type="button" class="btn small primary" data-dact="prop-new">Gerar proposta</button>` : ''}</div>
         <p class="hint">Consórcio (pelo simulador) e planejamento financeiro (depois do diagnóstico concluído). A proposta gerada libera a etapa Negociação.</p>
         ${props.length ? html`<ul class="feed">${props.map((p) => html`<li><div><a href="#" data-prop="${p.id}"><strong>${p.code}</strong></a> <span class="chip-sm area area-${p.area || 'consorcio'}">${areaL(p.area)}</span> · ${fmtMoney(p.credit_value)}${p.term_months ? ` · ${p.term_months} meses` : ''} ${badge(K('proposal_status', p.status), `st-${p.status}`)}</div>${p.description ? html`<p class="small">${p.description}</p>` : ''}<small class="muted">${fmtDateTime(p.created_at)}${p.product_name ? ` · ${p.product_name}` : ''}${p.consortium_kind === 'contemplada' ? ' · carta contemplada' : ''}${p.refusal_reason ? ` · recusa: ${optLabel('motivo_recusa_proposta', p.refusal_reason)}` : ''}</small>
           ${p.status !== 'substituida' ? html`<div class="prop-feed-link">${linkBadge(p)}${p.link_views ? html`<small class="muted">${p.link_views} acesso(s) · ${readTime(p.link_seconds)}</small>` : ''}${optionButtons(p)}</div>` : ''}</li>`)}</ul>` : empty('Nenhuma proposta gerada para este lead.')}`);
@@ -461,6 +461,7 @@ export async function openLeadDrawer(contactId, { oppId = null, onChange = null,
     else if (act === 'edit-qual') ok = await opportunityForm(c, opp);
     else if (act === 'conclude-qual') ok = await qualifyDialog(opp.id);
     else if (act === 'prop-new') ok = await newProposalFlow({ ...opp, contact_name: c.name }, c);
+    else if (act === 'sim-open') openSimulator(c.id);
     if (ok) changed();
   });
   // Edição do bloco "Negócio" no próprio painel

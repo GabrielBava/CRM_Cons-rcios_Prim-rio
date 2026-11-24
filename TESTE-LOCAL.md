@@ -238,6 +238,39 @@ cliques em `iniciar-windows.bat`. Ao fechar a área restrita, tudo é apagado.
    Organograma, Dashboard, BI e Distribuição de leads.
 8. **BI:** No-show R1 e R2 separados, TMA (tempo na etapa) e TME (sem atividade) em horas, taxa de conversão e receita com
    planejamento. Aceite uma proposta de planejamento e veja a receita subir.
+9. **Ferramentas (Simulador e Diagnóstico Vero v1):** em **Ferramentas**, Consórcio mostra só o **Simulador de consórcio** e
+   Planejamento só o **Diagnóstico financeiro**. No simulador, escolha o cliente: a nova guia mostra "Simulação para
+   <cliente>" e, depois da senha da equipe, nome, telefone e e-mail do cliente entram nos campos dele. O mesmo acontece em
+   **Gerar simulação** (aba Propostas da página do lead, que também registra a simulação) e no botão **Simulador de
+   consórcio** do painel lateral. Para trocar os arquivos: `node scripts/build-tools.js --diag Diagnostico-Vero.html --sim
+   Simulador_Consorcio_Vero.html`.
+10. **Integrações e WhatsApp Lite** (dados de demonstração em modo de teste):
+    - **Integrações** como administrador: cartões em Mensageria, Voz, Marketing, Produtividade e Sistema. Como
+      `consultor1@demo.local`: só WhatsApp Lite, Instagram e LinkedIn (em breve) e Google Agenda.
+    - **Conectar como no WhatsApp Web** como `consultor2@demo.local`: em **Comunicação › WhatsApp**, clique em **Conectar
+      meu WhatsApp**: o QR Code aparece ao lado das instruções. Use **Simular leitura** (modo de teste) e veja "WhatsApp
+      conectado".
+    - **WhatsApp Lite** em Integrações como `consultor2@demo.local`: "Meu WhatsApp" do Especialista 1 aparece com "Só ver" e o
+      número que você acabou de conectar aparece como seu. No menu ⋯, **Acesso dos membros**: mude o Especialista 1 para
+      "Só ver" ou "Ver e enviar" e use "Acesso para todos".
+    - **Comunicação › WhatsApp** como `consultor1@demo.local`: filtros Todas / Não lidas / Minhas, iniciais do responsável
+      (ED) e etapa do lead em cada conversa. Abra uma conversa do "Meu WhatsApp": envie texto com emoji, um anexo
+      (até 3 MB) e, se o navegador permitir o microfone, um áudio. Clique em **Ver**: aba Lead (Agendar R1, Gerar proposta,
+      Fechamento), IA Vero e Histórico.
+    - **Pipeline:** os cartões de Felipe Rocha, Henrique Dias e Lucas Ferreira mostram o ícone do WhatsApp; clique para
+      abrir a conversa.
+    - Como `consultor2@demo.local`, as conversas do número do Especialista 1 aparecem só para leitura e o **Ver** explica que
+      o lead é de outro especialista.
+11. **Agente de IA no WhatsApp** (dados de demonstração):
+    - **Integrações › Agente de IA** como administrador: número central "Central Vero", números dos últimos 30 dias, horários
+      da R1, critério de fit, o provedor (Gemini por padrão; troque para Claude e veja os campos mudarem) e o aviso de que
+      falta a chave (para a IA responder de verdade, crie a chave grátis no Google AI Studio e cole no campo "Chave da API
+      do Gemini"; com a chave, "Buscar os modelos da conta" lista os modelos disponíveis).
+    - **Comunicação › WhatsApp** como `consultor1@demo.local`: **Juliana Prado** está com a marca **IA** e a faixa **IA
+      atendendo** (teste **Assumir conversa** e **Devolver para a IA**); **Ricardo Souza** já teve a triagem feita e a R1
+      agendada pela IA (etapa R1 no pipeline) e está "Com o especialista".
+12. **WhatsApp real e agente de IA no seu computador (antes da VPS):** siga `deploy/whatsapp-lite/teste-no-computador/LEIA-ME.md`
+    (Docker Desktop, conectar o número pelo QR Code, chave do Gemini e modo de teste com o número que faz o papel de lead).
 
 ### H8. LPs ligadas ao CRM e rastreio (UTM)
 

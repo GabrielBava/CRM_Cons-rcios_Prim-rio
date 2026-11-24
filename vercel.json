@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
   "buildCommand": "",
-  "installCommand": "",
+  "installCommand": "npm install --omit=dev",
   "outputDirectory": "public",
   "regions": ["gru1"],
   "functions": {

@@ -43,6 +43,11 @@ if [ "$ORIGEM" != "$APP_DIR" ]; then
   rm -rf "${APP_DIR:?}"/*
   tar -C "$ORIGEM" --exclude=./node_modules --exclude=./data --exclude=./.git --exclude=./dist --exclude=./config.env -cf - . | tar -C "$APP_DIR" -xf -
 fi
+# Biblioteca oficial da Anthropic (IA generativa e agente de IA do WhatsApp)
+if command -v npm >/dev/null 2>&1; then
+  echo "==> Instalando as dependências"
+  ( cd "$APP_DIR" && npm install --omit=dev --no-audit --no-fund ) || echo "Aviso: não foi possível instalar as dependências; a IA generativa fica desligada."
+fi
 chown -R root:root "$APP_DIR"
 chmod -R a+rX "$APP_DIR"   # o serviço (usuário vero) lê todos os arquivos do sistema
 chown -R vero:vero "$DATA_DIR"

@@ -14,7 +14,7 @@ const MAX_DATA = 4 * 1024 * 1024;
 const TOOL_PATH = 'ferramentas/diagnostico-financeiro.html';
 const toolUrl = (id) => `${TOOL_PATH}?crm=${id}#/clientes/crm-${id}`;
 
-const titleOf = (x) => (x && typeof x === 'object' ? x.titulo || x.nome || x.descricao || x.tipo || x.area || null : null);
+const titleOf = (x) => (x && typeof x === 'object' ? x.titulo || x.acao || x.nome || x.descricao || x.tipo || x.area || null : null);
 const list = (v) => (Array.isArray(v) ? v : []);
 const filled = (o) => (o && typeof o === 'object' ? Object.values(o).filter((v) => v !== '' && v != null && !(Array.isArray(v) && !v.length)).length : 0);
 
@@ -63,6 +63,28 @@ function cleanResult(x) {
     };
   }
   return Object.keys(out).length ? out : null;
+}
+
+/**
+ * Resumo enviado pela ferramenta nova (Diagnóstico Vero v1: PUT { data, resumo }, src/lib/resumo-crm.ts) no formato que o
+ * CRM já usa: precificação do plano e resultado (Nota e Estrela Vero, Matriz de oportunidades). A Bússola não vem nesse
+ * resumo. Versão desconhecida é ignorada.
+ */
+function fromSummary(r) {
+  if (!r || typeof r !== 'object' || Number(r.versao) !== 1) return { pricing: null, result: null };
+  const p = r.precificacao && typeof r.precificacao === 'object' ? r.precificacao : null;
+  const pricing = p ? { valor: p.valor, pix_total: p.pixTotal, cartao_total: p.cartaoTotal, parcelas: p.parcelas, parcela: p.cartaoParcela, condicao: p.condicao, validade_dias: p.validadeDias } : null;
+  const result = {};
+  const max = Number(r.nota && r.nota.maximo) || 100;
+  if (Array.isArray(r.estrela) && r.estrela.length) {
+    const nota = r.nota && r.nota.valor != null && Number.isFinite(Number(r.nota.valor)) ? (Number(r.nota.valor) / max) * 100 : null;
+    result.estrela = { nota, pilares: r.estrela.map((x) => ({ id: x && x.id, nome: x && x.nome, pct: x && x.pct, status: x && x.status })) };
+  }
+  if (Array.isArray(r.oportunidades) && r.oportunidades.length) {
+    const brl = (v) => Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
+    result.matriz = r.oportunidades.map((o) => ({ titulo: o && o.titulo, area: o && o.area, produto: o && o.produto, prioridade: o && o.prioridade, prazo: o && o.prazo, potencial: o && o.potencial, detalhe: o && Number(o.valor) > 0 ? `Valor estimado: ${brl(o.valor)}` : null }));
+  }
+  return { pricing, result: Object.keys(result).length ? result : null };
 }
 
 const publicRow = (r) => (r ? { id: r.id, contact_id: r.contact_id, status: r.status, created_at: r.created_at, updated_at: r.updated_at, completed_at: r.completed_at, created_by_name: r.created_by_name, summary: r.summary ? JSON.parse(r.summary) : null, url: toolUrl(r.id) } : null);
@@ -123,11 +145,12 @@ function saveFromTool(db, user, id, body = {}) {
   const done = sum.coleta_finalizada || sum.recomendacoes_finalizadas;
   const proposals = require('./proposals');
   // Precificação calculada pela ferramenta (valor do plano, à vista e no cartão); sem uma válida, vale a última recebida
-  const pricing = proposals.cleanPricing(body.precificacao) || (d.pricing ? JSON.parse(d.pricing) : null);
+  const novo = fromSummary(body.resumo);
+  const pricing = proposals.cleanPricing(body.precificacao) || proposals.cleanPricing(novo.pricing) || (d.pricing ? JSON.parse(d.pricing) : null);
   if (pricing) sum.precificacao = pricing;
   // Nota Vero, Estrela Vero, Matriz e Bússola: sem um resultado novo válido, vale o último recebido
   const prev = d.summary ? JSON.parse(d.summary) : {};
-  const resultado = cleanResult(body.resultado) || prev.resultado || null;
+  const resultado = cleanResult(body.resultado) || cleanResult(novo.result) || prev.resultado || null;
   if (resultado) sum.resultado = resultado;
   const status = done || d.status === 'concluido' ? 'concluido' : 'em_andamento';
   tx(db, () => {
@@ -157,4 +180,4 @@ function generateProposal(db, user, id, body = {}) {
   return require('./proposals').fromDiagnostic(db, user, d, d.pricing ? JSON.parse(d.pricing) : null, { model: body.model, valor: body.valor });
 }
 
-module.exports = { forContact, start, forTool, saveFromTool, conclude, generateProposal, summarize, cleanResult, TOOL_PATH };
+module.exports = { forContact, start, forTool, saveFromTool, conclude, generateProposal, summarize, cleanResult, fromSummary, TOOL_PATH };

@@ -20,6 +20,8 @@ Situação nesta versão:
 | Simulador | Fluxo de link e retorno implementado no CRM. **Depende de implementação no simulador: integração pendente.** Enquanto isso, a simulação pode ser registrada manualmente. |
 | Meta Ads (Lead Ads) | **Conector direto não implementado.** Leads podem chegar pela API de entrada de leads por meio de uma ferramenta intermediária. |
 | WhatsApp | **API oficial do WhatsApp Business (Cloud API da Meta):** webhook de recebimento e envio de mensagens implementados (seção 10); precisa da conta da Meta conectada (número, token e App Secret). Há também o endpoint genérico de registro de mensagens de outros provedores (seção 4). |
+| WhatsApp Lite (QR Code) | **Número do próprio especialista (Business ou pessoal) lido por QR Code** num servidor compatível com a Evolution API v2 (seção 18). Precisa do servidor configurado pelo administrador; sem ele, há o modo de teste. |
+| Instagram, LinkedIn, Google Ads, LinkedIn Ads | Aparecem na tela Integrações como **Em breve**. |
 | API de entrada de leads | Implementada (endpoint próprio do CRM). |
 | Qualificação pela R1 (transcrição) | Endpoint implementado no CRM. **O modelo que lê a transcrição da reunião ainda não existe: integração futura.** |
 
@@ -230,13 +232,15 @@ Tela: **Comunicação › WhatsApp**. Configuração: **Configurações › Inte
 - **Mídia:** `GET /api/whatsapp/midia/:id` baixa a foto, o áudio ou o documento recebido pela API da Meta.
 - **Modo de teste:** sem a conta conectada, o administrador pode ligar o modo de teste: as mensagens ficam só no CRM (marcadas "teste"), para treinar a equipe.
 
-## 11. IA Vero: motor interno e IA generativa opcional (Claude)
+## 11. IA Vero: motor interno e IA generativa opcional (Gemini ou Claude)
 
 Tela: aba **IA Vero** do painel do lead. Configuração: **Configurações › Integrações › IA Vero** (administrador).
 
 - **Motor interno (padrão):** regras da plataforma sobre os dados do CRM (etapa, atividades, qualificação, reuniões, propostas, produtos e diagnóstico) e a Base da IA Vero. Sem custo e sem enviar dados para fora.
-- **IA generativa (opcional):** responde as perguntas livres do chat com o modelo `claude-opus-5-5` (Anthropic), com os dados do lead como contexto (resumo, etapa, próximo passo, alertas, canal, BANT, itens em aberto e oportunidades; sem CPF). Requisitos no servidor: a biblioteca oficial (`npm install @anthropic-ai/sdk`) e a chave da API (`ANTHROPIC_API_KEY` no `config.env` ou salva cifrada pela tela). Usa o fallback de modelo do lado do servidor da Anthropic (`server-side-fallback-2026-07-01`, `fallbacks: "default"`): se o modelo principal estiver indisponível, a Anthropic responde com o modelo reserva padrão. Recusa, limite de uso, chave inválida ou falha de rede: a resposta sai do motor interno, com o aviso.
+- **IA generativa (opcional):** responde as perguntas livres do chat com o provedor escolhido em Configurações › Integrações › IA generativa: **Google Gemini** (padrão; modelo `gemini-3.8-flash`, trocável) ou **Anthropic Claude** (`claude-opus-5-5`, `claude-sonnet-5-5` ou `claude-haiku-5-5`), com os dados do lead como contexto (resumo, etapa, próximo passo, alertas, canal, BANT, itens em aberto e oportunidades; sem CPF). A troca de provedor vale na hora. Chaves: `GEMINI_API_KEY` (ou `GOOGLE_API_KEY`) e `ANTHROPIC_API_KEY` no ambiente, ou salvas cifradas pela tela. O Claude usa a biblioteca oficial (`@anthropic-ai/sdk`, já nas dependências) com o fallback de modelo do lado da Anthropic (`server-side-fallback-2026-07-01`, `fallbacks: "default"`; não vai para o Haiku, que não tem). O Gemini usa a API REST oficial (`https://generativelanguage.googleapis.com/v1/models/{modelo}:generateContent`, chave no cabeçalho `x-goog-api-key`), no mesmo formato da biblioteca oficial do Google (`@google/genai`). Recusa, limite de uso (no plano gratuito do Gemini há limite por minuto e por dia), chave inválida ou falha de rede: a resposta sai do motor interno, com o aviso.
+- **Plano gratuito do Gemini e LGPD:** no plano gratuito, os termos do Google permitem usar as entradas e saídas da API para melhorar os produtos dele, com possível revisão humana. Para conversas com dados de clientes, prefira o plano pago do Gemini (ativando a cobrança no Google AI Studio) ou o Claude.
 - **Conversas:** cada "Nova conversa" do chat é uma conversa própria (`thread`). `POST /api/ia/leads/:id/conversa` `{ message, thread? }` devolve a resposta e o `thread`; `GET /api/ia/leads/:id/conversa` lista as conversas (primeira pergunta e data) e, com `?thread=`, traz as mensagens. Na IA generativa, só a conversa atual vai como histórico.
+- **Modelos do Gemini:** `GET /api/ia/modelos-gemini` lista ao vivo os modelos de texto da conta (botão "Buscar os modelos da conta").
 - **Rotas:** `GET /api/ia/leads/:id` (insights, com as fontes consultadas e "o que foi combinado"), `GET|POST /api/ia/leads/:id/conversa` (conversas e pergunta), `POST /api/ia/avaliar` (👍/👎 na resposta ou no item da base), `GET|POST|PATCH /api/ia/conhecimento` (base; cadastro pela liderança), `GET /api/ia/status`, `PUT /api/ia/config` (administrador).
 
 ## 12. Diagnóstico financeiro (ferramenta da Vero Planejamento)
@@ -260,6 +264,12 @@ Tela: aba **IA Vero** do painel do lead. Configuração: **Configurações › I
 ## 14. Precificação do planejamento (diagnóstico → proposta)
 
 A ponte da ferramenta de diagnóstico envia, junto com cada salvamento, a precificação calculada pela própria ferramenta (`precificacao`: valor, total à vista, total e parcelas no cartão, condição). Com o diagnóstico concluído, `POST /api/diagnosticos/:id/proposta` `{ model: 'implementacao' | 'plataforma', valor? }` gera a proposta de **planejamento** do modelo escolhido (valor da precificação ou o informado; à vista e cartão proporcionais). Gerar de novo antes do envio atualiza a mesma proposta; depois de enviada, recusa (crie nova versão). Para reaplicar a ponte num diagnóstico já gerado: `node scripts/build-tools.js --atualizar-ponte`.
+
+**Diagnóstico Vero v1 (ponte própria).** A versão 1.0.0 do projeto `vero-diagnostico` já sai na marca e com a ponte dentro do app (`<meta name="vero-diagnostico" content="ponte-crm-1">`): com `?crm=<id>` ela usa `GET/PUT /api/diagnosticos/<id>/dados` e envia `{ data, resumo }`. O `resumo` (versão 1: `nota {valor, maximo}`, `estrela [{id, nome, pct, status}]`, `oportunidades [...]`, `precificacao {valor, pixTotal, cartaoTotal, parcelas, cartaoParcela, condicao, validadeDias}`, além de perfil, fluxo, patrimônio e reserva) vira a precificação e o resultado do CRM (Nota e Estrela Vero e Matriz de oportunidades; a Bússola não vem nesse resumo). Versão desconhecida é ignorada. `node scripts/build-tools.js --diag html/Diagnostico-Vero.html` só copia o arquivo e acrescenta a trava (sem `?crm`, não abre solto; ligado ao CRM, esconde Novo cliente, Carregar exemplo, Importar/Exportar, Duplicar e Excluir).
+
+### 12.1 Simulador de consórcio ligado ao cliente
+
+`ferramentas/simulador-consorcio.html?crm=<id do cadastro>` (Ferramentas › Consórcio escolhendo o cliente, "Gerar simulação" na aba Propostas do lead ou o botão "Simulador de consórcio" no painel lateral). A ponte do CRM (script `vero-crm`, acrescentado por `node scripts/build-tools.js --sim Simulador_Consorcio_Vero.html`) busca `GET /api/simulador/cliente/<id>` (sessão do CRM; só quem enxerga o lead) → `{ id, codigo, nome, telefone, email, consultor }`, mostra no canto "Simulação para <cliente>" e, depois da senha da equipe, preenche os campos de nome, telefone/WhatsApp e e-mail do cliente que estiverem vazios (também os que aparecem em etapas seguintes; campos do consultor, plano, grupo e valores não são tocados; o que o especialista digitar não é sobrescrito). Sem `?crm`, o simulador funciona sozinho. "Gerar simulação" também registra a data, a hora e quem gerou.
 
 ## 15. Landing pages (LPs) e rastreio de campanhas (UTM)
 
@@ -298,3 +308,81 @@ A ponte da ferramenta de diagnóstico envia, junto com cada salvamento, a precif
 - **Variáveis na Vercel:** `DATABASE_URL` (obrigatória: Supabase › **Connect** › **Session pooler**, porta 5432 — a conexão direta é só IPv6 e o pooler de transação não guarda o schema da sessão), `CRM_SECRET_KEY` (sem ela, uma chave é criada e guardada no banco), `PUBLIC_URL=https://crm.veroconsorciosbr.com.br`, `CRON_SECRET`, as do Google e do SMTP do `config.env`, e para a **versão de teste** `CRM_DEMO=1` + `DEMO_PASSWORD` (banco vazio recebe os dados de demonstração na primeira requisição).
 - **Limites da Vercel:** requisições e respostas de até 4,5 MB (anexos de até ~3 MB, por causa da codificação em base64); a primeira requisição depois de um tempo parado é mais lenta (a função "acorda" e conecta no banco); a verificação de presença da R1 pelo Meet roda quando o CRM está em uso.
 - **Testes no Postgres:** `TEST_DATABASE_URL=postgresql://… npm run test:pg` roda a suíte inteira num schema limpo (apaga o schema `crm` desse banco: use um banco de teste).
+
+## 18. Tela Integrações e WhatsApp Lite (QR Code)
+
+### 18.1 Tela Integrações (menu Integrações)
+
+Cartões por categoria, com a situação de cada conexão e o botão Conectar/Gerenciar (`GET /api/integracoes/painel`):
+
+| Categoria | Integrações | Quem vê |
+|---|---|---|
+| Mensageria | WhatsApp Lite, WhatsApp Business (API oficial), Instagram (em breve), LinkedIn (em breve) | WhatsApp Lite, Instagram e LinkedIn: todos (cada usuário conecta o seu). API oficial: líder e administrador |
+| Voz | Discadora | Líder e administrador |
+| Marketing | Meta Ads, Google Ads (em breve), LinkedIn Ads (em breve) | Líder e administrador |
+| Produtividade | Google Agenda | Todos (cada usuário conecta a sua) |
+| Sistema | E-mail (SMTP), IA generativa, API de leads, Conexão BI | Líder e administrador |
+
+- **Especialista e leitura** veem só as integrações de uso pessoal (marcadas "Usuário"). **Líder e administrador** veem todas.
+- Credenciais da empresa (Meta, discadora, SMTP, IA, BI) continuam só com o administrador, em Configurações › Integrações; o líder vê a situação.
+
+### 18.2 WhatsApp Lite: como funciona
+
+- **Igual ao WhatsApp Web:** em **Comunicação › WhatsApp**, o usuário clica em **Conectar meu WhatsApp** (ou no ícone de QR Code no topo da lista) e o QR Code aparece na própria tela. No celular (Business ou pessoal): **Aparelhos conectados › Conectar um aparelho** e lê o código. A tela se atualiza sozinha quando conecta, e as conversas com os clientes passam a aparecer na lista. "Gerar outro QR Code" renova o código da mesma conexão. Também dá para conectar por Integrações › WhatsApp Lite › Nova instância.
+- **Por que existe o conector:** o WhatsApp Web só recebe mensagens enquanto a aba está aberta. No CRM, quem fica "com a aba aberta" 24 horas é o conector (servidor compatível com a Evolution API, seção 18.4): ele mantém o aparelho conectado e repassa cada mensagem ao CRM, mesmo com o computador do especialista desligado. A Vercel não mantém conexões abertas entre uma requisição e outra, por isso o conector roda fora dela.
+- As conversas vão para **Comunicação › WhatsApp**, junto com as do número oficial, com o canal e a instância indicados.
+- **Privacidade (padrão):** só entram as conversas com números que já estão no CRM (lead ou cliente). Mensagens de amigos e família do número pessoal são ignoradas. O dono pode trocar para "Registrar todas as conversas" no menu ⋯ da instância.
+- Grupos, listas de transmissão e canais são ignorados.
+
+### 18.3 Acesso dos membros
+
+| Nível | O que faz |
+|---|---|
+| Sem acesso | Não vê as conversas do número |
+| Só ver | Lê as conversas (não responde e não abre o cadastro de lead de outro especialista) |
+| Ver e enviar | Lê e responde pelo número |
+
+- O **dono** da instância, o **líder** e o **administrador** têm sempre acesso completo e são os únicos que mudam o acesso, desconectam ou excluem.
+- "Acesso para todos" define um nível mínimo para a equipe inteira; o nível individual mais alto prevalece.
+- Abrir a conversa zera as não lidas só para quem atende (o responsável). O líder acompanhando não apaga o aviso do especialista. Uma resposta dada pelo celular também marca a conversa como vista.
+
+### 18.4 Servidor (Evolution API v2)
+
+O WhatsApp Lite usa um servidor compatível com a **Evolution API v2** (Baileys), hospedado pela Vero numa VPS ou contratado. O CRM não assume nenhum fornecedor.
+
+- **Atenção ao "EvoGo":** o Evolution Go é outro produto (em Go), com outras rotas e outro formato de webhook; não é compatível com o CRM. Use a **Evolution API v2**.
+- **Instalador para VPS (Locaweb ou outra, Ubuntu 22.04/24.04, a partir de 1 GB de RAM):** `deploy/whatsapp-lite/instalar-evolution.sh`, autocontido. Ele instala o Docker, cria 2 GB de swap quando a RAM é menor que 2 GB e gera em `/opt/vero-whatsapp` o Docker Compose: Evolution API **v2.3.8** com cache local (sem Redis), Postgres enxuto e Caddy com HTTPS automático, além dos registros com tamanho limitado. Parado, o conjunto usa cerca de 270 MB. Também instala o atalho `vero-whatsapp` (situacao, registros, reiniciar, dados). Rodar de novo mantém a chave, as senhas e os números conectados. Passo a passo completo (Locaweb, DNS na HostGator, CRM, QR Code e agente) em `deploy/whatsapp-lite/LEIA-ME.md`. A versão fica fixa: a partir da 2.4, a Evolution API exige ativação de licença.
+
+- **Configuração (administrador):** Integrações › WhatsApp Lite › *Servidor do WhatsApp Lite*: endereço (`https://…`) e chave global (`apikey`), guardada cifrada no banco. Ou no ambiente: `EVOLUTION_API_URL` e `EVOLUTION_API_KEY` (têm prioridade sobre a tela). Ao salvar um endereço ou uma chave novos, o CRM confere o conector na hora (`GET /instance/fetchInstances`) e avisa se ele não respondeu, se o certificado HTTPS ainda não saiu ou se a chave foi recusada. A configuração é salva de qualquer jeito.
+- **Webhook:** o CRM cadastra sozinho, ao criar a instância, `https://SEU-CRM/api/whatsapp/lite/webhook/<token da instância>` com os eventos `QRCODE_UPDATED`, `CONNECTION_UPDATE`, `MESSAGES_UPSERT` e `MESSAGES_UPDATE`. O endereço precisa ser HTTPS público (`PUBLIC_URL`). Cada instância tem um token próprio; token desconhecido recebe 401.
+- **Chamadas usadas:** `POST /instance/create`, `POST /webhook/set/{instância}`, `GET /instance/connect/{instância}` (QR Code), `GET /instance/connectionState/{instância}`, `GET /instance/fetchInstances`, `DELETE /instance/logout/{instância}`, `DELETE /instance/delete/{instância}`, `POST /message/sendText`, `POST /message/sendMedia`, `POST /message/sendWhatsAppAudio` e `POST /chat/getBase64FromMediaMessage` (para baixar foto, áudio ou documento recebido).
+- **Modo de teste:** sem servidor configurado, o administrador pode ligar o modo de teste: o QR Code é ilustrativo e o botão **Simular leitura** conecta a instância; as mensagens ficam só no CRM.
+
+### 18.5 Guia WhatsApp (Comunicação › WhatsApp)
+
+- **Lista:** filtros **Todas**, **Não lidas** e **Minhas** (do responsável que está vendo), busca por nome, número e texto das mensagens, filtro por canal/número. Cada conversa mostra a foto/iniciais, as não lidas, as **iniciais do responsável** (ex.: GB) e a **etapa do lead no pipeline** (Lead, Tentativa de contato, Qualificação, R1, R2, Negociação…), identificada pelo número do contato.
+- **Topo da conversa:** nome, número, etapa no pipeline, responsável e o canal (WhatsApp oficial ou WhatsApp Lite · nome da instância).
+- **Mensagens:** separadores por dia, eventos do negócio ("Negócio criado em…", mudanças de etapa), confirmações de envio/entrega/leitura, foto, vídeo, áudio e documento.
+- **Envio:** texto com emoji, anexos (foto, vídeo, documento) com legenda, gravação de áudio pelo microfone e modelos aprovados (número oficial). Limite de **3 MB por arquivo** (`WA_MAX_FILE_MB`), por causa do limite de 4,5 MB por requisição da Vercel. No número oficial, áudio precisa ser OGG ou MP3 (a gravação do navegador em WebM não é aceita pela Meta).
+- **Ver:** painel ao lado com o lead (etapa, responsável, crédito, próxima ação), a **IA Vero** (perguntas sobre a conversa e o lead, com "Usar como resposta") e o **Histórico**. Botões para **converter a conversa**: Agendar reunião (R1/R2), Gerar proposta e Fechamento.
+- **Pipeline:** o cartão do lead com conversa no WhatsApp mostra o ícone do WhatsApp (com as não lidas); clicar abre a conversa.
+
+## 19. Agente de IA no WhatsApp (atendimento e qualificação no número central)
+
+Tela: **Integrações › Agente de IA** (o administrador configura; o líder vê a situação e os números). Na conversa: faixa **IA atendendo** com o botão **Assumir conversa** / **Devolver para a IA**.
+
+- **Onde atende:** só no **número central** da Vero: um número do WhatsApp Lite (conectado por QR Code no conector) ou o número oficial. Os números pessoais dos especialistas não são atendidos pela IA. Ao ligar o agente num número Lite, ele passa a registrar todas as conversas (não só as de quem já está no CRM), porque recebe leads novos.
+- **Fluxo:** o lead escreve → número desconhecido vira **lead** (origem WhatsApp, nome do perfil do WhatsApp) e entra na distribuição → a IA responde, apresenta-se como assistente virtual e faz a **triagem** (as 6 perguntas da aba Qualificação: interesse, dor/necessidade, impacto/prazo, decisor, faixa de investimento, faixa de renda), registrando cada resposta no CRM (triagem completa com interesse leva o negócio para **Qualificação**) → com **fit** (critério configurável), oferece horários livres da agenda do especialista responsável e **agenda a R1** (com Google Meet e convite por e-mail quando configurados; o negócio vai para a coluna R1) → passa a conversa para o especialista e o avisa.
+- **Passagem para uma pessoa:** quando o lead pede, reclama, já é cliente, pergunta valores, taxas, propostas ou contratos, envia algo que a IA não avalia, não tem fit, depois da R1 agendada, ou se a IA ficar indisponível (nesse caso o lead recebe uma mensagem de cortesia). Se alguém da equipe responder pelo CRM ou pelo celular, a IA para na hora. O especialista pode **Assumir** ou **Devolver para a IA** a qualquer momento.
+- **Regras fixas:** não promete data de contemplação nem garante aprovação, rentabilidade ou taxa; não informa valores de parcela ou de proposta; não pede CPF, documentos, senhas ou cartão; diz que é uma IA se perguntarem; respeita quem pede para não receber mensagens e a oposição a contato por WhatsApp do cadastro.
+- **Configuração:** número central, nome da assistente, provedor e modelo (Gemini: `gemini-3.8-flash` padrão; Claude: `claude-opus-5-5`, `claude-sonnet-5-5` ou `claude-haiku-5-5`), duração da R1, dias e horários para a R1, antecedência mínima, critério de fit e orientações extras. A Base da IA Vero (perguntas, objeções e mensagens) entra no conhecimento do agente.
+- **Provedor:** **Google Gemini** (padrão, com plano gratuito) ou **Anthropic Claude**, escolhido na tela do agente e trocável a qualquer momento (cada um com o seu modelo). As chaves são as mesmas da IA generativa (seção 11) e podem ser informadas na própria tela do agente. No Gemini, as ferramentas vão como `functionDeclarations` (parâmetros em `parametersJsonSchema`), o resultado de cada ferramenta volta como `functionResponse` com papel `user` e o conteúdo do modelo é devolvido sem alterações (preserva as assinaturas de raciocínio). Limite do plano gratuito atingido: o lead recebe a mensagem de cortesia e a conversa passa para o especialista com o motivo "Limite de uso da IA atingido".
+- **Funcionamento técnico:** o agente roda dentro da requisição do webhook (a Vercel não executa nada depois da resposta). Mensagens seguidas do lead são juntadas (espera de `WA_AGENT_DEBOUNCE_MS`, padrão 6 s) e uma trava por conversa impede duas respostas ao mesmo tempo. Chamada à IA (Gemini ou Claude) com ferramentas (`salvar_triagem`, `salvar_qualificacao`, `horarios_r1`, `agendar_r1`, `transferir_especialista`, `encerrar_sem_fit`), cache do prompt do sistema e fallback de modelo do lado da Anthropic.
+- **Registro e custos:** cada ação fica em `wa_agent_log` (novo lead, triagem, R1 agendada, transferência, sem fit, erro) com os tokens usados. A tela mostra os números dos últimos 30 dias e, no Claude, uma estimativa do custo. Ordem de grandeza por lead qualificado (cerca de 10 mensagens): US$ 0,40 no Opus 5.5, US$ 0,20 no Sonnet 5.5, menos de US$ 0,02 no Haiku 5.5; no plano gratuito do Gemini, sem cobrança dentro dos limites.
+- **Rotas:** `GET|PUT /api/whatsapp/agente` (configuração e números), `POST /api/whatsapp/conversas/:id/ia` `{ acao: "assumir" | "devolver" }`.
+- **Modo de teste:** campo "Modo de teste: atender só estes números" (um por linha). Com a lista preenchida, a IA só responde a esses números, e conversas de outras pessoas com o número central não entram no CRM (útil para testar com um número pessoal). Vazio: a IA atende todos que escreverem para o número central.
+- **Especialista padrão para leads novos:** quando a roleta não define ninguém, o lead criado pela IA fica com esse especialista (e a R1 é marcada na agenda dele).
+- **Teste no computador antes da VPS:** `deploy/whatsapp-lite/teste-no-computador/` sobe no Docker Desktop o CRM de teste (dados de demonstração, banco próprio, sem ler o `config.env`), o conector Evolution API v2.3.8, o Postgres e o Redis, só em `localhost`. O conector avisa o CRM em `http://crm.vero.test:3000` (`EVOLUTION_WEBHOOK_BASE`). Passo a passo em `deploy/whatsapp-lite/teste-no-computador/LEIA-ME.md`.
+- **Endereço do CRM para o webhook:** `EVOLUTION_WEBHOOK_BASE` (ou o campo na tela do servidor do WhatsApp Lite) troca o endereço que o conector usa para avisar as mensagens; padrão: o endereço público do CRM.
+- **Acesso:** as conversas do número central que passaram para um especialista (responsável pela conversa ou pelo lead) aparecem para ele, que pode responder mesmo sem acesso ao número.
+

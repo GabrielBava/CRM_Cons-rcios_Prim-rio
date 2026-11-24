@@ -677,7 +677,9 @@ const OPP_SELECT = `SELECT o.*, c.name AS contact_name, c.code AS contact_code, 
   (SELECT MAX(pr.credit_value) FROM proposals pr WHERE pr.opportunity_id = o.id AND pr.status IN ('rascunho','apresentada','em_analise','aprovada')) AS proposal_value,
   (SELECT COUNT(*) FROM proposals pr WHERE pr.opportunity_id = o.id AND pr.status <> 'substituida') AS proposal_count,
   c.optouts AS contact_optouts, s.name AS stage_name, s.kind AS stage_kind, s.key AS stage_key, p.name AS product_name, u.name AS owner_name,
-  (SELECT t.title || '|' || t.due_at FROM tasks t WHERE t.opportunity_id = o.id AND t.status = 'pendente' ORDER BY t.due_at LIMIT 1) AS next_task
+  (SELECT t.title || '|' || t.due_at FROM tasks t WHERE t.opportunity_id = o.id AND t.status = 'pendente' ORDER BY t.due_at LIMIT 1) AS next_task,
+  (SELECT w.id FROM wa_conversations w WHERE w.contact_id = c.id ORDER BY COALESCE(w.last_message_at, w.created_at) DESC LIMIT 1) AS wa_conversation_id,
+  (SELECT SUM(w.unread) FROM wa_conversations w WHERE w.contact_id = c.id) AS wa_unread
   FROM opportunities o JOIN contacts c ON c.id = o.contact_id JOIN pipeline_stages s ON s.id = o.stage_id
   LEFT JOIN products p ON p.id = o.product_id LEFT JOIN users u ON u.id = o.owner_id LEFT JOIN users cu ON cu.id = o.co_owner_id`;
 

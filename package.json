@@ -22,5 +22,8 @@
   "license": "UNLICENSED",
   "devDependencies": {
     "sql.js": "^1.14.2"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.13.0"
   }
 }

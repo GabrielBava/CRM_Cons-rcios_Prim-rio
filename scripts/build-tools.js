@@ -4,7 +4,10 @@
  * Gera as ferramentas HTML da Vero (Ferramentas › Planejamento financeiro e › Consórcio) a partir dos arquivos originais:
  *
  *   node scripts/build-tools.js --diag <Diagnostico.html> --sim <Simulador.html>
- *   node scripts/build-tools.js --atualizar-ponte   (só reaplica a ponte com o CRM no diagnóstico já gerado)
+ *   node scripts/build-tools.js --atualizar-ponte   (só reaplica a ponte com o CRM no diagnóstico já gerado, formato antigo)
+ *
+ * Versões que já vêm na marca Vero (Diagnóstico Vero v1 com a ponte própria e Simulador Consórcio Vero v1) são copiadas:
+ * o diagnóstico ganha só a trava (abre pelo lead) e o simulador, a ponte que preenche nome e contato do cliente (?crm=<id>).
  *
  * Saída (servida pelo CRM):
  *   public/ferramentas/diagnostico-financeiro.html  — marca Vero Planejamento + ponte com o CRM (?crm=<id>)
@@ -438,19 +441,179 @@ function buildSimulator(src) {
   return s;
 }
 
+/* ------------------------- Ferramentas já na marca Vero (v1.0.0) ------------------------- */
+
+/**
+ * Diagnóstico Vero v1 (projeto vero-diagnostico, <meta name="vero-diagnostico" content="ponte-crm-1">): já sai na marca e
+ * com a ponte própria (?crm=<id>: busca o cliente, salva no CRM e envia o resumo). O CRM acrescenta só a trava: sem ?crm
+ * o diagnóstico não abre solto (é gerado pelo lead) e, ligado ao CRM, mostra só o cliente do CRM.
+ */
+const DIAG_LOCK = `(function () {
+  'use strict';
+  var id = null;
+  try { id = new URLSearchParams(location.search).get('crm'); } catch (e) {}
+  if (!id || !/^\\d+$/.test(id)) {
+    var show = function () {
+      var root = document.getElementById('root');
+      if (root) root.style.display = 'none';
+      var w = document.createElement('div');
+      w.setAttribute('role', 'alert');
+      w.style.cssText = 'position:fixed;inset:0;display:grid;place-items:center;padding:24px;background:#08121D;color:#E0E1DD;font:16px/1.5 Poppins,system-ui,sans-serif;z-index:2147483647';
+      w.innerHTML = '<div style="max-width:460px;text-align:center"><h1 style="font-size:20px;margin:0 0 10px">Diagnóstico financeiro</h1>'
+        + '<p style="margin:0 0 18px;color:#A9B8CB">O diagnóstico é gerado pelo CRM: abra o lead e use a aba <strong>Diagnóstico</strong> (ou Ferramentas › Diagnóstico financeiro). Assim ele fica ligado ao cliente e salvo no CRM.</p>'
+        + '<a href="../#/ferramentas" style="display:inline-block;padding:10px 18px;border-radius:999px;background:#E0E1DD;color:#0D1B2A;text-decoration:none;font-weight:600">Abrir o CRM</a></div>';
+      document.body.appendChild(w);
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', show); else show();
+    return;
+  }
+  // Ligado ao CRM: só o cliente do CRM (sem lista de clientes, novo cliente, exemplo, importar/exportar, duplicar ou excluir)
+  var home = '#/clientes/crm-' + id;
+  function guard() {
+    var h = location.hash || '';
+    if (h === '' || h === '#/' || h === '#/clientes' || (/^#\\/clientes\\//.test(h) && h.indexOf(home) !== 0)) location.hash = home;
+  }
+  window.addEventListener('hashchange', guard);
+  var HIDE = /^(Novo cliente|Carregar exemplo|Importar|Importar backup|Exportar backup)$/;
+  function hideExtras() {
+    var els = document.querySelectorAll('button, a');
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      var t = (el.textContent || '').trim();
+      if (HIDE.test(t) || /^(Duplicar|Excluir)$/.test(el.getAttribute('title') || '')) el.style.display = 'none';
+    }
+  }
+  new MutationObserver(hideExtras).observe(document.documentElement, { childList: true, subtree: true });
+})();`;
+
+function copyDiagnostic(src) {
+  let s = fs.readFileSync(src, 'utf8');
+  if (!s.includes('<meta name="vero-diagnostico" content="ponte-crm-1"')) throw new Error('Não é o Diagnóstico Vero com a ponte do CRM (ponte-crm-1).');
+  s = s.replace(/<script id="vero-trava">[\s\S]*?<\/script>\n?/, '');
+  const at = s.indexOf('</head>');
+  if (at < 0) throw new Error('Diagnóstico sem </head>.');
+  s = `${s.slice(0, at)}<script id="vero-trava">${DIAG_LOCK}</script>\n${s.slice(at)}`;
+  console.log(`  diagnóstico (Vero v1, cópia + trava): ${(s.length / 1e6).toFixed(2)} MB`);
+  return s;
+}
+
+/**
+ * Simulador Consórcio Vero v1: já na marca, conteúdo cifrado liberado pela senha da equipe. Com ?crm=<id do cadastro>
+ * (Ferramentas › Consórcio ou aba Propostas do lead), a ponte busca o nome e o contato do cliente no CRM e, depois da
+ * senha, preenche os campos de nome, telefone/WhatsApp e e-mail do cliente que estiverem vazios (inclusive os que
+ * aparecem depois, em outras etapas). Sem ?crm, o simulador funciona sozinho como antes.
+ */
+const SIM_BRIDGE = `(function () {
+  'use strict';
+  var id = null;
+  try { id = new URLSearchParams(location.search).get('crm'); } catch (e) {}
+  if (!id || !/^\\d+$/.test(id)) return;
+  var cli = null, pill = null, msg = '', tone = '';
+  var norm = function (t) { return String(t || '').toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, ''); };
+  function badge(text, t) {
+    if (text != null) { msg = text; tone = t || ''; }
+    if (!document.body || !msg) return;
+    if (!pill || !document.body.contains(pill)) {
+      pill = document.createElement('div');
+      pill.id = 'vero-crm-cliente';
+      pill.setAttribute('role', 'status');
+      pill.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:2147483646;max-width:calc(100vw - 24px);padding:7px 12px;border-radius:999px;font:500 12px/1.3 Poppins,system-ui,sans-serif;color:#E0E1DD;border:1px solid rgba(169,184,203,.35);box-shadow:0 6px 18px rgba(0,0,0,.25);pointer-events:none';
+      document.body.appendChild(pill);
+    }
+    pill.textContent = msg;
+    pill.style.background = tone === 'erro' ? '#7A2E2E' : '#0D1B2A';
+  }
+  // Rótulo do campo: nome, id, placeholder, aria-label e o texto do label
+  function describe(el) {
+    var t = [el.name, el.id, el.placeholder, el.getAttribute('aria-label'), el.title, el.getAttribute('autocomplete')];
+    if (el.id) {
+      var sel = window.CSS && CSS.escape ? CSS.escape(el.id) : el.id;
+      var l = document.querySelector('label[for="' + sel + '"]');
+      if (l) t.push(l.textContent);
+    }
+    var own = el.closest('label');
+    if (own) t.push(own.textContent);
+    var prev = el.previousElementSibling;
+    if (prev && prev.textContent && prev.textContent.length < 80) t.push(prev.textContent);
+    return norm(t.filter(Boolean).join(' '));
+  }
+  var NOT_CLIENT = /(consultor|especialista|vendedor|corretor|assessor|administradora|grupo|plano|produto|empresa|usuario|senha|busca|pesquis|filtro|valor|credito|parcela|prazo|lance|taxa|cota|bem\\b)/;
+  function kind(el) {
+    var d = describe(el);
+    if (!d || NOT_CLIENT.test(d)) return null;
+    if (el.type === 'email' || /e-?mail/.test(d)) return 'email';
+    if (el.type === 'tel' || /(telefone|celular|whats|fone)/.test(d)) return 'telefone';
+    if (/(nome|cliente|proponente|consorciado)/.test(d)) return 'nome';
+    return null;
+  }
+  function setValue(el, v) {
+    var proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    var desc = Object.getOwnPropertyDescriptor(proto, 'value');
+    if (desc && desc.set) desc.set.call(el, v); else el.value = v;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  var SKIP = /^(hidden|password|checkbox|radio|number|range|date|file|submit|button|color)$/;
+  function fill() {
+    badge();
+    if (!cli || document.getElementById('acesso-form')) return;
+    var vals = { nome: cli.nome, telefone: cli.telefone, email: cli.email };
+    var els = document.querySelectorAll('input, textarea');
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      if (el.getAttribute('data-vero-crm') || SKIP.test(el.type || '') || el.disabled || el.readOnly) continue;
+      var k = kind(el);
+      if (!k || !vals[k]) continue;
+      el.setAttribute('data-vero-crm', k);
+      if (!String(el.value || '').trim()) setValue(el, vals[k]);
+    }
+  }
+  var timer = null;
+  var obs = new MutationObserver(function () { clearTimeout(timer); timer = setTimeout(fill, 120); });
+  function start() { obs.observe(document.body, { childList: true, subtree: true }); badge(); }
+  if (document.body) start(); else document.addEventListener('DOMContentLoaded', start);
+  badge('Buscando o cliente no CRM…');
+  fetch('/api/simulador/cliente/' + id, { credentials: 'same-origin', headers: { 'X-Requested-With': 'crm' } })
+    .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw new Error(j.error || ('Erro ' + r.status)); return j; }); })
+    .then(function (c) {
+      cli = c;
+      document.title = 'Simulador · ' + c.nome + ' | Vero';
+      badge('Simulação para ' + c.nome + (c.codigo ? ' (' + c.codigo + ')' : '') + ' · dados do CRM');
+      fill();
+    })
+    .catch(function (e) { badge('Cliente do CRM não carregado (' + e.message + '). Entre no CRM e abra o simulador pelo cliente.', 'erro'); });
+})();`;
+
+function copySimulator(src) {
+  let s = fs.readFileSync(src, 'utf8');
+  if (!/<title>[^<]*VERO[^<]*<\/title>/i.test(s) || !s.includes('function carregador(P)')) throw new Error('Não é o Simulador Consórcio Vero (tela de acesso com o carregador).');
+  s = s.replace(/<script id="vero-crm">[\s\S]*?<\/script>\n?/, '');
+  const at = s.lastIndexOf('</body>');
+  if (at < 0) throw new Error('Simulador sem </body>.');
+  s = `${s.slice(0, at)}<script id="vero-crm">${SIM_BRIDGE}</script>\n${s.slice(at)}`;
+  console.log(`  simulador (Vero v1, cópia + ponte do cliente): ${(s.length / 1e6).toFixed(2)} MB`);
+  return s;
+}
+
 /* ------------------------- execução ------------------------- */
 
-const diag = arg('diag');
-const sim = arg('sim');
-if (process.argv.includes('--atualizar-ponte')) {
-  refreshBridge(path.join(OUT, 'diagnostico-financeiro.html'));
-  process.exit(0);
+module.exports = { buildDiagnostic, buildSimulator, copyDiagnostic, copySimulator, DIAG_LOCK, SIM_BRIDGE };
+
+if (require.main === module) {
+  const diag = arg('diag');
+  const sim = arg('sim');
+  if (process.argv.includes('--atualizar-ponte')) {
+    refreshBridge(path.join(OUT, 'diagnostico-financeiro.html'));
+    process.exit(0);
+  }
+  if (!diag && !sim) {
+    console.log('Uso: node scripts/build-tools.js --diag <Diagnostico.html> --sim <Simulador.html>');
+    process.exit(1);
+  }
+  fs.mkdirSync(OUT, { recursive: true });
+  // Arquivos que já vêm na marca Vero são só copiados (com a trava/ponte do CRM); os originais antigos passam pelas trocas
+  const isVero = (file, re) => re.test(fs.readFileSync(file, 'utf8').slice(0, 4000));
+  if (diag) fs.writeFileSync(path.join(OUT, 'diagnostico-financeiro.html'), isVero(diag, /<meta name="vero-diagnostico" content="ponte-crm-1"/) ? copyDiagnostic(diag) : buildDiagnostic(diag));
+  if (sim) fs.writeFileSync(path.join(OUT, 'simulador-consorcio.html'), isVero(sim, /<title>[^<]*VERO[^<]*<\/title>/i) ? copySimulator(sim) : buildSimulator(sim));
+  console.log('Ferramentas geradas em public/ferramentas/.');
 }
-if (!diag && !sim) {
-  console.log('Uso: node scripts/build-tools.js --diag <Diagnostico.html> --sim <Simulador.html>');
-  process.exit(1);
-}
-fs.mkdirSync(OUT, { recursive: true });
-if (diag) fs.writeFileSync(path.join(OUT, 'diagnostico-financeiro.html'), buildDiagnostic(diag));
-if (sim) fs.writeFileSync(path.join(OUT, 'simulador-consorcio.html'), buildSimulator(sim));
-console.log('Ferramentas geradas em public/ferramentas/.');

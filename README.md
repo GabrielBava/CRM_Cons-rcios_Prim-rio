@@ -4,7 +4,7 @@ Plataforma de gestão da empresa inteira (consórcio, planejamento financeiro, s
 
 - **Painel inicial**
 - **Operacional:** Pipeline, Calendário (panorama 360 somente leitura: R1, R2, one-on-ones, tarefas e atividades por dia, semana, mês ou período), Agendas e tarefas, Propostas e Pré-venda
-- **Comunicação:** Inbox (chat interno entre colaboradores, conversas diretas e grupos, com anexos), Tickets (chamados internos com responsável, prazo e anexos: aberto → em andamento → devolvido → concluído) e WhatsApp (número oficial da empresa pela API do WhatsApp Business, conversas ligadas ao lead)
+- **Comunicação:** Inbox (chat interno entre colaboradores, conversas diretas e grupos, com anexos), Tickets (chamados internos com responsável, prazo e anexos: aberto → em andamento → devolvido → concluído) e WhatsApp no jeito do WhatsApp (número oficial da empresa pela API do WhatsApp Business e **WhatsApp Lite**: o número de cada especialista, Business ou pessoal, conectado por QR Code; filtros Todas/Não lidas/Minhas, iniciais do responsável, etapa do lead no pipeline, anexos, áudio, emoji e painel Ver com IA Vero e conversão em reunião, proposta ou fechamento; ícone do WhatsApp no cartão do pipeline)
 - **Ferramentas:** um só item com Simulador, Modelo da R1, Kit do especialista, Manual da marca, Importar leads e modelo da transcrição da R1
 - **Gestão de vendas:** Clientes, Vendas, Pós-venda, Metas, Comissões e cancelamentos e Relatórios
 - **Gestão do time** (líder de equipe para cima): Organograma do time, Dashboard squad, One-on-ones (o líder marca e aparece no calendário dos dois) e Distribuição de leads
@@ -20,6 +20,8 @@ A ficha do cliente tem 9 blocos, com documentos validados, financeiro, pós-vend
 
 - **Especificação funcional (telas, funil, permissões e módulo ERP):** [`docs/ESPECIFICACAO.md`](docs/ESPECIFICACAO.md)
 - **Contratos de integração (discadora, simulador, leads, WhatsApp):** [`docs/INTEGRACOES.md`](docs/INTEGRACOES.md)
+- **Agente de IA no WhatsApp:** no número central, a IA (Google Gemini, padrão e com plano gratuito, ou Anthropic Claude, trocáveis a qualquer momento) atende o lead na hora, faz a triagem, registra no CRM e, com fit, agenda a R1 na agenda do especialista; depois passa a conversa para ele (que pode assumir a qualquer momento). Conector do WhatsApp Lite para VPS (Locaweb ou outra): [`deploy/whatsapp-lite/LEIA-ME.md`](deploy/whatsapp-lite/LEIA-ME.md). Detalhes: [`docs/INTEGRACOES.md`](docs/INTEGRACOES.md#19-agente-de-ia-no-whatsapp-atendimento-e-qualificação-no-número-central)
+- **Tela Integrações:** cartões por categoria (Mensageria, Voz, Marketing, Produtividade, Sistema). Especialista vê as de uso pessoal (WhatsApp Lite, Instagram, LinkedIn, Google Agenda); líder e administrador veem todas. WhatsApp Lite com acesso dos membros (Sem acesso, Só ver, Ver e enviar): [`docs/INTEGRACOES.md`](docs/INTEGRACOES.md#18-tela-integrações-e-whatsapp-lite-qr-code)
 - **Modelo de dados (DDL completo e relacionamentos):** [`docs/DDL.sql`](docs/DDL.sql) e [`docs/MODELO_DE_DADOS.md`](docs/MODELO_DE_DADOS.md), gerados por `node scripts/ddl.js`
 
 ## Identidade visual
@@ -191,7 +193,7 @@ docs/
 - **Painel do lead:** uma coluna, com Ganho (verde) e Perdido (vermelho), telefone que copia, WhatsApp da empresa e abas IA Vero, Detalhes (ingresso, primeiro contato, prazo da R1 e previsão de fechamento), Atividades (registro por canal e totais), Qualificação (Concluir qualificação), Agendas (R1/R2 e contadores), Produtos, Diagnóstico, Tarefas, Notas, Propostas e Histórico.
 - **Regras do funil:** Lead → Tentativa com uma tentativa registrada; Tentativa → Qualificação com a qualificação concluída; Qualificação → R1 com a R1 agendada; R1 → R2 com a R2 agendada; R2 → Negociação com proposta gerada (consórcio, seguros, planejamento ou investimentos). **Pipeline › Perdidos** (líder e administrador) mostra onde e por que (MP) os leads foram perdidos.
 - **Produtos (cross-sell/up-sell)**, **Diagnóstico financeiro** (ferramenta da Vero Planejamento ligada ao CRM) e **IA Vero** (motor interno + IA generativa opcional): detalhes em `docs/ESPECIFICACAO.md` §20 e `docs/INTEGRACOES.md` §11–12.
-- **Ferramentas por área:** `public/ferramentas/` (simulador de consórcio e diagnóstico financeiro na marca Vero), geradas por `node scripts/build-tools.js --diag <Diagnostico.html> --sim <Simulador.html>`.
+- **Ferramentas por área:** Consórcio só com o **Simulador de consórcio** (abre ligado ao cliente, com nome e contato preenchidos) e Planejamento só com o **Diagnóstico financeiro** (ligado ao lead e salvo no CRM). Arquivos em `public/ferramentas/`, gerados por `node scripts/build-tools.js --diag <Diagnostico-Vero.html> --sim <Simulador_Consorcio_Vero.html>` (as versões Vero v1 são copiadas com a trava e a ponte do CRM). Detalhes em `docs/INTEGRACOES.md` §12.
 
 ## Tela responsiva, filtros e painel do lead v5
 

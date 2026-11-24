@@ -99,6 +99,21 @@ function createRouter(db) {
   add('GET', '/api/planos', ({ query }) => catalog.listPlans(db, query));
   // Simulador servido pelo CRM: administradoras e planos ativos (sessão do usuário logado)
   add('GET', '/api/simulador/planos', () => catalog.simulatorPlans(db));
+  // Simulador de consórcio (Ferramentas › Consórcio): nome e contato do cliente escolhido para a simulação
+  const fmtPhoneBR = (v) => {
+    const d = String(v || '').replace(/\D/g, '').replace(/^55(?=\d{10,11}$)/, '');
+    if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+    if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+    return String(v || '');
+  };
+  add('GET', '/api/simulador/cliente/:id', ({ user, params }) => {
+    const c = core.loadContact(db, user, params.id);
+    return {
+      id: c.id, codigo: c.code, nome: c.name, telefone: fmtPhoneBR(c.whatsapp || c.phone1 || c.phone2), email: c.email || '',
+      consultor: { nome: user.name, email: user.email, telefone: fmtPhoneBR(user.whatsapp || user.phone) },
+      crm_url: `#/leads/${c.id}`,
+    };
+  });
   add('POST', '/api/planos', ({ user, body }) => ({ id: catalog.savePlan(db, user, body) }));
   add('GET', '/api/planos/:id/verificar-credito', ({ params, query }) => {
     const plan = db.prepare('SELECT * FROM products WHERE id = ?').get(Number(params.id));
@@ -378,6 +393,7 @@ function createRouter(db) {
   add('POST', '/api/diagnosticos/:id/proposta', ({ user, params, body }) => diagnostics.generateProposal(db, user, params.id, body));
   add('GET', '/api/ia/status', ({ user }) => assistant.status(db, user));
   add('PUT', '/api/ia/config', ({ user, body }) => assistant.saveConfig(db, user, body));
+  add('GET', '/api/ia/modelos-gemini', ({ user }) => assistant.geminiModels(db, user));
   add('GET', '/api/ia/leads/:id', ({ user, params }) => assistant.insights(db, user, params.id));
   add('GET', '/api/ia/leads/:id/conversa', ({ user, params, query }) => assistant.history(db, user, params.id, query));
   add('POST', '/api/ia/leads/:id/conversa', ({ user, params, body }) => assistant.chat(db, user, params.id, body));
@@ -538,11 +554,30 @@ function createRouter(db) {
   add('POST', '/api/whatsapp/conversas', ({ user, body }) => wa.startConversation(db, user, body));
   add('GET', '/api/whatsapp/conversas/:id', ({ user, params, query }) => wa.getConversation(db, user, params.id, query));
   add('PATCH', '/api/whatsapp/conversas/:id', ({ user, params, body }) => wa.updateConversation(db, user, params.id, body));
-  add('POST', '/api/whatsapp/conversas/:id/mensagens', ({ user, params, body }) => wa.sendMessage(db, user, params.id, body));
+  add('POST', '/api/whatsapp/conversas/:id/mensagens', ({ user, params, body }) => wa.sendMessage(db, user, params.id, body), { bodyLimit: 4.5e6 });
   add('GET', '/api/whatsapp/midia/:id', async ({ user, params, res }) => {
     const f = await wa.media(db, user, params.id);
     return sendBinary(res, f.filename, f.mime, f.content);
   });
+  // WhatsApp Lite (QR Code): números conectados pelos usuários num servidor compatível com a Evolution API
+  const walite = require('./services/walite');
+  const waagent = require('./services/waagent');
+  add('GET', '/api/whatsapp/agente', ({ user }) => waagent.view(db, user));
+  add('PUT', '/api/whatsapp/agente', ({ user, body }) => waagent.save(db, user, body));
+  add('POST', '/api/whatsapp/conversas/:id/ia', ({ user, params, body }) => waagent.control(db, user, params.id, body));
+  add('GET', '/api/whatsapp/lite', ({ user, req }) => walite.overview(db, user, req));
+  add('PUT', '/api/whatsapp/lite/config', ({ user, body }) => walite.saveConfig(db, user, body));
+  add('POST', '/api/whatsapp/lite/instancias', ({ user, req, body }) => walite.createInstance(db, user, req, body));
+  add('GET', '/api/whatsapp/lite/instancias/:id', ({ user, params, query }) => walite.instanceStatus(db, user, params.id, { refresh: query.atualizar === '1' }));
+  add('PATCH', '/api/whatsapp/lite/instancias/:id', ({ user, params, body }) => walite.updateInstance(db, user, params.id, body));
+  add('DELETE', '/api/whatsapp/lite/instancias/:id', ({ user, params }) => walite.removeInstance(db, user, params.id));
+  add('POST', '/api/whatsapp/lite/instancias/:id/reconectar', ({ user, params }) => walite.reconnect(db, user, params.id));
+  add('POST', '/api/whatsapp/lite/instancias/:id/desconectar', ({ user, params }) => walite.disconnect(db, user, params.id));
+  add('POST', '/api/whatsapp/lite/instancias/:id/simular-conexao', ({ user, params, body }) => walite.simulateConnect(db, user, params.id, body));
+  add('GET', '/api/whatsapp/lite/instancias/:id/acesso', ({ user, params }) => walite.members(db, user, params.id));
+  add('PUT', '/api/whatsapp/lite/instancias/:id/acesso', ({ user, params, body }) => walite.setMemberAccess(db, user, params.id, body));
+  // Webhook de cada instância (o endereço leva o segredo da instância)
+  add('POST', '/api/whatsapp/lite/webhook/:token', ({ params, body }) => walite.receiveWebhook(db, params.token, body), { integration: true, bodyLimit: 4.5e6 });
   // Webhook da Meta (API oficial do WhatsApp Business): verificação (GET) e mensagens/status (POST)
   add('GET', '/api/whatsapp/webhook', ({ query, res }) => wa.verifyWebhook(db, query, res), { integration: true });
   add('POST', '/api/whatsapp/webhook', ({ req, body }) => wa.receiveWebhook(db, req, body), { integration: true, bodyLimit: 4e6 });
@@ -609,6 +644,7 @@ function createRouter(db) {
   add('POST', '/api/etapas/ordem', ({ user, body }) => (opps.reorderStages(db, user, body.ids), { ok: true }));
   add('PATCH', '/api/configuracoes', ({ user, body }) => (admin.saveSettings(db, user, body), { ok: true }));
   add('GET', '/api/integracoes', ({ user }) => integrations.listIntegrations(db, user));
+  add('GET', '/api/integracoes/painel', ({ user, req }) => integrations.panel(db, user, req));
   add('PATCH', '/api/integracoes/:key', ({ user, params, body }) => (integrations.updateIntegration(db, user, params.key, body), { ok: true }));
   add('POST', '/api/integracoes/:key/token', ({ user, params }) => ({ token: integrations.rotateToken(db, user, params.key) }));
   add('GET', '/api/integracoes/:key/logs', ({ user, params, query }) => integrations.listLogs(db, user, params.key, query));

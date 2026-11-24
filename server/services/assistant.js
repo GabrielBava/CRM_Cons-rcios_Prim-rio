@@ -341,23 +341,20 @@ function internalAnswer(ins, question) {
   return lines.join('\n');
 }
 
-let clientFactory = null;
-/** Testes: injeta um cliente falso da Anthropic. */
+const llm = require('./llm');
+/** Testes: injeta um cliente falso da Anthropic (o Gemini usa llm.setGeminiFetch). */
 function setClientFactory(fn) {
-  clientFactory = fn;
+  llm.setClientFactory(fn);
 }
-function sdk() {
-  try {
-    const mod = require('@anthropic-ai/sdk');
-    return mod.default || mod;
-  } catch {
-    return null;
-  }
-}
+/**
+ * Configuração da IA generativa da IA Vero: provedor (Gemini ou Claude, trocável a qualquer momento), modelo e
+ * se está pronta (chave e, no Claude, a biblioteca).
+ */
 function llmConfig(db) {
-  const key = process.env.ANTHROPIC_API_KEY || openSecret(getSetting(db, 'ai_api_key_enc')) || '';
-  const Anthropic = clientFactory ? null : sdk();
-  return { enabled: getSetting(db, 'ai_llm_enabled') === true, key, sdk: !!(clientFactory || Anthropic), Anthropic, model: getSetting(db, 'ai_model') || 'claude-opus-5-5' };
+  const provider = llm.providerOf(getSetting(db, 'ai_provider') || llm.DEFAULTS.provider);
+  const model = provider === 'claude' ? getSetting(db, 'ai_model') || llm.DEFAULTS.claude : getSetting(db, 'ai_gemini_model') || llm.DEFAULTS.gemini;
+  const av = llm.availability(db, provider);
+  return { enabled: getSetting(db, 'ai_llm_enabled') === true, provider, model, ready: av.ok, reason: av.reason || null };
 }
 
 const SYSTEM_PROMPT = `Você é a IA Vero, assistente comercial interna da plataforma da Vero (consórcio, planejamento financeiro, seguros e investimentos).
@@ -366,20 +363,10 @@ Regras: responda em português do Brasil, curto e prático (até 8 linhas ou uma
 Fluxo do pipeline: Prospect → Lead → Tentativa de contato (exige atividade) → Qualificação (exige qualificação concluída) → R1 (agendada) → R2 (agendada) → Negociação (exige proposta) → Venda. Perdido exige motivo MP1–MP9.`;
 
 async function llmAnswer(db, cfg, ins, history, question) {
-  const client = clientFactory ? clientFactory(cfg) : new cfg.Anthropic({ apiKey: cfg.key });
   const context = JSON.stringify({ resumo: ins.resumo, etapa: ins.stage, proximo_passo: ins.next, alertas: ins.alerts.map((a) => a.text), canal: ins.canal, bant: ins.bant.map((b) => ({ item: b.label, ok: b.ok, valor: b.value })), em_aberto: ins.open_items, combinado: ins.agreed.map((x) => x.text), oportunidades: ins.cross_sell, score: ins.score, prazo_r1: ins.r1_deadline });
-  const response = await client.beta.messages.create({
-    model: cfg.model,
-    max_tokens: 4000,
-    betas: ['server-side-fallback-2026-07-01'],
-    fallbacks: 'default',
-    output_config: { effort: 'low' },
-    system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }, { type: 'text', text: `Contexto do lead (dados do CRM):\n${context}` }],
-    messages: [...history, { role: 'user', content: question }],
-  });
-  if (response.stop_reason === 'refusal') return null;
-  const text = (response.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
-  return text || null;
+  const r = await llm.run(db, { provider: cfg.provider, model: cfg.model, system: SYSTEM_PROMPT, context: `Contexto do lead (dados do CRM):\n${context}`, messages: [...history, { role: 'user', content: question }], maxTokens: 4000 });
+  if (r.stop !== 'ok') return null;
+  return r.text || null;
 }
 
 const threadId = (t) => (/^[a-z0-9-]{4,40}$/i.test(String(t || '')) ? String(t) : null);
@@ -396,15 +383,14 @@ async function chat(db, user, contactId, data = {}) {
   let answer = null;
   let engine = 'interna';
   let note = null;
-  if (cfg.enabled && cfg.key && cfg.sdk) {
+  if (cfg.enabled && cfg.ready) {
     const history = db.prepare('SELECT role, content FROM ai_messages WHERE contact_id = ? AND user_id = ? AND thread = ? ORDER BY id DESC LIMIT 11').all(ins.contact.id, user.id, thread).reverse().slice(0, -1);
     try {
       answer = await llmAnswer(db, cfg, ins, history, question);
-      if (answer) engine = 'claude';
+      if (answer) engine = cfg.provider;
     } catch (e) {
-      const A = cfg.Anthropic;
-      note = A && e instanceof A.RateLimitError ? 'A IA generativa está com muitas solicitações agora; respondi com o motor interno.'
-        : A && e instanceof A.AuthenticationError ? 'Chave da IA generativa inválida (Configurações › Integrações); respondi com o motor interno.'
+      note = e.kind === 'rate_limit' ? 'A IA generativa está com muitas solicitações agora (no plano gratuito há limite por minuto e por dia); respondi com o motor interno.'
+        : e.kind === 'auth' ? 'Chave da IA generativa inválida (Configurações › Integrações); respondi com o motor interno.'
           : 'A IA generativa não respondeu; respondi com o motor interno.';
     }
   }
@@ -470,14 +456,53 @@ function saveKnowledge(db, user, data = {}) {
 
 function status(db, user) {
   const cfg = llmConfig(db);
-  return { enabled: cfg.enabled, sdk_installed: cfg.sdk, has_key: !!cfg.key, from_env: !!process.env.ANTHROPIC_API_KEY, model: cfg.model, generative: cfg.enabled && !!cfg.key && cfg.sdk, suggestions: SUGGESTIONS, quick: QUICK, can_configure: user.role === 'admin' };
+  const prov = llm.providersStatus(db);
+  return {
+    enabled: cfg.enabled, provider: cfg.provider, provider_name: llm.PROVIDERS[cfg.provider], model: cfg.model, ready: cfg.ready, reason: cfg.reason,
+    generative: cfg.enabled && cfg.ready, claude_model: getSetting(db, 'ai_model') || llm.DEFAULTS.claude, gemini_model: getSetting(db, 'ai_gemini_model') || llm.DEFAULTS.gemini,
+    // Compatibilidade com as telas antigas (chave e biblioteca do provedor escolhido)
+    has_key: prov[cfg.provider].has_key, from_env: prov[cfg.provider].from_env, sdk_installed: cfg.provider === 'claude' ? prov.claude.sdk : true,
+    providers: user.role === 'admin' ? prov : undefined,
+    suggestions: SUGGESTIONS, quick: QUICK, can_configure: user.role === 'admin',
+  };
 }
+
+/**
+ * Configuração da IA generativa (administrador): provedor, modelos e chaves dos dois provedores. Também usada pelo
+ * agente de IA do WhatsApp (as chaves são as mesmas).
+ */
 function saveConfig(db, user, data = {}) {
   if (user.role !== 'admin') throw forbidden('Apenas o administrador configura a IA.');
+  if (data.provider !== undefined) {
+    if (!['gemini', 'claude'].includes(data.provider)) throw badRequest('Provedor de IA inválido: use gemini ou claude.');
+    setSetting(db, 'ai_provider', data.provider);
+  }
   if (data.api_key) setSetting(db, 'ai_api_key_enc', sealSecret(String(data.api_key).trim()));
+  if (data.gemini_api_key) setSetting(db, 'ai_gemini_key_enc', sealSecret(String(data.gemini_api_key).trim()));
+  if (data.clear_claude_key) setSetting(db, 'ai_api_key_enc', '');
+  if (data.clear_gemini_key) setSetting(db, 'ai_gemini_key_enc', '');
+  if (data.claude_model !== undefined) {
+    if (!llm.CLAUDE_MODELS.some(([m]) => m === data.claude_model)) throw badRequest('Modelo do Claude inválido.');
+    setSetting(db, 'ai_model', data.claude_model);
+  }
+  if (data.gemini_model !== undefined) {
+    const m = String(data.gemini_model || '').trim().replace(/^models\//, '');
+    if (!/^gemini-[a-z0-9.-]+$/i.test(m)) throw badRequest('Modelo do Gemini inválido (ex.: gemini-3.8-flash).');
+    setSetting(db, 'ai_gemini_model', m);
+  }
   if (data.enabled !== undefined) setSetting(db, 'ai_llm_enabled', data.enabled === true || data.enabled === 'true' || data.enabled === 'on');
-  audit(db, user, 'settings', null, 'ia_configurada', { ligada: getSetting(db, 'ai_llm_enabled') });
+  audit(db, user, 'settings', null, 'ia_configurada', { ligada: getSetting(db, 'ai_llm_enabled'), provedor: getSetting(db, 'ai_provider') || llm.DEFAULTS.provider });
   return status(db, user);
 }
 
-module.exports = { insights, chat, history, rate, listKnowledge, saveKnowledge, status, saveConfig, setClientFactory, internalAnswer, OBJECTIONS };
+/** Modelos de texto da conta do Gemini (lista ao vivo, para escolher na tela). */
+async function geminiModels(db, user) {
+  if (user.role !== 'admin') throw forbidden('Apenas o administrador configura a IA.');
+  try {
+    return { models: await llm.listGeminiModels(db), default_model: llm.GEMINI_DEFAULT };
+  } catch (e) {
+    return { models: [], default_model: llm.GEMINI_DEFAULT, error: e.message };
+  }
+}
+
+module.exports = { insights, chat, history, rate, listKnowledge, saveKnowledge, status, saveConfig, geminiModels, setClientFactory, internalAnswer, OBJECTIONS, llmConfig };

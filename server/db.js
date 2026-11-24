@@ -1424,6 +1424,11 @@ function seedTreasury(db, now) {
 
 /* Colunas adicionadas depois da primeira versão (aplicadas também em bancos existentes). */
 const ADDED_COLUMNS = {
+  // WhatsApp: canal (oficial = API da Meta; lite = QR Code), número conectado e número do cliente (no Lite)
+  wa_conversations: [['channel', "TEXT NOT NULL DEFAULT 'oficial'"], ['instance_id', 'INTEGER REFERENCES wa_instances(id)'], ['peer', 'TEXT'],
+    // Agente de IA: ativa (IA atendendo), humano (transferida ao especialista), pausada (especialista assumiu)
+    ['ai_status', 'TEXT'], ['ai_reason', 'TEXT'], ['ai_updated_at', 'TEXT'], ['ai_lock_at', 'TEXT'], ['ai_seen_id', 'INTEGER'], ['ai_turns', 'INTEGER NOT NULL DEFAULT 0']],
+  wa_messages: [['media_store_id', 'INTEGER REFERENCES wa_media(id)'], ['duration', 'INTEGER'], ['ai', 'INTEGER NOT NULL DEFAULT 0']],
   contacts: [
     ['rg', 'TEXT'], ['birthplace', 'TEXT'], ['nationality', 'TEXT'], ['sex', 'TEXT'], ['marital_status', 'TEXT'],
     ['property_regime', 'TEXT'], ['mother_name', 'TEXT'], ['income_range', 'TEXT'], ['net_worth_range', 'TEXT'],
@@ -2287,6 +2292,59 @@ CREATE TABLE IF NOT EXISTS wa_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_wa_messages ON wa_messages(conversation_id, id);
 
+-- Integrações › WhatsApp Lite (QR Code): cada número conectado é uma instância no servidor de WhatsApp (Evolution API).
+-- O especialista conecta o número que quiser (Business ou pessoal); o acesso dos membros é Sem acesso, Só ver ou Ver e enviar.
+CREATE TABLE IF NOT EXISTS wa_instances (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  instance_key TEXT NOT NULL UNIQUE,
+  provider TEXT NOT NULL DEFAULT 'evolution',
+  phone TEXT,
+  profile_name TEXT,
+  status TEXT NOT NULL DEFAULT 'aguardando' CHECK (status IN ('aguardando','conectado','desconectado')),
+  owner_id INTEGER NOT NULL REFERENCES users(id),
+  access_all TEXT NOT NULL DEFAULT 'nenhum' CHECK (access_all IN ('nenhum','ver','enviar')),
+  only_known INTEGER NOT NULL DEFAULT 1,
+  webhook_token TEXT NOT NULL,
+  qr TEXT,
+  qr_at TEXT,
+  connected_at TEXT,
+  last_event_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_wa_instances_owner ON wa_instances(owner_id);
+CREATE TABLE IF NOT EXISTS wa_instance_access (
+  instance_id INTEGER NOT NULL REFERENCES wa_instances(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  level TEXT NOT NULL CHECK (level IN ('nenhum','ver','enviar')),
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (instance_id, user_id)
+);
+-- Arquivos das conversas (enviados pelo CRM e recebidos pelo WhatsApp Lite), para mostrar no histórico
+CREATE TABLE IF NOT EXISTS wa_media (
+  id INTEGER PRIMARY KEY,
+  mime TEXT NOT NULL,
+  filename TEXT,
+  size INTEGER NOT NULL DEFAULT 0,
+  data BLOB NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+-- Agente de IA do WhatsApp: o que ele fez em cada conversa (qualificou, agendou a R1, transferiu, sem fit, erro)
+CREATE TABLE IF NOT EXISTS wa_agent_log (
+  id INTEGER PRIMARY KEY,
+  conversation_id INTEGER NOT NULL REFERENCES wa_conversations(id),
+  contact_id INTEGER REFERENCES contacts(id),
+  action TEXT NOT NULL,
+  detail TEXT,
+  tokens_in INTEGER NOT NULL DEFAULT 0,
+  tokens_out INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_wa_agent_log ON wa_agent_log(conversation_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_wa_agent_log_action ON wa_agent_log(action, created_at);
+
 -- Produtos do lead: oportunidades de cross-sell e up-sell nas 4 áreas (consórcio, planejamento, seguros, investimentos)
 CREATE TABLE IF NOT EXISTS lead_products (
   id INTEGER PRIMARY KEY,
@@ -2421,6 +2479,8 @@ function migrate(db) {
     }
   }
   // Índices de colunas acrescentadas acima (só existem depois do ALTER TABLE nos bancos antigos)
+  db.exec('CREATE INDEX IF NOT EXISTS idx_wa_conv_instance ON wa_conversations(instance_id, last_message_at)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_wa_conv_peer ON wa_conversations(peer)');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_proposals_public_token ON proposals(public_token) WHERE public_token IS NOT NULL');
   // Estratégias de lance anteriores ao histórico: registra a situação atual como o primeiro item do histórico
   db.exec(`INSERT INTO bid_strategy_history (contract_id, contact_id, will_bid, bid_type, bid_pct, use_embedded, use_fgts, notes, created_by, created_at)

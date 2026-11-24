@@ -14,7 +14,7 @@
  * (ou em Configurações › Integrações, guardadas cifradas).
  */
 const crypto = require('node:crypto');
-const { audit, loadContact } = require('../core');
+const { audit, loadContact, contactScope } = require('../core');
 const { requireModule } = require('../permissions');
 const { tx, getSetting, setSetting } = require('../db');
 const { badRequest, forbidden, notFound, HttpError, clean: cleanRaw, nowIso, digits, normalizePhone, sealSecret, openSecret, randomToken } = require('../util');
@@ -83,29 +83,59 @@ function saveConfig(db, user, data = {}) {
 /* ------------------------- Escopo e consultas ------------------------- */
 
 /** Fragmento SQL das conversas visíveis: administrador, todas; líder, as da equipe e as sem responsável; especialista, as suas. */
+/**
+ * Quem vê a conversa: no número oficial, o responsável (o líder vê a equipe; o administrador, todas); no WhatsApp Lite,
+ * quem tem acesso à instância (Só ver ou Ver e enviar).
+ */
 function scopeSql(db, user) {
   if (user.role === 'admin') return { sql: '1=1', params: [] };
+  let off;
   if (user.role === 'gestor' && user.team_id) {
-    return { sql: '(w.assigned_to IS NULL OR w.assigned_to IN (SELECT id FROM users WHERE team_id = ?) OR c.owner_id IN (SELECT id FROM users WHERE team_id = ?))', params: [user.team_id, user.team_id] };
-  }
-  return { sql: '(w.assigned_to = ? OR c.owner_id = ?)', params: [user.id, user.id] };
+    off = { sql: '(w.assigned_to IS NULL OR w.assigned_to IN (SELECT id FROM users WHERE team_id = ?) OR c.owner_id IN (SELECT id FROM users WHERE team_id = ?))', params: [user.team_id, user.team_id] };
+  } else if (user.role === 'gestor') off = { sql: '1=1', params: [] };
+  else off = { sql: '(w.assigned_to = ? OR c.owner_id = ?)', params: [user.id, user.id] };
+  const lite = require('./walite').visibleInstanceIds(db, user);
+  const liteSql = lite.length ? `(w.channel = 'lite' AND w.instance_id IN (${lite.map(() => '?').join(',')}))` : '0=1';
+  // Número central do agente de IA: o especialista vê as conversas que passaram para ele (ou dos leads dele)
+  const central = Number(require('./waagent').config(db).instance_id) || 0;
+  return {
+    sql: `((COALESCE(w.channel, 'oficial') = 'oficial' AND ${off.sql}) OR ${liteSql} OR (w.channel = 'lite' AND w.instance_id = ? AND ${off.sql}))`,
+    params: [...off.params, ...lite, central, ...off.params],
+  };
 }
 
-const CONV_SELECT = `SELECT w.*, c.name AS contact_name, c.code AS contact_code, c.owner_id AS contact_owner_id, u.name AS assigned_name,
+const CONV_SELECT = `SELECT w.*, c.name AS contact_name, c.code AS contact_code, c.owner_id AS contact_owner_id, u.name AS assigned_name, ou.name AS owner_name,
+  i.name AS instance_name, i.status AS instance_status, i.phone AS instance_phone,
   (SELECT m.body FROM wa_messages m WHERE m.conversation_id = w.id ORDER BY m.id DESC LIMIT 1) AS last_body,
-  (SELECT m.direction FROM wa_messages m WHERE m.conversation_id = w.id ORDER BY m.id DESC LIMIT 1) AS last_direction
-  FROM wa_conversations w LEFT JOIN contacts c ON c.id = w.contact_id LEFT JOIN users u ON u.id = w.assigned_to`;
+  (SELECT m.direction FROM wa_messages m WHERE m.conversation_id = w.id ORDER BY m.id DESC LIMIT 1) AS last_direction,
+  (SELECT m.kind FROM wa_messages m WHERE m.conversation_id = w.id ORDER BY m.id DESC LIMIT 1) AS last_kind,
+  (SELECT m.status FROM wa_messages m WHERE m.conversation_id = w.id ORDER BY m.id DESC LIMIT 1) AS last_status,
+  (SELECT o.id FROM opportunities o WHERE o.contact_id = c.id AND o.status = 'aberta' ORDER BY o.updated_at DESC LIMIT 1) AS opp_id,
+  (SELECT ps.name FROM opportunities o JOIN pipeline_stages ps ON ps.id = o.stage_id WHERE o.contact_id = c.id AND o.status = 'aberta' ORDER BY o.updated_at DESC LIMIT 1) AS stage_name,
+  (SELECT ps.key FROM opportunities o JOIN pipeline_stages ps ON ps.id = o.stage_id WHERE o.contact_id = c.id AND o.status = 'aberta' ORDER BY o.updated_at DESC LIMIT 1) AS stage_key
+  FROM wa_conversations w LEFT JOIN contacts c ON c.id = w.contact_id LEFT JOIN users u ON u.id = w.assigned_to
+  LEFT JOIN users ou ON ou.id = COALESCE(c.owner_id, w.assigned_to) LEFT JOIN wa_instances i ON i.id = w.instance_id`;
 
 const fmtWa = (wa) => {
   const d = String(wa || '');
   const m = d.match(/^55(\d{2})(\d{4,5})(\d{4})$/);
   return m ? `+55 (${m[1]}) ${m[2]}-${m[3]}` : `+${d}`;
 };
-const decorate = (w) => ({
-  ...w, phone: fmtWa(w.wa_id), name: w.contact_name || w.profile_name || fmtWa(w.wa_id),
-  window_open: !!w.last_inbound_at && Date.now() - Date.parse(w.last_inbound_at) < WINDOW_MS,
-  window_ends_at: w.last_inbound_at ? new Date(Date.parse(w.last_inbound_at) + WINDOW_MS).toISOString() : null,
-});
+const initialsOf = (name) => String(name || '').trim().split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]).join('').toUpperCase() || null;
+const decorate = (w) => {
+  const lite = w.channel === 'lite';
+  const number = lite ? w.peer : w.wa_id;
+  return {
+    ...w, channel: lite ? 'lite' : 'oficial', channel_label: lite ? `WhatsApp Lite${w.instance_name ? ` · ${w.instance_name}` : ''}` : 'WhatsApp oficial',
+    phone: fmtWa(number), name: w.contact_name || w.profile_name || fmtWa(number),
+    owner_initials: initialsOf(w.owner_name), owner_name: w.owner_name || null,
+    stage: w.stage_name ? { name: w.stage_name, key: w.stage_key, opportunity_id: w.opp_id } : null,
+    // A janela de 24 horas é regra só da API oficial
+    window_open: lite || (!!w.last_inbound_at && Date.now() - Date.parse(w.last_inbound_at) < WINDOW_MS),
+    window_ends_at: !lite && w.last_inbound_at ? new Date(Date.parse(w.last_inbound_at) + WINDOW_MS).toISOString() : null,
+    ai_status: w.ai_status || null, ai_label: w.ai_status ? require('./waagent').STATUS_LABEL[w.ai_status] || null : null,
+  };
+};
 
 function loadConv(db, user, id) {
   const sc = scopeSql(db, user);
@@ -117,21 +147,42 @@ function loadConv(db, user, id) {
   return w;
 }
 
+/** Conversa para assumir/devolver à IA: quem pode responder por este número. */
+function loadConvForAgent(db, user, id) {
+  guard(user);
+  if (user.role === 'leitura') throw forbidden('Perfil de leitura não assume conversas.');
+  const w = loadConv(db, user, id);
+  if (w.channel === 'lite') {
+    const walite = require('./walite');
+    const inst = w.instance_id ? db.prepare('SELECT * FROM wa_instances WHERE id = ?').get(w.instance_id) : null;
+    if (!inst || walite.convAccess(db, user, w, inst) !== 'enviar') throw forbidden('Seu acesso a este número é "Só ver".');
+  }
+  return w;
+}
+
 function listConversations(db, user, q = {}) {
   guard(user);
   const sc = scopeSql(db, user);
   const where = [sc.sql];
   const params = [...sc.params];
   if (q.filtro === 'minhas') {
-    where.push('w.assigned_to = ?');
-    params.push(user.id);
+    where.push('(w.assigned_to = ? OR c.owner_id = ?)');
+    params.push(user.id, user.id);
   } else if (q.filtro === 'nao_lidas') where.push('w.unread > 0');
   else if (q.filtro === 'sem_responsavel') where.push('w.assigned_to IS NULL');
   else if (q.filtro === 'sem_cadastro') where.push('w.contact_id IS NULL');
+  if (q.canal === 'lite' || q.canal === 'oficial') {
+    where.push("COALESCE(w.channel, 'oficial') = ?");
+    params.push(q.canal);
+  }
+  if (Number(q.instancia)) {
+    where.push('w.instance_id = ?');
+    params.push(Number(q.instancia));
+  }
   if (q.q) {
     const like = `%${String(q.q).trim()}%`;
-    where.push('(c.name LIKE ? OR w.profile_name LIKE ? OR w.wa_id LIKE ?)');
-    params.push(like, like, `%${digits(q.q) || '#'}%`);
+    where.push('(c.name LIKE ? OR w.profile_name LIKE ? OR w.wa_id LIKE ? OR w.peer LIKE ? OR EXISTS (SELECT 1 FROM wa_messages mq WHERE mq.conversation_id = w.id AND mq.body LIKE ?))');
+    params.push(like, like, `%${digits(q.q) || '#'}%`, `%${digits(q.q) || '#'}%`, like);
   }
   return db.prepare(`${CONV_SELECT} WHERE ${where.join(' AND ')} ORDER BY COALESCE(w.last_message_at, w.created_at) DESC LIMIT 200`).all(...params).map(decorate);
 }
@@ -146,14 +197,51 @@ function getConversation(db, user, id, q = {}) {
   guard(user);
   const w = loadConv(db, user, id);
   const after = Number(q.after_id) || 0;
-  const rows = after
-    ? db.prepare('SELECT m.*, u.name AS user_name FROM wa_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.conversation_id = ? AND m.id > ? ORDER BY m.id').all(w.id, after)
-    : db.prepare('SELECT m.*, u.name AS user_name FROM wa_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.conversation_id = ? ORDER BY m.id DESC LIMIT 100').all(w.id).reverse();
-  if (w.unread) db.prepare('UPDATE wa_conversations SET unread = 0 WHERE id = ?').run(w.id);
+  const cols = 'm.id, m.conversation_id, m.wamid, m.direction, m.kind, m.body, m.media_id, m.media_mime, m.filename, m.media_store_id, m.duration, m.status, m.error, m.user_id, m.ai, m.created_at, m.status_at, u.name AS user_name';
+  const rows = (after
+    ? db.prepare(`SELECT ${cols} FROM wa_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.conversation_id = ? AND m.id > ? ORDER BY m.id`).all(w.id, after)
+    : db.prepare(`SELECT ${cols} FROM wa_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.conversation_id = ? ORDER BY m.id DESC LIMIT 100`).all(w.id).reverse()).map(msgView);
+  const cfg = waConfig(db);
+  const lite = w.channel === 'lite';
+  const walite = require('./walite');
+  const inst = lite && w.instance_id ? db.prepare('SELECT * FROM wa_instances WHERE id = ?').get(w.instance_id) : null;
+  const liteCfg = walite.liteConfig(db);
+  const canSend = user.role !== 'leitura' && (lite ? !!inst && walite.convAccess(db, user, w, inst) === 'enviar' && (liteCfg.configured || liteCfg.sandbox) : cfg.configured || cfg.sandbox);
+  // Abrir zera as não lidas de quem atende a conversa (o líder acompanhando ou quem só vê não apaga o aviso do responsável)
+  const mine = w.assigned_to ? w.assigned_to === user.id : canSend;
+  if (w.unread && mine) db.prepare('UPDATE wa_conversations SET unread = 0 WHERE id = ?').run(w.id);
   // Status atualizados (entregue/lida) das últimas enviadas, para o polling
   const statuses = after ? db.prepare("SELECT id, status, error FROM wa_messages WHERE conversation_id = ? AND direction = 'out' ORDER BY id DESC LIMIT 30").all(w.id) : [];
-  const cfg = waConfig(db);
-  return { conversation: decorate({ ...w, unread: 0 }), messages: rows, statuses, config: { configured: cfg.configured, sandbox: cfg.sandbox, template: cfg.template } };
+  // Quem só vê as mensagens de outro número pode não ter acesso ao cadastro do lead
+  let contactVisible = false;
+  if (w.contact_id) {
+    const sc = contactScope(db, user, 'c');
+    contactVisible = !!db.prepare(`SELECT 1 FROM contacts c WHERE c.id = ? AND ${sc.sql}`).get(w.contact_id, ...sc.params);
+  }
+  // Movimentos do negócio (etapas) entram no histórico da conversa como eventos do sistema
+  const since = rows.length ? rows[0].created_at : null;
+  const events = !after && w.contact_id
+    ? db.prepare(`SELECT h.moved_at AS at, h.from_stage_name, h.to_stage_name, u.name AS user_name FROM stage_history h JOIN opportunities o ON o.id = h.opportunity_id LEFT JOIN users u ON u.id = h.user_id
+        WHERE o.contact_id = ? ${since ? 'AND h.moved_at >= ?' : ''} ORDER BY h.moved_at DESC LIMIT 40`).all(...[w.contact_id, ...(since ? [since] : [])])
+      .map((e) => ({ at: e.at, text: e.from_stage_name ? `Etapa: ${e.from_stage_name} → ${e.to_stage_name}` : `Negócio criado em ${e.to_stage_name}`, by: e.user_name || 'Sistema' })).reverse()
+    : [];
+  return {
+    conversation: decorate({ ...w, unread: mine ? 0 : w.unread, contact_visible: contactVisible }), messages: rows, statuses, events,
+    can_send: canSend, max_file_mb: Math.round(walite.MAX_FILE / 1024 / 1024),
+    agent: (() => {
+      const ag = require('./waagent');
+      const handles = ag.handlesConversation(db, w);
+      return { handles, status: w.ai_status || null, label: w.ai_status ? ag.STATUS_LABEL[w.ai_status] : null, reason: w.ai_reason || null, can_control: canSend && (handles || !!w.ai_status) };
+    })(),
+    config: { configured: cfg.configured, sandbox: cfg.sandbox, template: cfg.template, lite_configured: liteCfg.configured, lite_sandbox: liteCfg.sandbox },
+  };
+}
+
+/** Mensagem para a tela: com o link do arquivo (foto, áudio, documento) quando houver. */
+function msgView(m) {
+  const has = !!(m.media_store_id || m.media_id) && !['text', 'template', 'reaction', 'location', 'contact'].includes(m.kind);
+  const { media_id: _mid, media_store_id: _sid, ...rest } = m;
+  return { ...rest, ai: !!m.ai, ...(m.ai ? { user_name: 'IA Vero' } : {}), media_url: has ? `/api/whatsapp/midia/${m.id}` : null };
 }
 
 /* ------------------------- Vínculo com o cadastro ------------------------- */
@@ -191,10 +279,11 @@ const toWaId = (phone) => {
 function startConversation(db, user, data = {}) {
   guard(user);
   const c = loadContact(db, user, data.contact_id, { write: true });
+  if (data.instance_id) return require('./walite').startConversation(db, user, c, data.instance_id);
   const waId = toWaId(c.whatsapp || c.phone1 || c.phone2);
   if (!waId) throw badRequest('O cadastro não tem WhatsApp ou celular válido.');
   const cands = waCandidates(waId);
-  const existing = db.prepare(`SELECT id FROM wa_conversations WHERE wa_id IN (${cands.map(() => '?').join(',')}) OR contact_id = ? ORDER BY id LIMIT 1`).get(...cands, c.id);
+  const existing = db.prepare(`SELECT id FROM wa_conversations WHERE COALESCE(channel, 'oficial') = 'oficial' AND (wa_id IN (${cands.map(() => '?').join(',')}) OR contact_id = ?) ORDER BY id LIMIT 1`).get(...cands, c.id);
   if (existing) {
     db.prepare('UPDATE wa_conversations SET contact_id = COALESCE(contact_id, ?), assigned_to = COALESCE(assigned_to, ?) WHERE id = ?').run(c.id, c.owner_id || user.id, existing.id);
     return { id: existing.id };
@@ -263,7 +352,19 @@ async function graph(cfg, path, payload) {
  */
 async function sendMessage(db, user, convId, data = {}) {
   guard(user);
+  if (user.role === 'leitura') throw forbidden('Perfil de leitura não envia mensagens.');
   const w = loadConv(db, user, convId);
+  if (w.contact_id) {
+    const block = contactBlockReason(db.prepare('SELECT * FROM contacts WHERE id = ?').get(w.contact_id), 'whatsapp');
+    if (block) throw badRequest(`${block} A mensagem não foi enviada.`);
+  }
+  // Uma pessoa respondeu numa conversa que a IA atendia: a IA para (o especialista assumiu)
+  if (!user.agent) require('./waagent').humanReplied(db, w, user.name);
+  if (w.channel === 'lite') {
+    const id = await require('./walite').send(db, user, w, data);
+    return msgView(db.prepare('SELECT m.*, u.name AS user_name FROM wa_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.id = ?').get(id));
+  }
+  if (data.attachment) return sendOfficialMedia(db, user, w, data);
   const cfg = waConfig(db);
   if (!cfg.configured && !cfg.sandbox) throw badRequest('O WhatsApp da empresa ainda não está conectado. O administrador conecta em Configurações › Integrações › WhatsApp.');
   if (w.contact_id) {
@@ -311,7 +412,55 @@ async function sendMessage(db, user, convId, data = {}) {
       insertActivity(db, { contact_id: w.contact_id, type: 'mensagem_enviada', channel: 'whatsapp', direction: 'saida', notes: text, occurred_at: now, source: 'whatsapp', external_id: wamid, user_id: user.id, created_by: user.id, ref_type: 'wa_message', ref_id: id });
     }
   });
-  return db.prepare('SELECT m.*, u.name AS user_name FROM wa_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.id = ?').get(id);
+  return msgView(db.prepare('SELECT m.*, u.name AS user_name FROM wa_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.id = ?').get(id));
+}
+
+/** Foto, vídeo, documento ou áudio pela API oficial: sobe o arquivo na Meta e envia (dentro da janela de 24 horas). */
+async function sendOfficialMedia(db, user, w, data) {
+  const cfg = waConfig(db);
+  if (!cfg.configured && !cfg.sandbox) throw badRequest('O WhatsApp da empresa ainda não está conectado.');
+  const open = !!w.last_inbound_at && Date.now() - Date.parse(w.last_inbound_at) < WINDOW_MS;
+  if (!open) throw badRequest('Fora da janela de 24 horas: envie o modelo aprovado para retomar a conversa antes de mandar arquivos.', { needs_template: true });
+  const walite = require('./walite');
+  const file = (() => {
+    const a = data.attachment;
+    const b64 = String(a?.data || '').replace(/^data:[^,]*,/, '');
+    const buf = Buffer.from(b64, 'base64');
+    if (!buf.length) throw badRequest('Arquivo vazio.');
+    if (buf.length > walite.MAX_FILE) throw badRequest(`Arquivo grande demais (até ${Math.round(walite.MAX_FILE / 1024 / 1024)} MB).`);
+    return { buf, mime: String(a.mime || 'application/octet-stream').toLowerCase(), name: clean(a.name) || 'arquivo' };
+  })();
+  const kind = data.voice || /^audio\//.test(file.mime) ? 'audio' : /^image\//.test(file.mime) ? 'image' : /^video\//.test(file.mime) ? 'video' : 'document';
+  // A API oficial aceita áudio em OGG/Opus, MP3, AAC, AMR ou MP4 (o áudio gravado no Chrome sai em WebM)
+  if (kind === 'audio' && /webm/.test(file.mime)) throw badRequest('O número oficial não aceita o áudio gravado neste navegador (WebM). Grave pelo WhatsApp Lite ou anexe um arquivo .ogg ou .mp3.');
+  const caption = clean(data.body);
+  const now = nowIso();
+  const storeId = Number(db.prepare('INSERT INTO wa_media (mime, filename, size, data, created_at) VALUES (?, ?, ?, ?, ?)').run(file.mime, file.name, file.buf.length, file.buf, now).lastInsertRowid);
+  const id = Number(db.prepare("INSERT INTO wa_messages (conversation_id, direction, kind, body, media_mime, filename, media_store_id, duration, status, user_id, created_at) VALUES (?, 'out', ?, ?, ?, ?, ?, ?, 'pendente', ?, ?)")
+    .run(w.id, kind, caption || (kind === 'audio' ? 'Áudio' : file.name), file.mime, file.name, storeId, Number(data.duration) || null, user.id, now).lastInsertRowid);
+  let wamid = null;
+  try {
+    if (cfg.configured) {
+      const fd = new FormData();
+      fd.append('messaging_product', 'whatsapp');
+      fd.append('type', file.mime);
+      fd.append('file', new Blob([file.buf], { type: file.mime }), file.name);
+      const up = await fetch(`https://graph.facebook.com/${cfg.version}/${cfg.phoneId}/media`, { method: 'POST', headers: { Authorization: `Bearer ${cfg.token}` }, body: fd, signal: AbortSignal.timeout(30000) }).then((r) => r.json());
+      if (!up?.id) throw new HttpError(502, `A Meta não aceitou o arquivo: ${up?.error?.message || 'erro no envio'}`);
+      const part = { id: up.id, ...(caption && kind !== 'audio' ? { caption } : {}), ...(kind === 'document' ? { filename: file.name } : {}) };
+      const r = await graph(cfg, `${cfg.phoneId}/messages`, { messaging_product: 'whatsapp', recipient_type: 'individual', to: w.wa_id, type: kind, [kind]: part });
+      wamid = r?.messages?.[0]?.id || null;
+    } else wamid = `sandbox.${randomToken(10)}`;
+  } catch (e) {
+    db.prepare("UPDATE wa_messages SET status = 'falhou', error = ?, status_at = ? WHERE id = ?").run(e.message, nowIso(), id);
+    throw e;
+  }
+  tx(db, () => {
+    db.prepare('UPDATE wa_messages SET wamid = ?, status = ?, status_at = ? WHERE id = ?').run(wamid, cfg.configured ? 'enviada' : 'simulada', nowIso(), id);
+    db.prepare("UPDATE wa_conversations SET last_message_at = ?, status = 'aberta', assigned_to = COALESCE(assigned_to, ?) WHERE id = ?").run(now, user.id, w.id);
+    if (w.contact_id) insertActivity(db, { contact_id: w.contact_id, type: 'mensagem_enviada', channel: 'whatsapp', direction: 'saida', notes: `[${kind === 'audio' ? 'Áudio' : kind === 'image' ? 'Foto' : kind === 'video' ? 'Vídeo' : 'Documento'}] ${caption || file.name}`, occurred_at: now, source: 'whatsapp', external_id: wamid, user_id: user.id, created_by: user.id, ref_type: 'wa_message', ref_id: id });
+  });
+  return msgView(db.prepare('SELECT m.*, u.name AS user_name FROM wa_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.id = ?').get(id));
 }
 
 /* ------------------------- Webhook da Meta ------------------------- */
@@ -341,11 +490,18 @@ function receiveWebhook(db, req, body = {}) {
   const cfg = waConfig(db);
   checkSignature(cfg, req);
   const out = { mensagens: 0, status: 0 };
+  const jobs = [];
   for (const entry of Array.isArray(body.entry) ? body.entry : []) {
     for (const change of Array.isArray(entry.changes) ? entry.changes : []) {
       const v = change?.value || {};
       const names = Object.fromEntries((v.contacts || []).map((c) => [String(c.wa_id), c.profile?.name || null]));
-      for (const m of v.messages || []) if (inbound(db, m, names[String(m.from)])) out.mensagens++;
+      for (const m of v.messages || []) {
+        const r = inbound(db, m, names[String(m.from)]);
+        if (r) {
+          out.mensagens++;
+          jobs.push(r);
+        }
+      }
       for (const s of v.statuses || []) {
         const st = STATUS_MAP[s.status];
         const row = st && db.prepare('SELECT id, status FROM wa_messages WHERE wamid = ?').get(String(s.id));
@@ -356,7 +512,18 @@ function receiveWebhook(db, req, body = {}) {
       }
     }
   }
-  return out;
+  return runAgent(db, jobs, out);
+}
+
+/**
+ * Agente de IA no número central: responde dentro da requisição do webhook (na Vercel nada roda depois da resposta).
+ * Sem agente ligado para essas conversas, devolve na hora.
+ */
+function runAgent(db, jobs, out) {
+  const ag = require('./waagent');
+  const todo = jobs.filter((j) => ag.handlesConversation(db, db.prepare('SELECT * FROM wa_conversations WHERE id = ?').get(j.conv)));
+  if (!todo.length) return out;
+  return Promise.all(todo.map((j) => ag.onInbound(db, j.conv, j.msg).catch((e) => ({ erro: e.message })))).then((r) => ({ ...out, agente: r.filter(Boolean).length }));
 }
 
 function inbound(db, m, profileName) {
@@ -371,9 +538,9 @@ function inbound(db, m, profileName) {
   const at = m.timestamp ? new Date(Number(m.timestamp) * 1000).toISOString() : nowIso();
   // Mesma pessoa com ou sem o nono dígito: reaproveita a conversa (e passa a usar o ID que a Meta informou)
   const cands = waCandidates(waId);
-  let conv = db.prepare(`SELECT * FROM wa_conversations WHERE wa_id IN (${cands.map(() => '?').join(',')}) ORDER BY wa_id = ? DESC LIMIT 1`).get(...cands, waId);
+  let conv = db.prepare(`SELECT * FROM wa_conversations WHERE COALESCE(channel, 'oficial') = 'oficial' AND wa_id IN (${cands.map(() => '?').join(',')}) ORDER BY wa_id = ? DESC LIMIT 1`).get(...cands, waId);
   let contact = conv?.contact_id ? db.prepare('SELECT id, owner_id, name FROM contacts WHERE id = ?').get(conv.contact_id) : findContactByWa(db, waId);
-  if (!conv && contact) conv = db.prepare('SELECT * FROM wa_conversations WHERE contact_id = ? ORDER BY id LIMIT 1').get(contact.id) || null;
+  if (!conv && contact) conv = db.prepare("SELECT * FROM wa_conversations WHERE COALESCE(channel, 'oficial') = 'oficial' AND contact_id = ? ORDER BY id LIMIT 1").get(contact.id) || null;
   if (!contact && conv?.contact_id) contact = db.prepare('SELECT id, owner_id, name FROM contacts WHERE id = ?').get(conv.contact_id);
   return tx(db, () => {
     if (conv && conv.wa_id !== waId && !db.prepare('SELECT 1 FROM wa_conversations WHERE wa_id = ?').get(waId)) {
@@ -393,8 +560,8 @@ function inbound(db, m, profileName) {
     const target = conv.assigned_to || contact?.owner_id;
     const who = contact?.name || profileName || fmtWa(waId);
     if (target) notify(db, target, { kind: 'whatsapp', title: `WhatsApp de ${who}`, body: text.slice(0, 160), link: `#/comunicacao/whatsapp/${conv.id}`, dedupe: true });
-    else notify(db, require('./notifications').managersOf(db, null), { kind: 'whatsapp', level: 'warn', title: `WhatsApp de número sem cadastro: ${who}`, body: 'Vincule a conversa a um cadastro ou crie o lead.', link: `#/comunicacao/whatsapp/${conv.id}`, dedupe: true });
-    return true;
+    else if (!require('./waagent').answers(db, conv)) notify(db, require('./notifications').managersOf(db, null), { kind: 'whatsapp', level: 'warn', title: `WhatsApp de número sem cadastro: ${who}`, body: 'Vincule a conversa a um cadastro ou crie o lead.', link: `#/comunicacao/whatsapp/${conv.id}`, dedupe: true });
+    return { conv: conv.id, msg: msgId };
   });
 }
 
@@ -402,8 +569,16 @@ function inbound(db, m, profileName) {
 async function media(db, user, msgId) {
   guard(user);
   const m = db.prepare('SELECT * FROM wa_messages WHERE id = ?').get(Number(msgId));
-  if (!m || !m.media_id) throw notFound('Arquivo não encontrado.');
-  loadConv(db, user, m.conversation_id);
+  if (!m || !(m.media_id || m.media_store_id)) throw notFound('Arquivo não encontrado.');
+  const w = loadConv(db, user, m.conversation_id);
+  if (w.channel === 'lite' || m.media_store_id) {
+    if (m.media_store_id) {
+      const f = db.prepare('SELECT mime, filename, data FROM wa_media WHERE id = ?').get(m.media_store_id);
+      if (f) return { filename: f.filename || `whatsapp-${m.id}`, mime: f.mime, content: Buffer.from(f.data) };
+    }
+    const r = await require('./walite').mediaFor(db, m);
+    return { filename: r.filename, mime: r.mime, content: r.content };
+  }
   const cfg = waConfig(db);
   if (!cfg.configured) throw badRequest('WhatsApp da empresa não conectado.');
   const meta = await fetch(`https://graph.facebook.com/${cfg.version}/${m.media_id}`, { headers: { Authorization: `Bearer ${cfg.token}` } }).then((r) => r.json());
@@ -414,4 +589,4 @@ async function media(db, user, msgId) {
   return { filename: m.filename || `whatsapp-${m.id}.${ext}`, mime: meta.mime_type || m.media_mime || 'application/octet-stream', content: Buffer.from(await bin.arrayBuffer()) };
 }
 
-module.exports = { waConfig, status, saveConfig, listConversations, unreadCount, getConversation, startConversation, updateConversation, sendMessage, verifyWebhook, receiveWebhook, media, findContactByWa, toWaId };
+module.exports = { waConfig, status, saveConfig, loadConvForAgent, runAgent, listConversations, unreadCount, getConversation, startConversation, updateConversation, sendMessage, verifyWebhook, receiveWebhook, media, findContactByWa, toWaId, waCandidates, fmtWa };

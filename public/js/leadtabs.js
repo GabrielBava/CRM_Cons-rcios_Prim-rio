@@ -157,7 +157,7 @@ function summaryPane(ins) {
 }
 
 const aiMsg = (m) => html`<div class="ai-msg ${m.role}" data-mid="${m.id || ''}">${m.role === 'assistant' ? html`<span class="ai-msg-ava">${orb('xs')}</span><div class="ai-msg-main"><div class="ai-msg-body">${md(m.content)}</div>
-  <div class="ai-msg-actions"><small class="muted">${m.engine === 'claude' ? 'IA generativa' : 'IA Vero'}</small><button type="button" class="link-btn" data-copy="${m.content.replace(/\*\*/g, '').replace(/^> /gm, '')}" title="Copiar">${icon('copiar', 13)}</button>${m.id ? html`<button type="button" class="link-btn ${m.rating === 1 ? 'on' : ''}" data-ai-rate="${m.id}" data-rate="1" title="Ajudou">${icon('curtir', 13)}</button><button type="button" class="link-btn ${m.rating === -1 ? 'on' : ''}" data-ai-rate="${m.id}" data-rate="-1" title="Não ajudou">${icon('descurtir', 13)}</button>` : ''}</div></div>` : html`<p>${m.content}</p>`}</div>`;
+  <div class="ai-msg-actions"><small class="muted">${m.engine === 'claude' ? 'IA generativa · Claude' : m.engine === 'gemini' ? 'IA generativa · Gemini' : 'IA Vero'}</small><button type="button" class="link-btn" data-copy="${m.content.replace(/\*\*/g, '').replace(/^> /gm, '')}" title="Copiar">${icon('copiar', 13)}</button>${m.id ? html`<button type="button" class="link-btn ${m.rating === 1 ? 'on' : ''}" data-ai-rate="${m.id}" data-rate="1" title="Ajudou">${icon('curtir', 13)}</button><button type="button" class="link-btn ${m.rating === -1 ? 'on' : ''}" data-ai-rate="${m.id}" data-rate="-1" title="Não ajudou">${icon('descurtir', 13)}</button>` : ''}</div></div>` : html`<p>${m.content}</p>`}</div>`;
 
 async function ask(el, ctx, question) {
   const box = $('[data-vai-body]', el);
@@ -367,6 +367,8 @@ export function startDiagnostic(contactId, { opportunityId = null } = {}) {
   });
 }
 export const openDiagnostic = (id) => window.open(absUrl(`ferramentas/diagnostico-financeiro.html?crm=${id}#/clientes/crm-${id}`), '_blank', 'noopener');
+/** Simulador de consórcio ligado ao cliente: a página busca no CRM o nome e o contato dele (?crm=<id do cadastro>). */
+export const openSimulator = (contactId) => window.open(absUrl(`ferramentas/simulador-consorcio.html?crm=${Number(contactId)}`), '_blank', 'noopener');
 
 /* ------------------------- Arquivos do lead ------------------------- */
 

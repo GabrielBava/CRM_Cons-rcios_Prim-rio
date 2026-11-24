@@ -2662,7 +2662,7 @@ test('IA Vero: insights do lead (próximo passo, canal, BANT, objeções), chat 
   const seen = [];
   assistant.setClientFactory(() => ({ beta: { messages: { create: async (req) => { seen.push(req); return { stop_reason: 'end_turn', content: [{ type: 'thinking', thinking: '...' }, { type: 'text', text: 'Resposta da IA generativa.' }] }; } } } }));
   try {
-    const cfg = await call('admin', 'PUT', '/api/ia/config', { enabled: true, api_key: 'sk-ant-teste' });
+    const cfg = await call('admin', 'PUT', '/api/ia/config', { enabled: true, provider: 'claude', api_key: 'sk-ant-teste' });
     assert.equal(cfg.status, 200, JSON.stringify(cfg.data));
     assert.equal(cfg.data.generative, true);
     const g = await call('c1', 'POST', `/api/ia/leads/${c.data.id}/conversa`, { message: 'Como conduzir a próxima conversa?' });
@@ -2684,7 +2684,7 @@ test('IA Vero: insights do lead (próximo passo, canal, BANT, objeções), chat 
     assert.match(e.data.note, /motor interno/);
   } finally {
     assistant.setClientFactory(null);
-    await call('admin', 'PUT', '/api/ia/config', { enabled: false });
+    await call('admin', 'PUT', '/api/ia/config', { enabled: false, provider: 'gemini', clear_claude_key: true });
   }
 });
 
@@ -3022,4 +3022,605 @@ test('Vercel: endereço do banco por DATABASE_URL ou POSTGRES_URL da integraçã
   assert.equal(databaseUrl({ DATABASE_URL: ` "${url}"\n` }), url);
   assert.equal(databaseUrl({ POSTGRES_URL: url.replace(':5432', ':6543') }), url);
   assert.equal(databaseUrl({}), null);
+});
+
+test('LP: envio simples (text/plain, sem preflight) também cria o lead e libera o CORS', async () => {
+  const body = { nome: 'Lia Texto Simples', email: 'lia.texto@ex.com', celular: '11955559901', aceite_privacidade: true, lp: 'consorcios', area: 'consorcio', utm: { utm_source: 'teste' } };
+  const r = await fetch(`${base}/api/publico/lp/leads`, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8', Origin: 'https://lp.exemplo.com' }, body: JSON.stringify(body) });
+  const data = await r.json();
+  assert.equal(r.status, 200, JSON.stringify(data));
+  assert.equal(data.area, 'consorcio');
+  assert.equal(r.headers.get('access-control-allow-origin'), '*');
+  const tracker = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'lp', 'vero-rastreio.js'), 'utf8');
+  assert.match(tracker, /text\/plain;charset=UTF-8/, 'o rastreio envia sem preflight');
+});
+
+test('Ferramentas Vero v1: simulador recebe nome e contato do cliente; diagnóstico novo envia o resumo (Nota, Estrela, matriz, precificação)', async () => {
+  const c = await call('c1', 'POST', '/api/cadastros', { name: 'Cliente Simulação', phone1: '11 93817-5601', email: 'cliente.sim@ex.com', origin: 'indicacao', relationship: 'lead' });
+  assert.equal(c.status, 200, JSON.stringify(c.data));
+  // Simulador: dados do cliente para preencher (só quem enxerga o lead)
+  const sim = await call('c1', 'GET', `/api/simulador/cliente/${c.data.id}`);
+  assert.equal(sim.status, 200, JSON.stringify(sim.data));
+  assert.equal(sim.data.nome, 'Cliente Simulação');
+  assert.equal(sim.data.email, 'cliente.sim@ex.com');
+  assert.equal(sim.data.telefone, '(11) 93817-5601');
+  assert.ok(sim.data.consultor.nome);
+  assert.equal((await call('c2', 'GET', `/api/simulador/cliente/${c.data.id}`)).status, 404, 'fora do escopo');
+  assert.equal((await call(null, 'GET', `/api/simulador/cliente/${c.data.id}`)).status, 401, 'exige sessão');
+  // Diagnóstico Vero v1: PUT { data, resumo } vira resultado e precificação do CRM
+  const s = await call('c1', 'POST', '/api/diagnosticos', { contact_id: c.data.id });
+  const resumo = {
+    versao: 1, nota: { valor: 58, maximo: 100, faixa: 'atencao' },
+    estrela: [{ id: 'reserva', nome: 'Reserva', nota: 4, maximo: 10, pct: 40, status: 'critico' }, { id: 'protecao', nome: 'Proteção', nota: 8, maximo: 10, pct: 80, status: 'ok' }],
+    oportunidades: [{ id: 'vida', titulo: 'Seguro de vida', area: 'Proteção', produto: 'Seguro', prioridade: 'alta', prazo: 'curto', potencial: 80, valor: 1200 }],
+    precificacao: { valor: 4800, base: 'renda', percentual: 4, condicao: 'cartao', parcelas: 12, pixTotal: 4560, cartaoTotal: 4800, cartaoParcela: 400, validadeDias: 7 },
+  };
+  const put = await call('c1', 'PUT', `/api/diagnosticos/${s.data.id}/dados`, { data: { id: `crm-${s.data.id}`, coletaFinalizada: true, plano: [{ acao: 'Montar a reserva', prazo: 'curto' }] }, resumo });
+  assert.equal(put.status, 200, JSON.stringify(put.data));
+  const cur = (await call('c1', 'GET', `/api/cadastros/${c.data.id}/diagnostico`)).data.current;
+  assert.equal(cur.summary.resultado.estrela.nota, 58);
+  assert.deepEqual(cur.summary.resultado.estrela.pilares.map((p) => [p.id, p.pct, p.status]), [['reserva', 40, 'critico'], ['protecao', 80, 'ok']]);
+  assert.equal(cur.summary.resultado.matriz[0].titulo, 'Seguro de vida');
+  assert.match(cur.summary.resultado.matriz[0].detalhe, /1\.200/);
+  assert.equal(cur.summary.plano[0].titulo, 'Montar a reserva', 'ação do plano novo (campo acao)');
+  assert.equal(cur.pricing.valor, 4800);
+  assert.equal(cur.pricing.pix_total, 4560);
+  assert.equal(cur.pricing.parcelas, 12);
+  // Resumo de versão desconhecida é ignorado (mantém o último)
+  await call('c1', 'PUT', `/api/diagnosticos/${s.data.id}/dados`, { data: { id: `crm-${s.data.id}`, coletaFinalizada: true, x: 1 }, resumo: { versao: 9, nota: { valor: 1 } } });
+  assert.equal((await call('c1', 'GET', `/api/cadastros/${c.data.id}/diagnostico`)).data.current.summary.resultado.estrela.nota, 58);
+  // Páginas das ferramentas: diagnóstico com a trava (abre pelo lead) e simulador com a ponte do cliente
+  const diag = await fetch(`${base}/ferramentas/diagnostico-financeiro.html`);
+  if (diag.status === 200) {
+    const txt = await diag.text();
+    assert.ok(txt.includes('content="ponte-crm-1"') && txt.includes('id="vero-trava"'));
+  }
+  const page = await fetch(`${base}/ferramentas/simulador-consorcio.html`);
+  if (page.status === 200) {
+    const txt = await page.text();
+    assert.ok(txt.includes('id="vero-crm"') && txt.includes('/api/simulador/cliente/'));
+  }
+});
+
+test('WhatsApp Lite (QR Code): instância no servidor Evolution, conexão, mensagens, acesso dos membros, mídia e tela Integrações', async () => {
+  const http = require('node:http');
+  const calls = [];
+  let state = 'connecting';
+  const fake = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (c) => (raw += c));
+    req.on('end', () => {
+      const body = raw ? JSON.parse(raw) : null;
+      calls.push({ method: req.method, url: req.url, body, apikey: req.headers.apikey });
+      if (req.headers.apikey === 'chave-errada') { res.writeHead(401, { 'Content-Type': 'application/json' }); return res.end('{"status":401,"error":"Unauthorized"}'); }
+      const send = (o) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
+      const u = req.url;
+      if (u === '/instance/create') return send({ instance: { instanceName: body.instanceName, status: 'created' }, hash: 'tok', qrcode: { base64: 'data:image/png;base64,QUFB', code: '2@x' } });
+      if (u.startsWith('/webhook/set/')) return send({ webhook: body.webhook });
+      if (u.startsWith('/instance/connect/')) return send({ base64: 'data:image/png;base64,QkJC', code: '2@y' });
+      if (u.startsWith('/instance/connectionState/')) return send({ instance: { state } });
+      if (u.startsWith('/instance/fetchInstances')) return send([{ ownerJid: '5551988887777@s.whatsapp.net', profileName: 'Vero Teste' }]);
+      if (u.startsWith('/message/sendText/')) return send({ key: { id: `EVO-T-${calls.length}` }, status: 'PENDING' });
+      if (u.startsWith('/message/sendMedia/')) return send({ key: { id: `EVO-M-${calls.length}` } });
+      if (u.startsWith('/message/sendWhatsAppAudio/')) return send({ key: { id: `EVO-A-${calls.length}` } });
+      if (u.startsWith('/chat/getBase64FromMediaMessage/')) return send({ base64: Buffer.from('foto-recebida').toString('base64'), mimetype: 'image/jpeg' });
+      if (u.startsWith('/instance/logout/') || u.startsWith('/instance/delete/')) {
+        state = 'close';
+        return send({ status: 'SUCCESS' });
+      }
+      res.writeHead(404); res.end('{}');
+    });
+  });
+  await new Promise((r) => fake.listen(0, '127.0.0.1', r));
+  const evoUrl = `http://127.0.0.1:${fake.address().port}`;
+  try {
+    // Sem servidor nem modo de teste: não cria
+    assert.equal((await call('c1', 'POST', '/api/whatsapp/lite/instancias', { name: 'Meu número' })).status, 400);
+    assert.equal((await call('c1', 'PUT', '/api/whatsapp/lite/config', { url: evoUrl, key: 'chave' })).status, 403, 'só o administrador configura');
+    // Ao salvar, o CRM confere o conector: endereço fora do ar, chave errada e, por fim, tudo certo (salva de qualquer jeito)
+    const closed = require('node:net').createServer();
+    await new Promise((r) => closed.listen(0, '127.0.0.1', r));
+    const closedPort = closed.address().port;
+    await new Promise((r) => closed.close(r));
+    const off = await call('admin', 'PUT', '/api/whatsapp/lite/config', { url: `http://127.0.0.1:${closedPort}`, key: 'chave-global' });
+    assert.equal(off.status, 200);
+    assert.equal(off.data.check.ok, false);
+    assert.match(off.data.check.message, /Não foi possível falar com o conector \(conexão recusada\)/);
+    const wrong = await call('admin', 'PUT', '/api/whatsapp/lite/config', { url: evoUrl, key: 'chave-errada' });
+    assert.equal(wrong.data.check.ok, false);
+    assert.match(wrong.data.check.message, /recusou a chave/);
+    const saved = await call('admin', 'PUT', '/api/whatsapp/lite/config', { url: evoUrl, key: 'chave-global' });
+    assert.equal(saved.status, 200);
+    assert.deepEqual(saved.data.check, { ok: true, instances: 1 });
+    assert.equal((await call('admin', 'PUT', '/api/whatsapp/lite/config', { sandbox: false })).data.check, null, 'sem mudar endereço nem chave, não confere de novo');
+    calls.length = 0;
+    // Especialista cria a instância e recebe o QR Code
+    const inst = await call('c1', 'POST', '/api/whatsapp/lite/instancias', { name: 'Meu número' });
+    assert.equal(inst.status, 200, JSON.stringify(inst.data));
+    assert.match(inst.data.qr, /^data:image\/png;base64,/);
+    assert.equal(inst.data.status, 'aguardando');
+    const created = calls.find((c) => c.url === '/instance/create');
+    assert.equal(created.apikey, 'chave-global');
+    assert.equal(created.body.integration, 'WHATSAPP-BAILEYS');
+    assert.deepEqual(created.body.webhook.events.sort(), ['CONNECTION_UPDATE', 'MESSAGES_UPDATE', 'MESSAGES_UPSERT', 'QRCODE_UPDATED']);
+    const token = created.body.webhook.url.match(/\/api\/whatsapp\/lite\/webhook\/([^/]+)$/)[1];
+    const hook = (b) => fetch(`${base}/api/whatsapp/lite/webhook/${token}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then(async (r) => ({ status: r.status, data: await r.json() }));
+    assert.equal((await fetch(`${base}/api/whatsapp/lite/webhook/errado`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 401);
+    // Conectou (evento do servidor) e o status mostra o número
+    await hook({ event: 'connection.update', instance: 'x', data: { state: 'open', wuid: '5551988887777@s.whatsapp.net', profileName: 'Vero Teste' } });
+    state = 'open';
+    const st = await call('c1', 'GET', `/api/whatsapp/lite/instancias/${inst.data.id}`);
+    assert.equal(st.data.status, 'conectado');
+    assert.equal(st.data.phone, '5551988887777');
+    // Mensagem de cliente do CRM entra na conversa ligada ao lead; número desconhecido é ignorado (padrão: só cadastros)
+    const lead = await call('c1', 'POST', '/api/cadastros', { name: 'Lead WhatsApp Lite', phone1: '11 93817-5701', origin: 'indicacao', relationship: 'lead' });
+    const up = (id, from, msg, fromMe = false) => hook({ event: 'messages.upsert', data: { key: { remoteJid: `${from}@s.whatsapp.net`, fromMe, id }, pushName: 'Cliente', message: msg, messageTimestamp: Math.floor(Date.now() / 1000) } });
+    assert.equal((await up('IN-1', '5511938175701', { conversation: 'Oi, quero saber do consórcio' })).data.mensagens, 1);
+    assert.equal((await up('IN-1', '5511938175701', { conversation: 'repetida' })).data.mensagens, 0, 'sem duplicar');
+    assert.equal((await up('IN-2', '5521977776666', { conversation: 'número pessoal' })).data.mensagens, 0, 'número fora do CRM não é registrado');
+    await up('IN-3', '5511938175701', { imageMessage: { caption: 'Meu contracheque', mimetype: 'image/jpeg' } });
+    await up('IN-4', '120363@g.us', { conversation: 'grupo' });
+    const list = await call('c1', 'GET', '/api/whatsapp/conversas?canal=lite');
+    const conv = list.data.find((x) => x.contact_id === lead.data.id);
+    assert.ok(conv, 'conversa ligada ao lead');
+    assert.equal(conv.channel, 'lite');
+    assert.equal(conv.unread, 2);
+    assert.equal(conv.owner_initials, conv.owner_name.split(/\s+/).slice(0, 2).map((p) => p[0]).join('').toUpperCase(), 'iniciais do responsável');
+    assert.ok(conv.stage && conv.stage.name, 'etapa do lead no pipeline');
+    assert.equal(list.data.length, 1);
+    assert.equal((await call('c1', 'GET', '/api/whatsapp/conversas?filtro=nao_lidas&canal=lite')).data.length, 1);
+    assert.equal((await call('c2', 'GET', '/api/whatsapp/conversas?canal=lite')).data.length, 0, 'c2 sem acesso à instância');
+    assert.ok((await call('gestor', 'GET', '/api/whatsapp/conversas?canal=lite')).data.some((x) => x.id === conv.id), 'líder vê');
+    // O líder acompanhando não apaga o aviso de não lida do responsável
+    assert.equal((await call('gestor', 'GET', `/api/whatsapp/conversas/${conv.id}`)).data.conversation.contact_visible, true);
+    assert.equal((await call('c1', 'GET', '/api/whatsapp/conversas?canal=lite')).data[0].unread, 2);
+    // Abrir a conversa zera as não lidas; foto recebida vem do servidor e fica guardada
+    const open = await call('c1', 'GET', `/api/whatsapp/conversas/${conv.id}`);
+    assert.equal(open.data.can_send, true);
+    const img = open.data.messages.find((m) => m.kind === 'image');
+    assert.ok(img.media_url);
+    const media = await fetch(base + img.media_url, { headers: { Cookie: sessions.c1 } });
+    assert.equal(media.status, 200);
+    assert.equal(Buffer.from(await media.arrayBuffer()).toString(), 'foto-recebida');
+    await fetch(base + img.media_url, { headers: { Cookie: sessions.c1 } });
+    assert.equal(calls.filter((c) => c.url.startsWith('/chat/getBase64FromMediaMessage/')).length, 1, 'segunda vez sai do CRM');
+    // Envio: texto, foto e áudio pela instância
+    const t = await call('c1', 'POST', `/api/whatsapp/conversas/${conv.id}/mensagens`, { body: 'Olá! Vamos agendar?' });
+    assert.equal(t.status, 200, JSON.stringify(t.data));
+    assert.equal(t.data.status, 'enviada');
+    assert.deepEqual(calls.find((c) => c.url.startsWith('/message/sendText/')).body, { number: '5511938175701', text: 'Olá! Vamos agendar?' });
+    const png = Buffer.from('imagem-png').toString('base64');
+    const f = await call('c1', 'POST', `/api/whatsapp/conversas/${conv.id}/mensagens`, { body: 'Simulação', attachment: { name: 'simulacao.png', mime: 'image/png', data: png } });
+    assert.equal(f.data.kind, 'image');
+    assert.equal(calls.find((c) => c.url.startsWith('/message/sendMedia/')).body.mediatype, 'image');
+    const a = await call('c1', 'POST', `/api/whatsapp/conversas/${conv.id}/mensagens`, { voice: true, duration: 4, attachment: { name: 'audio.webm', mime: 'audio/webm', data: png } });
+    assert.equal(a.data.kind, 'audio');
+    assert.ok(calls.some((c) => c.url.startsWith('/message/sendWhatsAppAudio/')));
+    const sent = await fetch(base + f.data.media_url, { headers: { Cookie: sessions.c1 } });
+    assert.equal(Buffer.from(await sent.arrayBuffer()).toString(), 'imagem-png', 'arquivo enviado fica no histórico');
+    // Resposta dada pelo celular (fromMe) entra como enviada e marca a conversa como vista
+    await up('IN-PHONE-0', '5511938175701', { conversation: 'Tudo certo?' });
+    await up('OUT-PHONE-1', '5511938175701', { conversation: 'Respondi pelo celular' }, true);
+    const viaPhone = (await call('gestor', 'GET', '/api/whatsapp/conversas?canal=lite')).data.find((x) => x.id === conv.id);
+    assert.equal(viaPhone.unread, 0);
+    assert.equal(viaPhone.last_direction || 'out', 'out');
+    // Status de leitura pelo webhook
+    await hook({ event: 'messages.update', data: { keyId: t.data.wamid, status: 'READ' } });
+    const after = await call('c1', 'GET', `/api/whatsapp/conversas/${conv.id}`);
+    assert.equal(after.data.messages.find((m) => m.id === t.data.id).status, 'lida');
+    // Histórico do lead
+    const hist = (await call('c1', 'GET', `/api/cadastros/${lead.data.id}/historico`)).data.rows;
+    assert.ok(hist.some((h) => h.source === 'whatsapp' && /quero saber do consórcio/.test(h.notes || '')), 'mensagem no histórico do lead');
+    // Acesso dos membros: Só ver não envia; Ver e enviar envia
+    const c2 = await userId('c2@t.com');
+    const mem = await call('c1', 'PUT', `/api/whatsapp/lite/instancias/${inst.data.id}/acesso`, { user_id: c2, level: 'ver' });
+    assert.equal(mem.status, 200, JSON.stringify(mem.data));
+    assert.equal(mem.data.members.find((m) => m.id === c2).level, 'ver');
+    assert.equal(mem.data.members[0].role_label, 'Proprietário');
+    assert.equal((await call('c2', 'GET', '/api/whatsapp/conversas?canal=lite')).data.length, 1);
+    const seen = (await call('c2', 'GET', `/api/whatsapp/conversas/${conv.id}`)).data;
+    assert.equal(seen.can_send, false);
+    assert.equal(seen.conversation.contact_visible, false, 'quem só vê o número não abre o cadastro de outro especialista');
+    assert.equal((await call('c2', 'POST', `/api/whatsapp/conversas/${conv.id}/mensagens`, { body: 'oi' })).status, 403);
+    assert.equal((await call('c2', 'PUT', `/api/whatsapp/lite/instancias/${inst.data.id}/acesso`, { user_id: c2, level: 'enviar' })).status, 403, 'só o dono, o líder ou o administrador mudam o acesso');
+    await call('c1', 'PUT', `/api/whatsapp/lite/instancias/${inst.data.id}/acesso`, { user_id: c2, level: 'enviar' });
+    assert.equal((await call('c2', 'POST', `/api/whatsapp/conversas/${conv.id}/mensagens`, { body: 'Sou do time da Vero' })).status, 200);
+    // Liberar todos os números (não só cadastros)
+    await call('c1', 'PATCH', `/api/whatsapp/lite/instancias/${inst.data.id}`, { only_known: false });
+    assert.equal((await up('IN-5', '5521977776666', { conversation: 'número novo' })).data.mensagens, 1);
+    // Tela Integrações: especialista vê as de uso pessoal; administrador vê todas
+    const pc = await call('c1', 'GET', '/api/integracoes/painel');
+    const keys = pc.data.groups.flatMap((g) => g.cards.map((c) => c.key));
+    assert.deepEqual(keys.sort(), ['google_agenda', 'instagram', 'linkedin', 'whatsapp_lite']);
+    assert.equal(pc.data.groups.find((g) => g.key === 'mensageria').cards.find((c) => c.key === 'whatsapp_lite').status, 'ativo');
+    const pa = await call('admin', 'GET', '/api/integracoes/painel');
+    assert.deepEqual(pa.data.groups.map((g) => g.key), ['mensageria', 'voz', 'marketing', 'produtividade', 'sistema']);
+    // Desconectar e excluir (as conversas ficam no CRM)
+    assert.equal((await call('c2', 'POST', `/api/whatsapp/lite/instancias/${inst.data.id}/desconectar`)).status, 403);
+    assert.equal((await call('c1', 'POST', `/api/whatsapp/lite/instancias/${inst.data.id}/desconectar`)).data.status, 'desconectado');
+    assert.equal((await call('c1', 'DELETE', `/api/whatsapp/lite/instancias/${inst.data.id}`)).status, 200);
+    assert.ok(calls.some((c) => c.method === 'DELETE' && c.url.startsWith('/instance/delete/')));
+    assert.equal(appDb.prepare('SELECT COUNT(*) AS n FROM wa_conversations WHERE id = ?').get(conv.id).n, 1);
+  } finally {
+    await call('admin', 'PUT', '/api/whatsapp/lite/config', { url: '', clear_key: true });
+    fake.close();
+  }
+});
+
+test('Agente de IA no WhatsApp: lead novo no número central, triagem, horários livres, R1 agendada e passagem ao especialista', async () => {
+  const assistant = require('../server/services/assistant');
+  process.env.WA_AGENT_DEBOUNCE_MS = '0';
+  // Número central em modo de teste (sem servidor Evolution)
+  await call('admin', 'PUT', '/api/whatsapp/lite/config', { url: '', clear_key: true, sandbox: true });
+  const inst = await call('admin', 'POST', '/api/whatsapp/lite/instancias', { name: 'Central Vero' });
+  assert.equal(inst.status, 200, JSON.stringify(inst.data));
+  await call('admin', 'POST', `/api/whatsapp/lite/instancias/${inst.data.id}/simular-conexao`, { phone: '5151999990000' });
+  const token = appDb.prepare('SELECT webhook_token FROM wa_instances WHERE id = ?').get(inst.data.id).webhook_token;
+  let seq = 0;
+  const say = (from, text, pushName = 'Mariana') => fetch(`${base}/api/whatsapp/lite/webhook/${token}`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event: 'messages.upsert', data: { key: { remoteJid: `${from}@s.whatsapp.net`, fromMe: false, id: `AG-${++seq}` }, pushName, message: { conversation: text }, messageTimestamp: Math.floor(Date.now() / 1000) } }) }).then((r) => r.json());
+
+  // Só o administrador configura; a liderança vê; especialista não
+  assert.equal((await call('c1', 'GET', '/api/whatsapp/agente')).status, 403);
+  assert.equal((await call('gestor', 'PUT', '/api/whatsapp/agente', { enabled: true })).status, 403);
+  assert.equal((await call('admin', 'PUT', '/api/whatsapp/agente', { enabled: true, channel: 'lite' })).status, 400, 'precisa do número central');
+
+  // Claude simulado: responde conforme o que já aconteceu na conversa
+  const seen = [];
+  let fail = false;
+  const toolResults = (req) => req.messages.flatMap((m) => (Array.isArray(m.content) ? m.content.filter((b) => b.type === 'tool_result') : []));
+  const lastUser = (req) => { const m = req.messages[req.messages.length - 1]; return typeof m.content === 'string' ? m.content : ''; };
+  const use = (name, input) => ({ stop_reason: 'tool_use', usage: { input_tokens: 900, output_tokens: 60 }, content: [{ type: 'thinking', thinking: '...' }, { type: 'tool_use', id: `tu_${name}_${seen.length}`, name, input }] });
+  const say2 = (text) => ({ stop_reason: 'end_turn', usage: { input_tokens: 1000, output_tokens: 80 }, content: [{ type: 'text', text }] });
+  assistant.setClientFactory(() => ({ beta: { messages: { create: async (req) => {
+    seen.push(req);
+    if (fail) throw new Error('rede');
+    const results = toolResults(req);
+    const last = results[results.length - 1];
+    if (last) {
+      const data = JSON.parse(last.content);
+      if (data.horarios) return say2(`Tenho estes horários: ${data.horarios.slice(0, 3).map((h) => h.rotulo).join('; ')}. Qual fica melhor?`);
+      if (data.agendado) return say2(`Prontinho! Sua reunião ficou para ${data.quando} com ${data.especialista}.`);
+      if (data.triagem_concluida) return use('horarios_r1', {});
+      if (data.transferido) return say2('Vou chamar um especialista para continuar com você.');
+      return say2('Anotado!');
+    }
+    const msg = lastUser(req);
+    if (/apartamento/.test(msg)) return use('salvar_triagem', { interesse: 'sim', dor: 'sim', dor_descricao: 'comprar o primeiro apartamento', impacto: 'curto', decisor: 'sim', faixa_investimento: '1000_2000', faixa_renda: '10k_20k' });
+    if (/primeiro horário/.test(msg)) {
+      const prev = seen.slice(0, -1).reverse().flatMap((r) => toolResults(r)).map((b) => JSON.parse(b.content)).find((d) => d.horarios);
+      return use('agendar_r1', { inicio: prev.horarios[0].inicio, email: 'mariana@exemplo.com' });
+    }
+    if (/falar com uma pessoa/.test(msg)) return use('transferir_especialista', { motivo: 'Cliente pediu um atendente' });
+    return say2('Olá! Sou a Vero, assistente virtual da Vero Consórcios. Me conta: o que você quer conquistar?');
+  } } } }));
+  try {
+    await call('admin', 'PUT', '/api/ia/config', { api_key: 'sk-ant-teste' });
+    const cfg = await call('admin', 'PUT', '/api/whatsapp/agente', { enabled: true, channel: 'lite', instance_id: inst.data.id, provider: 'claude', model: 'claude-sonnet-5-5', notice_hours: 0, days: [0, 1, 2, 3, 4, 5, 6], start: '07:00', end: '22:00', r1_minutes: 45 });
+    assert.equal(cfg.status, 200, JSON.stringify(cfg.data));
+    assert.equal(cfg.data.ready, true);
+    assert.equal(appDb.prepare('SELECT only_known FROM wa_instances WHERE id = ?').get(inst.data.id).only_known, 0, 'número central registra leads novos');
+
+    // 1) Número desconhecido escreve: vira lead (origem WhatsApp) e a IA responde
+    const r1 = await say('5511977001122', 'Oi! Vi o anúncio do consórcio');
+    assert.equal(r1.agente, 1, JSON.stringify(r1));
+    const conv = appDb.prepare("SELECT * FROM wa_conversations WHERE peer = '5511977001122'").get();
+    assert.ok(conv.contact_id, 'lead criado e ligado à conversa');
+    assert.equal(conv.ai_status, 'ativa');
+    const lead = appDb.prepare('SELECT * FROM contacts WHERE id = ?').get(conv.contact_id);
+    assert.equal(lead.origin, 'whatsapp');
+    assert.equal(lead.name, 'Mariana');
+    const first = await call('admin', 'GET', `/api/whatsapp/conversas/${conv.id}`);
+    const aiMsg = first.data.messages.find((m) => m.direction === 'out');
+    assert.ok(aiMsg.ai && aiMsg.user_name === 'IA Vero', 'mensagem da IA identificada');
+    assert.match(aiMsg.body, /assistente virtual/);
+    assert.equal(first.data.agent.handles, true);
+    assert.equal(first.data.agent.label, 'IA atendendo');
+    assert.equal(seen[0].model, 'claude-sonnet-5-5');
+    assert.equal(seen[0].system[0].cache_control.type, 'ephemeral');
+    assert.ok(seen[0].tools.some((t) => t.name === 'agendar_r1') && seen[0].tools.some((t) => t.name === 'salvar_triagem'));
+    assert.ok(!JSON.stringify(seen[0]).includes('sk-ant-teste'), 'a chave não vai no conteúdo');
+    // Líder define o especialista (distribuição manual)
+    const c1 = await userId('c1@t.com');
+    assert.equal((await call('admin', 'PATCH', `/api/cadastros/${lead.id}`, { owner_id: c1 })).status, 200);
+
+    // 2) Cliente conta a necessidade: triagem registrada, etapa Qualificação e horários oferecidos
+    const r2 = await say('5511977001122', 'Quero comprar um apartamento em até 3 meses, consigo uns 2 mil por mês, ganho 12 mil e decido sozinha');
+    assert.equal(r2.agente, 1);
+    const opp = appDb.prepare("SELECT o.*, s.key AS stage_key FROM opportunities o JOIN pipeline_stages s ON s.id = o.stage_id WHERE o.contact_id = ? AND o.status = 'aberta'").get(lead.id);
+    assert.ok(opp.triaged_at, 'triagem concluída');
+    assert.equal(opp.stage_key, 'qualificado');
+    const offer = appDb.prepare("SELECT body FROM wa_messages WHERE conversation_id = ? AND direction = 'out' ORDER BY id DESC LIMIT 1").get(conv.id).body;
+    assert.match(offer, /Tenho estes horários/);
+
+    // 3) Cliente escolhe: R1 agendada na agenda do especialista e a conversa passa para ele
+    const r3 = await say('5511977001122', 'Pode ser o primeiro horário');
+    assert.equal(r3.agente, 1);
+    const task = appDb.prepare("SELECT * FROM tasks WHERE contact_id = ? AND type = 'reuniao'").get(lead.id);
+    assert.ok(task, 'R1 agendada');
+    assert.equal(task.assigned_to, c1);
+    assert.equal(appDb.prepare("SELECT s.key FROM opportunities o JOIN pipeline_stages s ON s.id = o.stage_id WHERE o.id = ?").get(opp.id).key, 'r1');
+    const after = appDb.prepare('SELECT ai_status, ai_reason FROM wa_conversations WHERE id = ?').get(conv.id);
+    assert.equal(after.ai_status, 'humano');
+    assert.match(after.ai_reason, /R1 agendada/);
+    assert.match(appDb.prepare("SELECT body FROM wa_messages WHERE conversation_id = ? AND direction = 'out' ORDER BY id DESC LIMIT 1").get(conv.id).body, /Prontinho/);
+    assert.ok((await call('c1', 'GET', '/api/notificacoes')).data.rows.some((n) => /agendou uma R1/.test(n.title)));
+    // Depois da passagem, a IA não responde mais nesta conversa
+    const calls = seen.length;
+    const r4 = await say('5511977001122', 'Obrigada!');
+    assert.ok(!r4.agente);
+    assert.equal(seen.length, calls);
+
+    // 4) Outro lead pede uma pessoa: transferência e aviso
+    await say('5511977003344', 'Oi', 'Rafael');
+    await say('5511977003344', 'Quero falar com uma pessoa', 'Rafael');
+    const conv2 = appDb.prepare("SELECT * FROM wa_conversations WHERE peer = '5511977003344'").get();
+    assert.equal(conv2.ai_status, 'humano');
+    assert.match(conv2.ai_reason, /pediu um atendente/);
+    // Devolver à IA e assumir de novo; resposta manual de uma pessoa pausa a IA
+    assert.equal((await call('admin', 'POST', `/api/whatsapp/conversas/${conv2.id}/ia`, { acao: 'devolver' })).data.ai_status, 'ativa');
+    assert.equal((await call('admin', 'POST', `/api/whatsapp/conversas/${conv2.id}/mensagens`, { body: 'Oi Rafael, aqui é o Admin.' })).status, 200);
+    assert.equal(appDb.prepare('SELECT ai_status FROM wa_conversations WHERE id = ?').get(conv2.id).ai_status, 'pausada', 'pessoa respondeu: IA para');
+    assert.equal((await call('leitor', 'POST', `/api/whatsapp/conversas/${conv2.id}/ia`, { acao: 'devolver' })).status, 403);
+
+    // 5) IA indisponível: mensagem de cortesia e passagem ao especialista
+    fail = true;
+    await say('5511977005566', 'Boa tarde', 'Paula');
+    const conv3 = appDb.prepare("SELECT * FROM wa_conversations WHERE peer = '5511977005566'").get();
+    assert.equal(conv3.ai_status, 'humano');
+    assert.match(appDb.prepare("SELECT body FROM wa_messages WHERE conversation_id = ? AND direction = 'out'").get(conv3.id).body, /especialista/);
+    fail = false;
+
+    // Painel do agente (liderança) e tela Integrações
+    const view = await call('gestor', 'GET', '/api/whatsapp/agente');
+    assert.equal(view.status, 200);
+    assert.equal(view.data.can_edit, false);
+    assert.ok(view.data.stats.novos_leads >= 3 && view.data.stats.r1_agendadas >= 1 && view.data.stats.transferidas >= 1);
+    assert.ok(view.data.stats.tokens_in > 0);
+    const keys = (who) => call(who, 'GET', '/api/integracoes/painel').then((r) => r.data.groups.flatMap((g) => g.cards.map((c) => c.key)));
+    assert.ok((await keys('admin')).includes('wa_agent'));
+    assert.ok(!(await keys('c1')).includes('wa_agent'));
+
+    // Modelo mais barato (Haiku): sem o modelo reserva da Anthropic, que ele não tem
+    await call('admin', 'PUT', '/api/whatsapp/agente', { model: 'claude-haiku-5-5' });
+    await say('5511977001199', 'Oi', 'Caio');
+    const hk = seen[seen.length - 1];
+    assert.equal(hk.model, 'claude-haiku-5-5');
+    assert.equal(hk.fallbacks, undefined);
+    assert.equal(hk.betas, undefined);
+    assert.equal(seen[0].fallbacks, 'default', 'os outros modelos usam o modelo reserva');
+    // Desligado: mensagens no número central ficam só para a equipe
+    await call('admin', 'PUT', '/api/whatsapp/agente', { enabled: false });
+    const before = seen.length;
+    await say('5511977007788', 'Olá', 'Bruna');
+    assert.equal(seen.length, before);
+    // Conversa que a equipe já atendia: ao religar o agente, a IA não entra no meio
+    const conv4 = appDb.prepare("SELECT * FROM wa_conversations WHERE peer = '5511977007788'").get();
+    if (!conv4.contact_id) {
+      const lb = await call('admin', 'POST', '/api/cadastros', { name: 'Bruna Lima', phone1: '11 97700-7788', origin: 'whatsapp', relationship: 'lead' });
+      await call('admin', 'PATCH', `/api/whatsapp/conversas/${conv4.id}`, { contact_id: lb.data.id });
+    }
+    assert.equal((await call('admin', 'POST', `/api/whatsapp/conversas/${conv4.id}/mensagens`, { body: 'Oi Bruna, tudo bem?' })).status, 200);
+    await call('admin', 'PUT', '/api/whatsapp/agente', { enabled: true });
+    await say('5511977007788', 'Tudo! Quero saber do consórcio', 'Bruna');
+    assert.equal(seen.length, before, 'a IA não assume conversa já atendida por uma pessoa');
+    // Ligado mas sem a chave da IA: número novo avisa a equipe (ninguém fica sem resposta)
+    const savedKey = appDb.prepare("SELECT value FROM settings WHERE key = 'ai_api_key_enc'").get().value;
+    appDb.prepare("UPDATE settings SET value = ? WHERE key = 'ai_api_key_enc'").run(JSON.stringify(''));
+    await say('5511977009900', 'Olá, alguém aí?', 'Tiago');
+    assert.equal(seen.length, before);
+    assert.ok((await call('admin', 'GET', '/api/notificacoes')).data.rows.some((n) => /WhatsApp/.test(n.title) && /Tiago/.test(n.title)), 'o dono do número central é avisado');
+    appDb.prepare("UPDATE settings SET value = ? WHERE key = 'ai_api_key_enc'").run(savedKey);
+  } finally {
+    assistant.setClientFactory(null);
+    delete process.env.WA_AGENT_DEBOUNCE_MS;
+    await call('admin', 'PUT', '/api/whatsapp/agente', { enabled: false, provider: 'gemini', model: 'claude-opus-5-5' });
+    await call('admin', 'PUT', '/api/ia/config', { clear_claude_key: true });
+    await call('admin', 'PUT', '/api/whatsapp/lite/config', { sandbox: false });
+  }
+});
+
+test('IA com Gemini (padrão) e troca para o Claude: agente do WhatsApp e IA Vero pela API REST do Gemini', async () => {
+  const llm = require('../server/services/llm');
+  const assistant = require('../server/services/assistant');
+  process.env.WA_AGENT_DEBOUNCE_MS = '0';
+  await call('admin', 'PUT', '/api/whatsapp/lite/config', { url: '', clear_key: true, sandbox: true });
+  const inst = await call('admin', 'POST', '/api/whatsapp/lite/instancias', { name: 'Central Gemini' });
+  await call('admin', 'POST', `/api/whatsapp/lite/instancias/${inst.data.id}/simular-conexao`, { phone: '5151999991111' });
+  const token = appDb.prepare('SELECT webhook_token FROM wa_instances WHERE id = ?').get(inst.data.id).webhook_token;
+  let seq = 0;
+  const say = (from, text, pushName = 'Gil') => fetch(`${base}/api/whatsapp/lite/webhook/${token}`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event: 'messages.upsert', data: { key: { remoteJid: `${from}@s.whatsapp.net`, fromMe: false, id: `GM-${++seq}` }, pushName, message: { conversation: text }, messageTimestamp: Math.floor(Date.now() / 1000) } }) }).then((r) => r.json());
+
+  // Padrão: Gemini (sem chave ainda: o agente não fica pronto)
+  const st0 = (await call('admin', 'GET', '/api/ia/status')).data;
+  assert.equal(st0.provider, 'gemini');
+  assert.equal(st0.model, 'gemini-3.8-flash');
+  assert.equal(st0.providers.gemini.has_key, false);
+  const off = await call('admin', 'PUT', '/api/whatsapp/agente', { enabled: true, channel: 'lite', instance_id: inst.data.id, notice_hours: 0, days: [0, 1, 2, 3, 4, 5, 6], start: '07:00', end: '22:00' });
+  assert.equal(off.data.config.provider, 'gemini');
+  assert.equal(off.data.ready, false);
+  assert.equal(off.data.reason, 'sem_chave');
+
+  // API do Gemini simulada no formato REST oficial
+  const reqs = [];
+  let mode = 'ok';
+  llm.setGeminiFetch(async (url, init) => {
+    const body = init.body ? JSON.parse(init.body) : null;
+    reqs.push({ url, headers: init.headers, body });
+    const json = (status, data) => ({ ok: status < 400, status, json: async () => data });
+    if (/\/models\?/.test(url)) {
+      return json(200, { models: [
+        { name: 'models/gemini-3.8-flash', displayName: 'Gemini 3.8 Flash', supportedGenerationMethods: ['generateContent', 'countTokens'] },
+        { name: 'models/gemini-3.5-flash-lite', displayName: 'Gemini 3.5 Flash-Lite', supportedGenerationMethods: ['generateContent'] },
+        { name: 'models/gemini-embedding-001', supportedGenerationMethods: ['embedContent'] },
+      ] });
+    }
+    if (mode === 'limite') return json(429, { error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'Quota exceeded' } });
+    const usage = { usageMetadata: { promptTokenCount: 800, candidatesTokenCount: 40, thoughtsTokenCount: 20 } };
+    const last = body.contents[body.contents.length - 1];
+    const fr = last.parts.find((p) => p.functionResponse);
+    if (fr) return json(200, { candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ text: 'Anotado! E quanto você consegue investir por mês?' }] } }], ...usage });
+    if (/IA Vero/.test(body.systemInstruction.parts[0].text)) return json(200, { candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ text: 'Sugestão do Gemini para o lead.' }] } }], ...usage });
+    const text = last.parts[0].text || '';
+    if (/apartamento/.test(text)) {
+      return json(200, { candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ functionCall: { id: 'fc-1', name: 'salvar_triagem', args: { interesse: 'sim', dor: 'sim', dor_descricao: 'comprar apartamento', impacto: 'curto' } }, thoughtSignature: 'c2lnLTE=' }] } }], ...usage });
+    }
+    return json(200, { candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ text: 'pensando...', thought: true }, { text: 'Olá! Sou a Vero, assistente virtual. Como posso ajudar?' }] } }], ...usage });
+  });
+  try {
+    // Chave do Gemini informada na própria tela do agente
+    const on = await call('admin', 'PUT', '/api/whatsapp/agente', { gemini_api_key: 'AIza-teste-gemini' });
+    assert.equal(on.data.ready, true, JSON.stringify(on.data.reason));
+    assert.equal(on.data.llm.provider, 'gemini');
+    assert.equal(on.data.llm.model, 'gemini-3.8-flash');
+    const models = await call('admin', 'GET', '/api/ia/modelos-gemini');
+    assert.deepEqual(models.data.models.map((m) => m.value), ['gemini-3.8-flash', 'gemini-3.5-flash-lite'], 'só modelos de texto');
+    assert.equal((await call('c1', 'GET', '/api/ia/modelos-gemini')).status, 403);
+
+    // 1) Primeira mensagem: resposta de texto (o raciocínio do modelo não vai para o cliente)
+    reqs.length = 0;
+    const r1 = await say('5511966001100', 'Oi');
+    assert.equal(r1.agente, 1, JSON.stringify(r1));
+    const g = reqs[0];
+    assert.match(g.url, /^https:\/\/generativelanguage\.googleapis\.com\/v1\/models\/gemini-3\.8-flash:generateContent$/);
+    assert.equal(g.headers['x-goog-api-key'], 'AIza-teste-gemini');
+    assert.ok(!JSON.stringify(g.body).includes('AIza-teste-gemini'), 'a chave vai só no cabeçalho');
+    assert.match(g.body.systemInstruction.parts[0].text, /assistente virtual/);
+    const decls = g.body.tools[0].functionDeclarations;
+    assert.ok(decls.find((d) => d.name === 'salvar_triagem').parametersJsonSchema.properties.impacto.enum.includes('curto'));
+    assert.equal(decls.find((d) => d.name === 'horarios_r1').parametersJsonSchema, undefined, 'sem parâmetros');
+    assert.equal(g.body.contents[0].role, 'user');
+    const conv = appDb.prepare("SELECT * FROM wa_conversations WHERE peer = '5511966001100'").get();
+    const out1 = appDb.prepare("SELECT body, ai FROM wa_messages WHERE conversation_id = ? AND direction = 'out'").get(conv.id);
+    assert.equal(out1.body, 'Olá! Sou a Vero, assistente virtual. Como posso ajudar?');
+    assert.equal(out1.ai, 1);
+
+    // 2) Chamada de função: triagem salva e o conteúdo do modelo volta igual (com a assinatura), resultado com papel "user"
+    reqs.length = 0;
+    await say('5511966001100', 'Quero um apartamento em até 3 meses');
+    assert.equal(reqs.length, 2);
+    const second = reqs[1].body.contents;
+    const modelTurn = second[second.length - 2];
+    assert.equal(modelTurn.role, 'model');
+    assert.equal(modelTurn.parts[0].thoughtSignature, 'c2lnLTE=');
+    const resp = second[second.length - 1];
+    assert.equal(resp.role, 'user');
+    assert.equal(resp.parts[0].functionResponse.name, 'salvar_triagem');
+    assert.equal(resp.parts[0].functionResponse.id, 'fc-1');
+    assert.equal(resp.parts[0].functionResponse.response.salvo, true);
+    assert.equal(second.filter((x) => x.role === 'model')[0].parts[0].text, 'Olá! Sou a Vero, assistente virtual. Como posso ajudar?', 'histórico: IA = model');
+    const opp = appDb.prepare("SELECT triage FROM opportunities WHERE contact_id = ? AND status = 'aberta'").get(conv.contact_id);
+    assert.equal(JSON.parse(opp.triage).impacto, 'curto');
+    const log = appDb.prepare("SELECT tokens_in, tokens_out FROM wa_agent_log WHERE conversation_id = ? AND action = 'respondeu' ORDER BY id DESC LIMIT 1").get(conv.id);
+    assert.equal(log.tokens_in, 1600);
+    assert.equal(log.tokens_out, 120);
+
+    // 3) Limite do plano gratuito: cortesia e passagem ao especialista com o motivo
+    mode = 'limite';
+    await say('5511966002200', 'Olá', 'Lia');
+    const conv2 = appDb.prepare("SELECT * FROM wa_conversations WHERE peer = '5511966002200'").get();
+    assert.equal(conv2.ai_status, 'humano');
+    assert.match(conv2.ai_reason, /Limite de uso/);
+    mode = 'ok';
+
+    // 4) IA Vero do painel do lead com o Gemini
+    await call('admin', 'PUT', '/api/ia/config', { enabled: true });
+    const lead = await call('c1', 'POST', '/api/cadastros', { name: 'Lead IA Gemini', phone1: '11 96600-3300', origin: 'site', relationship: 'lead' });
+    const chat = await call('c1', 'POST', `/api/ia/leads/${lead.data.id}/conversa`, { message: 'Qual o próximo passo?' });
+    assert.equal(chat.data.engine, 'gemini');
+    assert.equal(chat.data.answer, 'Sugestão do Gemini para o lead.');
+
+    // 5) Troca para o Claude a qualquer momento (mesma tela)
+    const seen = [];
+    assistant.setClientFactory(() => ({ beta: { messages: { create: async (req) => { seen.push(req); return { stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: 'text', text: 'Resposta do Claude.' }] }; } } } }));
+    const sw = await call('admin', 'PUT', '/api/whatsapp/agente', { provider: 'claude', model: 'claude-haiku-5-5', api_key: 'sk-ant-teste2' });
+    assert.equal(sw.data.ready, true);
+    assert.equal(sw.data.llm.provider, 'claude');
+    const before = reqs.length;
+    await say('5511966004400', 'Oi', 'Rui');
+    assert.equal(reqs.length, before, 'o Gemini não é mais chamado');
+    assert.equal(seen[0].model, 'claude-haiku-5-5');
+    assert.equal(appDb.prepare("SELECT body FROM wa_messages WHERE conversation_id = (SELECT id FROM wa_conversations WHERE peer = '5511966004400') AND direction = 'out'").get().body, 'Resposta do Claude.');
+    // E volta para o Gemini
+    assert.equal((await call('admin', 'PUT', '/api/whatsapp/agente', { provider: 'gemini' })).data.llm.provider, 'gemini');
+    assert.equal((await call('admin', 'PUT', '/api/whatsapp/agente', { provider: 'openai' })).status, 400);
+    assert.equal((await call('admin', 'PUT', '/api/ia/config', { gemini_model: 'gpt-4' })).status, 400);
+  } finally {
+    llm.setGeminiFetch(null);
+    assistant.setClientFactory(null);
+    delete process.env.WA_AGENT_DEBOUNCE_MS;
+    await call('admin', 'PUT', '/api/whatsapp/agente', { enabled: false });
+    await call('admin', 'PUT', '/api/ia/config', { enabled: false, clear_gemini_key: true, clear_claude_key: true });
+    await call('admin', 'PUT', '/api/whatsapp/lite/config', { sandbox: false });
+  }
+});
+
+test('Agente de IA em modo de teste (só números autorizados), especialista padrão e endereço do CRM para o webhook', async () => {
+  const llm = require('../server/services/llm');
+  process.env.WA_AGENT_DEBOUNCE_MS = '0';
+  await call('admin', 'PUT', '/api/whatsapp/lite/config', { url: '', clear_key: true, sandbox: true });
+  // Endereço do CRM para o webhook (teste no computador com Docker)
+  assert.equal((await call('admin', 'PUT', '/api/whatsapp/lite/config', { webhook_base: 'ftp://x' })).status, 400);
+  await call('admin', 'PUT', '/api/whatsapp/lite/config', { webhook_base: 'http://crm.vero.test:3000/' });
+  const ov = (await call('admin', 'GET', '/api/whatsapp/lite')).data;
+  assert.equal(ov.webhook_base, 'http://crm.vero.test:3000/api/whatsapp/lite/webhook/');
+  await call('admin', 'PUT', '/api/whatsapp/lite/config', { webhook_base: '' });
+  assert.notEqual((await call('admin', 'GET', '/api/whatsapp/lite')).data.webhook_base, ov.webhook_base, 'vazio volta ao padrão');
+
+  const inst = await call('admin', 'POST', '/api/whatsapp/lite/instancias', { name: 'Central Teste' });
+  await call('admin', 'POST', `/api/whatsapp/lite/instancias/${inst.data.id}/simular-conexao`, { phone: '5151989203845' });
+  const token = appDb.prepare('SELECT webhook_token FROM wa_instances WHERE id = ?').get(inst.data.id).webhook_token;
+  let seq = 0;
+  const say = (from, text, pushName) => fetch(`${base}/api/whatsapp/lite/webhook/${token}`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event: 'messages.upsert', data: { key: { remoteJid: `${from}@s.whatsapp.net`, fromMe: false, id: `TM-${++seq}` }, pushName, message: { conversation: text }, messageTimestamp: Math.floor(Date.now() / 1000) } }) }).then((r) => r.json());
+  let calls = 0;
+  llm.setGeminiFetch(async () => {
+    calls++;
+    return { ok: true, status: 200, json: async () => ({ candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ text: 'Olá! Sou a Vero, assistente virtual.' }] } }], usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 } }) };
+  });
+  // Sem roleta automática (o especialista padrão entra quando ninguém é definido pela distribuição)
+  const roletaAntes = appDb.prepare("SELECT value FROM settings WHERE key = 'roleta'").get()?.value;
+  appDb.prepare("INSERT INTO settings (key, value) VALUES ('roleta', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(JSON.stringify({ mode: 'sequencial', auto: false, participants: [], first_contact_hours: 1 }));
+  try {
+    const c2 = await userId('c2@t.com');
+    assert.equal((await call('admin', 'PUT', '/api/whatsapp/agente', { test_numbers: 'abc' })).status, 400);
+    assert.equal((await call('admin', 'PUT', '/api/whatsapp/agente', { default_owner_id: 999999 })).status, 400);
+    const cfg = await call('admin', 'PUT', '/api/whatsapp/agente', {
+      enabled: true, channel: 'lite', instance_id: inst.data.id, provider: 'gemini', gemini_api_key: 'AIza-teste-2',
+      test_numbers: '51 99911-2233\n(11) 98877-6655', default_owner_id: c2,
+    });
+    assert.equal(cfg.status, 200, JSON.stringify(cfg.data));
+    assert.equal(cfg.data.ready, true);
+    assert.equal(cfg.data.test_mode, true);
+    assert.ok(cfg.data.users.some((u) => u.id === c2));
+    assert.equal(appDb.prepare('SELECT only_known FROM wa_instances WHERE id = ?').get(inst.data.id).only_known, 1, 'modo de teste: números pessoais não entram');
+    // Número fora da lista (ex.: um amigo escrevendo para o número pessoal): nada de IA, nada de lead
+    const r1 = await say('5521977770000', 'E aí, tudo bem?', 'Amigo');
+    assert.ok(!r1.agente);
+    assert.equal(calls, 0);
+    assert.equal(appDb.prepare("SELECT COUNT(*) AS n FROM wa_conversations WHERE peer = '5521977770000'").get().n, 0, 'conversa pessoal não entra no CRM');
+    // Número autorizado (com ou sem o nono dígito): vira lead do especialista padrão e a IA responde
+    const r2 = await say('555199112233', 'Oi, vi o anúncio', 'Teste Lead');
+    assert.equal(r2.agente, 1, JSON.stringify(r2));
+    assert.equal(calls, 1);
+    const conv = appDb.prepare("SELECT * FROM wa_conversations WHERE instance_id = ? AND contact_id IS NOT NULL ORDER BY id DESC LIMIT 1").get(inst.data.id);
+    assert.ok(conv);
+    const lead = appDb.prepare('SELECT owner_id, origin FROM contacts WHERE id = ?').get(conv.contact_id);
+    assert.equal(lead.origin, 'whatsapp');
+    assert.equal(lead.owner_id, c2, 'sem roleta, o especialista padrão recebe o lead');
+    assert.equal(appDb.prepare("SELECT owner_id FROM opportunities WHERE contact_id = ? AND status = 'aberta'").get(conv.contact_id).owner_id, c2);
+    // Sem o modo de teste, o número central volta a registrar todos os leads
+    await call('admin', 'PUT', '/api/whatsapp/agente', { test_numbers: '' });
+    assert.equal(appDb.prepare('SELECT only_known FROM wa_instances WHERE id = ?').get(inst.data.id).only_known, 0);
+    await say('5521977770000', 'Agora quero saber de consórcio', 'Novo');
+    assert.equal(calls, 2);
+  } finally {
+    llm.setGeminiFetch(null);
+    delete process.env.WA_AGENT_DEBOUNCE_MS;
+    if (roletaAntes) appDb.prepare("UPDATE settings SET value = ? WHERE key = 'roleta'").run(roletaAntes);
+    await call('admin', 'PUT', '/api/whatsapp/agente', { enabled: false, test_numbers: '', default_owner_id: null });
+    await call('admin', 'PUT', '/api/ia/config', { clear_gemini_key: true });
+    await call('admin', 'PUT', '/api/whatsapp/lite/config', { sandbox: false });
+  }
 });

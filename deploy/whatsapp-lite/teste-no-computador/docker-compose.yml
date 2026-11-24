@@ -1,0 +1,74 @@
+# Teste no computador (antes de contratar a VPS): CRM + conector do WhatsApp Lite (Evolution API) + banco, no Docker.
+# O "WhatsApp Web" roda aqui enquanto o computador estiver ligado. Tudo fica só nesta máquina:
+#   CRM ........ http://localhost:3000   (admin@demo.local · demo12345, dados de demonstração)
+#   Conector ... http://localhost:8080   (Evolution API v2.3.8)
+# O CRM de teste usa um banco próprio (volume crm_dados) e NÃO lê o config.env: não toca no banco de produção.
+name: vero-teste
+
+services:
+  crm:
+    image: node:22
+    working_dir: /app
+    command: ["sh", "-c", "npm install --omit=dev --no-audit --no-fund >/dev/null 2>&1 || true; node --disable-warning=ExperimentalWarning scripts/local.js"]
+    volumes:
+      - ../../..:/app
+      - crm_dados:/dados
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "3000"
+      TZ: America/Sao_Paulo
+      CRM_DB: /dados/local.db
+      CRM_CONFIG: /dados/config-nao-usado.env
+      PUBLIC_URL: http://localhost:3000
+      DEMO_PASSWORD: demo12345
+      EVOLUTION_API_URL: http://evolution-api:8080
+      EVOLUTION_API_KEY: ${CHAVE_CONECTOR:-vero-teste-local}
+      # Endereço do CRM visto pelo conector (nome com domínio de teste: alguns validadores exigem domínio)
+      EVOLUTION_WEBHOOK_BASE: http://crm.vero.test:3000
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks:
+      default:
+        aliases:
+          - crm.vero.test
+    depends_on:
+      - evolution-api
+    restart: unless-stopped
+
+  evolution-api:
+    image: evoapicloud/evolution-api:v2.3.8
+    env_file: conector.env
+    environment:
+      AUTHENTICATION_API_KEY: ${CHAVE_CONECTOR:-vero-teste-local}
+    volumes:
+      - evolution_instances:/evolution/instances
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: evolution
+      POSTGRES_USER: evolution
+      POSTGRES_PASSWORD: evolution-teste-local
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - evolution_redis:/data
+    restart: unless-stopped
+
+volumes:
+  crm_dados:
+  evolution_instances:
+  postgres_data:
+  evolution_redis:
