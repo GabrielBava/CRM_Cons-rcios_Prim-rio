@@ -91,13 +91,29 @@ LIVRE_GB="$(df -Pk / | awk 'NR==2 {print int($4/1024/1024)}')"
 [ "$LIVRE_GB" -ge 4 ] || aviso "só $LIVRE_GB GB livres no disco; o conector precisa de uns 3 GB."
 
 # ---------------------------------------------------------------- Docker
+# Docker dos pacotes do próprio Ubuntu (vêm do espelho da hospedagem): plano B quando o site do Docker não responde
+docker_do_ubuntu() {
+  rm -f /etc/apt/sources.list.d/docker.list /etc/apt/keyrings/docker.asc
+  esperar_apt
+  apt-get update "${APT_OPCOES[@]}" >/dev/null 2>&1 || true
+  apt-get install "${APT_OPCOES[@]}" docker.io >/dev/null || return 1
+  apt-get install "${APT_OPCOES[@]}" docker-compose-v2 >/dev/null 2>&1 || apt-get install "${APT_OPCOES[@]}" docker-compose-plugin >/dev/null 2>&1 || true
+}
 if ! command -v docker >/dev/null 2>&1; then
   etapa "Instalando o Docker (3 a 5 minutos; a tela fica parada, é normal)"
   esperar_apt
-  curl -fsSL https://get.docker.com | sh >/dev/null
+  if ! { curl -fsSL --max-time 60 https://get.docker.com -o /tmp/instalar-docker.sh && sh /tmp/instalar-docker.sh >/dev/null 2>&1; }; then
+    echo "O site do Docker não respondeu; instalando o Docker pelos pacotes do próprio Ubuntu..."
+    docker_do_ubuntu || falha "não foi possível instalar o Docker. Rode o instalador de novo em alguns minutos."
+  fi
+  rm -f /tmp/instalar-docker.sh
 fi
 systemctl enable --now docker >/dev/null 2>&1 || true
-docker compose version >/dev/null 2>&1 || apt-get install "${APT_OPCOES[@]}" docker-compose-plugin >/dev/null 2>&1 || true
+if ! docker compose version >/dev/null 2>&1; then
+  esperar_apt
+  apt-get install "${APT_OPCOES[@]}" docker-compose-plugin >/dev/null 2>&1 \
+    || apt-get install "${APT_OPCOES[@]}" docker-compose-v2 >/dev/null 2>&1 || true
+fi
 docker compose version >/dev/null 2>&1 || falha "o Docker Compose não ficou disponível nesta VPS."
 docker info >/dev/null 2>&1 || falha "o Docker não iniciou nesta VPS. Confira se o plano é uma VPS com virtualização KVM (o Docker não roda em alguns tipos de VPS)."
 
@@ -262,7 +278,12 @@ chmod 755 /usr/local/bin/vero-whatsapp
 
 # ---------------------------------------------------------------- subir
 etapa "Baixando e subindo o conector (a primeira vez leva alguns minutos)"
-docker compose pull -q || falha "não foi possível baixar os programas do conector. Rode o instalador de novo em alguns minutos."
+BAIXOU=0
+for tentativa in 1 2 3; do
+  if docker compose pull -q; then BAIXOU=1; break; fi
+  [ "$tentativa" = 3 ] || { echo "O download falhou; tentando de novo em 20 segundos ($tentativa de 3)..."; sleep 20; }
+done
+[ "$BAIXOU" = 1 ] || falha "não foi possível baixar os programas do conector. Rode o instalador de novo em alguns minutos."
 docker compose up -d --remove-orphans
 
 etapa "Aguardando o conector e o certificado HTTPS de https://$DOMINIO (até 5 minutos)"
