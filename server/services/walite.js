@@ -385,6 +385,20 @@ async function checkReceiving(db, user, id, req) {
   return { ...out, instance: view(db, user, instRow(db, inst.id)) };
 }
 
+/** Mensagem do próprio CRM (aviso para a equipe) por um número conectado, sem abrir conversa de lead. */
+async function sendSystemText(db, instId, number, text) {
+  const cfg = liteConfig(db);
+  const inst = instRow(db, instId);
+  if (!inst) throw badRequest('Número de envio não encontrado.');
+  if (inst.status !== 'conectado') throw badRequest(`O número "${inst.name}" não está conectado ao WhatsApp.`);
+  if (!cfg.configured) {
+    if (cfg.sandbox) return { simulated: true, wamid: null };
+    throw badRequest('O servidor do WhatsApp Lite não está configurado.');
+  }
+  const r = await evo(cfg, 'POST', `/message/sendText/${inst.instance_key}`, { number: digits(number), text }, 15000);
+  return { wamid: r?.key?.id || null };
+}
+
 /** Modo de teste: simula a leitura do QR Code. */
 function simulateConnect(db, user, id, data = {}) {
   const inst = loadInstance(db, user, id, { manage: true });
@@ -732,6 +746,8 @@ function inbound(db, inst, d) {
     return false;
   }
   const fromMe = !!key.fromMe;
+  // Aviso que o CRM mandou para alguém da equipe (novo lead, R1 agendada): não é conversa de lead
+  if (fromMe && require('./waautomation').isOwnNotice(db, wamid, cands, parsed.text)) return false;
   // Eco de uma mensagem que o próprio CRM acabou de enviar (o servidor às vezes avisa antes de responder o envio):
   // só registra o ID na mensagem que já está no CRM, sem duplicar e sem contar como resposta de uma pessoa
   if (fromMe && conv) {
@@ -801,6 +817,6 @@ function startConversation(db, user, contact, instanceId) {
 }
 
 module.exports = {
-  liteConfig, saveConfig, overview, createInstance, instanceStatus, reconnect, checkReceiving, syncInstance, syncAll, syncConversation, simulateConnect, disconnect, removeInstance, updateInstance,
+  liteConfig, saveConfig, overview, createInstance, instanceStatus, reconnect, checkReceiving, syncInstance, syncAll, syncConversation, sendSystemText, simulateConnect, disconnect, removeInstance, updateInstance,
   members, setMemberAccess, accessOf, convAccess, visibleInstanceIds, send, mediaFor, receiveWebhook, startConversation, parseMessage, initials, LEVEL_LABEL, MAX_FILE,
 };

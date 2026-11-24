@@ -391,3 +391,14 @@ Tela: **Integrações › Agente de IA** (o administrador configura; o líder v�
 - **Endereço do CRM para o webhook:** `EVOLUTION_WEBHOOK_BASE` (ou o campo na tela do servidor do WhatsApp Lite) troca o endereço que o conector usa para avisar as mensagens; padrão: o endereço público do CRM.
 - **Acesso:** as conversas do número central que passaram para um especialista (responsável pela conversa ou pelo lead) aparecem para ele, que pode responder mesmo sem acesso ao número.
 
+
+## 20. Avisos por WhatsApp para o responsável (novo lead e R1 agendada)
+
+Tela: **Integrações › Avisos por WhatsApp** (o administrador configura; o líder vê). Serviço: `server/services/waautomation.js`.
+
+- **Quando:** novo lead para o especialista (cadastro com responsável feito por outra pessoa, landing page, API, agente de IA, e distribuição pela roleta ou manual) e R1 agendada na agenda dele (opção: também a R2). Padrão: não avisa quando o próprio responsável fez a ação (`skip_self`). O mesmo aviso não se repete para a mesma pessoa.
+- **Para quem:** o responsável, no WhatsApp de Meu perfil (WhatsApp comercial; sem ele, o telefone). Sem número: o aviso fica registrado como "Responsável sem WhatsApp" e a tela lista quem precisa cadastrar.
+- **Por onde:** o número do WhatsApp Lite escolhido (padrão: o número central do agente de IA ou o primeiro conectado), pela Evolution API (`/message/sendText`). Não abre conversa de lead: o eco do aviso que o conector devolve é reconhecido e ignorado. Com o WhatsApp Lite em modo de teste, o envio é registrado como simulado.
+- **Modelos:** editáveis, até 1.000 caracteres, com *negrito* do WhatsApp e variáveis {{nome_lead}}, {{origem}}, {{campanha}}, {{origem_campanha}}, {{telefone_lead}}, {{responsavel}}, {{link_lead}} e, na R1, {{data_reuniao}}, {{horario_reuniao}}, {{link_reuniao}} (o Meet, quando houver) e {{tipo_reuniao}}. Modelos padrão: "🚨 *NOVO LEAD NO CRM!*" (nome, origem, campanha) e "📅 *NOVA R1 AGENDADA!*" (lead, data, horário, link da call).
+- **Envio:** fila `wa_automation_log`, preenchida na mesma transação do evento e enviada logo depois da requisição (o roteador envia a fila após cada ação que altera dados) e pela rotina de 5 minutos, que tenta de novo as falhas (até 3 vezes nas últimas 6 horas). Situações: na fila, enviada, enviada (modo de teste), falhou (com o motivo), responsável sem WhatsApp, sem número para enviar.
+- **API:** `GET/PUT /api/whatsapp/avisos`, `POST /api/whatsapp/avisos/teste` (envia ao próprio WhatsApp do administrador um exemplo com dados fictícios).

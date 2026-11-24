@@ -6,7 +6,7 @@ import { html, render, on, state, toast, toastError, confirmDialog, modal, relTi
 import { icon } from '../icons.js';
 
 const TONE = { ativo: 'ok', teste: 'warn', aguardando: 'warn', disponivel: 'idle', nao_configurado: 'off', erro: 'err', em_breve: 'off' };
-const BRAND = { whatsapp: 'wa', instagram: 'ig', linkedin: 'li', meta: 'meta', google: 'gg', calendario: 'gcal', telefone: 'voz', email: 'mail', ia: 'ia', link: 'api', relatorios: 'bi' };
+const BRAND = { sino: 'wa', whatsapp: 'wa', instagram: 'ig', linkedin: 'li', meta: 'meta', google: 'gg', calendario: 'gcal', telefone: 'voz', email: 'mail', ia: 'ia', link: 'api', relatorios: 'bi' };
 
 export async function show(view) {
   render(view, html`<div class="page"><div class="page-head"><div><h1>Integrações</h1><p class="muted">Carregando…</p></div></div></div>`);
@@ -32,6 +32,7 @@ export async function show(view) {
     if (key === 'whatsapp_lite') return liteManager(() => show(view));
     if (key === 'google_agenda') return googleDialog(c, () => show(view));
     if (key === 'wa_agent') return agentDialog(() => show(view));
+    if (key === 'wa_avisos') return noticesDialog(() => show(view));
     if (state.user.role === 'admin') {
       location.hash = '#/configuracoes/integracoes';
       return undefined;
@@ -366,6 +367,91 @@ async function googleDialog(card, onClose) {
 const PRICE = { 'claude-opus-5-5': [4, 20], 'claude-sonnet-5-5': [2, 10], 'claude-haiku-5-5': [0.1, 0.5] };
 const DAYS = [[1, 'Seg'], [2, 'Ter'], [3, 'Qua'], [4, 'Qui'], [5, 'Sex'], [6, 'Sáb'], [0, 'Dom']];
 const ACTION = { qualificou: 'Triagem concluída', agendou_r1: 'R1 agendada', transferiu: 'Transferida ao especialista', sem_fit: 'Sem fit', erro: 'Erro', novo_lead: 'Novo lead' };
+
+/** Avisos por WhatsApp para o responsável: novo lead e R1 agendada, com modelos editáveis. */
+async function noticesDialog(onClose) {
+  let d;
+  try {
+    d = await get('/api/whatsapp/avisos');
+  } catch (e) {
+    return toastError(e);
+  }
+  const sh = sheet(onClose);
+  const vars = (kind, target) => html`<div class="notice-vars">${d.vars[kind].map(([k, l]) => html`<button type="button" class="chip-sm" data-var="{{${k}}}" data-target="${target}" title="Inserir: ${l}" ${d.can_edit ? '' : 'disabled'}>{{${k}}}</button>`)}</div>`;
+  const draw = () => {
+    const c = d.config;
+    const ro = d.can_edit ? '' : 'disabled';
+    render(sh.box, html`<header class="int-head"><span class="integ-logo brand-wa">${icon('sino', 26)}</span><div><h2>Avisos por WhatsApp</h2>
+        <small>${c.enabled ? html`<span class="dot-ok"></span> Ligado${d.sender ? ` · envia pelo número ${d.sender.name}` : ''}` : 'Desligado'}</small></div><button type="button" class="icon" data-x aria-label="Fechar">×</button></header>
+      <div class="int-body">
+        <p class="small muted">O responsável recebe no WhatsApp dele um aviso quando chega um <strong>novo lead</strong> para ele (cadastro, landing page, roleta ou agente de IA) e quando uma <strong>R1 é agendada</strong>. O aviso sai pelo número do WhatsApp Lite escolhido e vai para o WhatsApp cadastrado em Meu perfil.</p>
+        ${!d.instances.length ? html`<div class="alert">Conecte primeiro um número no <strong>WhatsApp Lite</strong> (QR Code): é por ele que os avisos saem.</div>` : d.sender && !d.sender.connected ? html`<div class="alert">O número ${d.sender.name} está desconectado: os avisos ficam na fila até ele voltar (ou escolha outro número).</div>` : ''}
+        ${d.users_without_number.length ? html`<div class="alert small">Sem WhatsApp no perfil (não recebem os avisos): <strong>${d.users_without_number.map((u) => u.name).join(', ')}</strong>. Cada um cadastra em Meu perfil › WhatsApp comercial.</div>` : ''}
+        <form data-form="notices" class="grid" novalidate>
+          <label class="check full"><input type="checkbox" name="enabled" ${c.enabled ? 'checked' : ''} ${ro}> <strong>Ligar os avisos por WhatsApp</strong></label>
+          <div class="field"><label>Número que envia os avisos</label><select name="instance_id" ${ro}><option value="">Automático (número central do agente ou o primeiro conectado)</option>${d.instances.map((i) => html`<option value="${i.id}" ${Number(c.instance_id) === i.id ? 'selected' : ''}>${i.label}</option>`)}</select></div>
+          <label class="check"><input type="checkbox" name="skip_self" ${c.skip_self ? 'checked' : ''} ${ro}> Não avisar quando o próprio responsável cadastrou o lead ou agendou a R1</label>
+          <fieldset class="full notice-box"><legend><label class="check"><input type="checkbox" name="new_enabled" ${c.new_lead.enabled ? 'checked' : ''} ${ro}> Novo lead no CRM</label></legend>
+            <textarea name="new_template" rows="6" maxlength="1000" ${ro}>${c.new_lead.template}</textarea>${vars('novo_lead', 'new_template')}
+            ${d.can_edit ? html`<div class="notice-acts"><button type="button" class="btn small" data-test="novo_lead">Enviar teste para mim</button><button type="button" class="btn small ghost" data-reset="new_template">Voltar ao modelo padrão</button></div>` : ''}</fieldset>
+          <fieldset class="full notice-box"><legend><label class="check"><input type="checkbox" name="r1_enabled" ${c.r1.enabled ? 'checked' : ''} ${ro}> R1 agendada</label></legend>
+            <textarea name="r1_template" rows="7" maxlength="1000" ${ro}>${c.r1.template}</textarea>${vars('r1_agendada', 'r1_template')}
+            <label class="check"><input type="checkbox" name="r1_r2" ${c.r1.r2 ? 'checked' : ''} ${ro}> Avisar também quando a R2 for agendada</label>
+            ${d.can_edit ? html`<div class="notice-acts"><button type="button" class="btn small" data-test="r1_agendada">Enviar teste para mim</button><button type="button" class="btn small ghost" data-reset="r1_template">Voltar ao modelo padrão</button></div>` : ''}</fieldset>
+          <p class="hint full">Use *texto* para negrito no WhatsApp. As variáveis entre {{chaves}} são trocadas pelos dados do lead e da reunião.</p>
+          ${d.can_edit ? html`<div class="full"><button type="submit" class="btn primary">Salvar</button></div>` : html`<p class="hint full">Só o administrador altera estas configurações.</p>`}
+        </form>
+        ${d.recent.length ? html`<h3 class="agent-h">Últimos avisos</h3><ul class="agent-log">${d.recent.map((r) => html`<li><span><b>${r.kind_label}</b>${r.contact_name ? ` · ${r.contact_name}` : ''} → ${r.user_name || '—'} <small class="muted">· ${r.status_label}${r.error ? ` (${r.error})` : ''}</small></span><small class="muted">${new Date(r.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</small></li>`)}</ul>` : ''}
+      </div>`);
+  };
+  draw();
+  const form = () => sh.box.querySelector('[data-form=notices]');
+  sh.box.addEventListener('click', async (e) => {
+    const v = e.target.closest('[data-var]');
+    if (v) {
+      const ta = form()[v.dataset.target];
+      const at = ta.selectionStart ?? ta.value.length;
+      ta.value = `${ta.value.slice(0, at)}${v.dataset.var}${ta.value.slice(ta.selectionEnd ?? at)}`;
+      ta.focus();
+      ta.selectionStart = ta.selectionEnd = at + v.dataset.var.length;
+      return;
+    }
+    const rs = e.target.closest('[data-reset]');
+    if (rs) {
+      form()[rs.dataset.reset].value = rs.dataset.reset === 'r1_template' ? d.defaults.r1 : d.defaults.new_lead;
+      return;
+    }
+    const t = e.target.closest('[data-test]');
+    if (!t) return;
+    t.disabled = true;
+    try {
+      const r = await post('/api/whatsapp/avisos/teste', { kind: t.dataset.test, template: form()[t.dataset.test === 'r1_agendada' ? 'r1_template' : 'new_template'].value });
+      toast(r.simulated ? 'Teste registrado (WhatsApp Lite em modo de teste: nada foi enviado de verdade).' : 'Teste enviado para o seu WhatsApp.');
+      d = await get('/api/whatsapp/avisos');
+      draw();
+    } catch (ex) {
+      toastError(ex);
+    } finally {
+      t.disabled = false;
+    }
+  });
+  sh.box.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    try {
+      d = await put('/api/whatsapp/avisos', {
+        enabled: f.enabled.checked, skip_self: f.skip_self.checked, instance_id: f.instance_id.value ? Number(f.instance_id.value) : null,
+        new_lead: { enabled: f.new_enabled.checked, template: f.new_template.value },
+        r1: { enabled: f.r1_enabled.checked, r2: f.r1_r2.checked, template: f.r1_template.value },
+      });
+      toast(d.config.enabled ? 'Avisos por WhatsApp ligados.' : 'Avisos por WhatsApp desligados.');
+      draw();
+    } catch (ex) {
+      toastError(ex);
+    }
+  });
+  return undefined;
+}
 
 async function agentDialog(onClose) {
   let d;

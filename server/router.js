@@ -40,6 +40,7 @@ const meetings = require('./services/meetings');
 
 function createRouter(db) {
   const routes = [];
+  const waauto = require('./services/waautomation');
   const add = (method, pattern, handler, opts = {}) => {
     const keys = [];
     const re = new RegExp(`^${pattern.replace(/:([a-z_]+)/g, (_, k) => (keys.push(k), '([^/]+)'))}$`);
@@ -410,6 +411,11 @@ function createRouter(db) {
   /* ---------- Atividades e tarefas ---------- */
   add('GET', '/api/atividades', ({ user, query }) => activities.listActivities(db, user, query));
   add('POST', '/api/atividades', ({ user, body }) => ({ id: activities.createActivity(db, user, body) }));
+  // Central de agendas e tarefas: a fila do especialista (atrasadas primeiro) e as ações feitas por ela
+  const central = require('./services/central');
+  add('GET', '/api/central', ({ user, query, req }) => central.central(db, user, query, req));
+  add('POST', '/api/central/whatsapp', ({ user, body }) => central.sendWhatsapp(db, user, body));
+  add('POST', '/api/central/feito', ({ user, body }) => central.registerDone(db, user, body));
   add('GET', '/api/tarefas', ({ user, query }) => tasks.listTasks(db, user, query));
   add('POST', '/api/tarefas', ({ user, body }) => ({ id: tasks.createTask(db, user, body) }));
   add('PATCH', '/api/tarefas/:id', async ({ user, params, body }) => {
@@ -549,6 +555,10 @@ function createRouter(db) {
     return sendBinary(res, f.filename, f.mime, f.content);
   });
   const walite = require('./services/walite');
+  // Avisos por WhatsApp para o responsável (novo lead, R1 agendada)
+  add('GET', '/api/whatsapp/avisos', ({ user }) => waauto.view(db, user));
+  add('PUT', '/api/whatsapp/avisos', ({ user, body }) => waauto.save(db, user, body));
+  add('POST', '/api/whatsapp/avisos/teste', ({ user, body }) => waauto.sendTest(db, user, body));
   add('GET', '/api/whatsapp/status', ({ user, req }) => wa.status(db, user, req));
   add('PUT', '/api/whatsapp/config', ({ user, body }) => wa.saveConfig(db, user, body));
   // WhatsApp Lite: antes de listar ou mostrar, busca no conector as mensagens que o aviso (webhook) não trouxe
@@ -734,6 +744,8 @@ function createRouter(db) {
       }
       const body = ['POST', 'PATCH', 'PUT'].includes(req.method) ? parseBody(req, route.opts.bodyLimit || 2e6) : {};
       const result = await route.handler({ req, res, user, params, query, body });
+      // Avisos por WhatsApp que a ação colocou na fila (novo lead, R1 agendada): saem antes da resposta
+      if (req.method !== 'GET') await waauto.flush(db).catch((e) => console.error('Falha ao enviar os avisos por WhatsApp:', e.message));
       if (res.headersSent) return;
       json(200, result === undefined ? { ok: true } : result);
     } catch (e) {
@@ -794,8 +806,9 @@ function createRouter(db) {
     }
   }
 
-  /** Presença na R1 pelo Google Meet: a cada 5 minutos confere as reuniões em andamento. */
+  /** Presença na R1 pelo Google Meet: a cada 5 minutos confere as reuniões em andamento. Também envia os avisos por WhatsApp da fila. */
   async function meetSweep() {
+    await waauto.flush(db).catch((e) => console.error('Falha ao enviar os avisos por WhatsApp:', e.message));
     try {
       return await meetings.attendanceSweep(db);
     } catch (e) {

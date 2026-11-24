@@ -312,6 +312,8 @@ async function scheduleR1(db, user, data, req) {
   }
   // Confirmação por e-mail para o cliente (remetente noreply@), com o link do Meet
   result.confirmation = email ? await sendR1Confirmation(db, taskId, { logoUrl: data.logo_url }) : { sent: false, reason: 'sem_email' };
+  // Aviso por WhatsApp para o responsável (já com o link da call, quando houver)
+  require('./waautomation').enqueue(db, 'r1_agendada', { contactId: c.id, taskId, userId: assignee, byUserId: user.id });
   // Agendou a R1 (ou a R2): o negócio vai junto para a coluna da reunião. O "Ganho" do pré-vendas leva o lead de
   // Prospect, Lead, Tentativa ou Qualificação direto para a R1 (as regras das etapas puladas continuam valendo).
   if (oppId && (data.move_to_r1 || data.move_to_stage)) {

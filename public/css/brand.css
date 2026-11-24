@@ -936,6 +936,20 @@ html.nav-collapsed .nav-group span { display: none; }
 .chip-sm.area-seguros { background: color-mix(in srgb, #4fa3a5 30%, transparent); }
 .chip-sm.area-investimentos { background: color-mix(in srgb, #c9a227 28%, transparent); }
 .opp-card .next { color: var(--text-muted); }
+/* Cartão padronizado: nome, valor, responsável, telefone, área - campanha, próxima atividade e score */
+.opp-card.clean { gap: 6px; }
+.opp-card.clean .oc-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.opp-card.clean .oc-head .title { min-width: 0; overflow-wrap: anywhere; line-height: 1.25; }
+.opp-card.clean .oc-badges { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.opp-card.clean .oc-badges .score { min-width: 26px; text-align: center; }
+.opp-card.clean .score.s-none { color: var(--text-muted); border-style: dashed; }
+.opp-card.clean .oc-value { font-family: var(--font-display); font-weight: 700; font-size: var(--fs-sm); color: var(--text); }
+.opp-card.clean .oc-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: var(--fs-xs); color: var(--text-muted); }
+.opp-card.clean .oc-rows li { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }
+.opp-card.clean .oc-rows li > svg { flex: none; margin-top: 2px; opacity: 0.75; }
+.opp-card.clean .oc-rows li > span { min-width: 0; overflow-wrap: anywhere; }
+.opp-card.clean .oc-next { color: var(--text); }
+.opp-card.clean .oc-next.overdue, .opp-card.clean .oc-next.overdue svg { color: var(--danger); opacity: 1; }
 .opp-card.sla-estourado { border-left-color: var(--danger); }
 .opp-card.sla-atencao { border-left-color: var(--warning); }
 .col-meet { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; width: 100%; font-size: var(--fs-xs); color: var(--text-muted); margin-top: 4px; }
@@ -2003,6 +2017,13 @@ html.nav-collapsed { --sidebar-w: 74px; }
 .lite-info small { font-size: var(--fs-xs); }
 .lite-info .lite-warn { color: var(--warning, #b45309); }
 .lite-info .lite-warn .link { background: none; border: 0; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; }
+/* Avisos por WhatsApp: modelos editáveis */
+.notice-box { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; margin: 0; }
+.notice-box legend { padding: 0 6px; font-weight: 600; }
+.notice-box textarea { width: 100%; font-family: var(--font-mono, ui-monospace, monospace); font-size: var(--fs-sm); }
+.notice-vars { display: flex; flex-wrap: wrap; gap: 6px; }
+.notice-vars .chip-sm { cursor: pointer; border: 1px dashed var(--border); background: var(--bg-card-2); }
+.notice-acts { display: flex; gap: 8px; flex-wrap: wrap; }
 .lite-check { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .lite-check li { display: flex; gap: 10px; align-items: flex-start; line-height: 1.4; overflow-wrap: anywhere; }
 .lite-check li span { flex: none; display: inline-flex; margin-top: 1px; }
@@ -2234,3 +2255,38 @@ html.nav-collapsed { --sidebar-w: 74px; }
 .wa-head a.icon { display: inline-grid; place-items: center; padding: 2px 8px; }
 .wa-page button.icon.on { color: var(--wa-green); }
 .wa-page button.icon { display: inline-grid; place-items: center; }
+
+/* Central de agendas e tarefas: fila do especialista, 5 itens à vista e o resto rolando */
+.wq-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: 0 0 12px; }
+.wq-bar label { display: inline-flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--text-muted); }
+.wq-bar .chips .chip b { margin-left: 4px; font-weight: 700; }
+.wq-card { padding: 0; overflow: hidden; }
+.wq-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 14px 16px 10px; border-bottom: 1px solid var(--border); }
+.wq-head h3 { margin: 0; }
+.wq-board { --wq-h: 118px; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; max-height: calc(5 * var(--wq-h) + 4 * 8px + 22px); overflow-y: auto; overscroll-behavior: contain; scroll-snap-type: y proximity; }
+.wq-item { flex-shrink: 0; scroll-snap-align: start; display: grid; grid-template-columns: 118px minmax(0, 1fr) auto; gap: 12px; align-items: center; min-height: var(--wq-h); padding: 10px 12px; border: 1px solid var(--border); border-left: 4px solid var(--border); border-radius: var(--radius); background: var(--surface, var(--bg-card)); }
+.wq-item.late { border-left-color: var(--danger); background: color-mix(in srgb, var(--danger) 5%, var(--surface, var(--bg-card))); }
+.wq-item.waiting { opacity: 0.85; }
+.wq-item.cat-whatsapp:not(.late) { border-left-color: #25d366; }
+.wq-item.cat-confirmacao:not(.late), .wq-item.cat-reuniao:not(.late) { border-left-color: var(--primary, #2563eb); }
+.wq-item.cat-follow_proposta:not(.late) { border-left-color: var(--warning); }
+.wq-when { display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-xs); color: var(--text-muted); }
+.wq-when span { font-weight: 700; font-size: var(--fs-sm); color: var(--text); }
+.wq-item.late .wq-when span { color: var(--danger); }
+.wq-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.wq-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.wq-cat { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.02em; color: var(--text-muted); }
+.wq-title { font-family: var(--font-display); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.wq-sub, .wq-detail { font-size: var(--fs-xs); color: var(--text-muted); overflow-wrap: anywhere; }
+.wq-detail { color: var(--text); opacity: 0.8; }
+.wq-acts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: 320px; }
+.wq-acts .btn { white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
+.wq-reply { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.wq-reply textarea { width: 100%; resize: vertical; }
+.wq-reply-acts { display: flex; gap: 6px; }
+@media (max-width: 860px) {
+  .wq-item { grid-template-columns: minmax(0, 1fr); align-items: start; }
+  .wq-when { flex-direction: row; gap: 8px; align-items: baseline; }
+  .wq-acts { justify-content: flex-start; max-width: none; }
+  .wq-board { max-height: none; }
+}

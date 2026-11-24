@@ -97,6 +97,15 @@ export const todayLocal = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 export const fmtMoney = (v) => (v == null || v === '' ? '—' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
+/** Telefone brasileiro para leitura: (51) 98912-1113. Outros formatos voltam como vieram. */
+export function fmtPhone(v) {
+  let d = String(v || '').replace(/\D/g, '');
+  if (!d) return '';
+  if (d.length > 11 && d.startsWith('55')) d = d.slice(2);
+  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return String(v);
+}
 export const fmtNum = (v) => (v == null || v === '' ? '—' : Number(v).toLocaleString('pt-BR'));
 export const fmtPct = (v) => (v == null ? '—' : `${Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%`);
 export function fmtDuration(s) {

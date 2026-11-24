@@ -3709,3 +3709,175 @@ test('Agente de IA em modo de teste (só números autorizados), especialista pad
     await call('admin', 'PUT', '/api/whatsapp/lite/config', { sandbox: false });
   }
 });
+
+test('Avisos por WhatsApp: novo lead e R1 agendada para o responsável, pelo número do WhatsApp Lite', async () => {
+  // Número que envia: WhatsApp Lite em modo de teste (o envio é registrado como simulado)
+  await call('admin', 'PUT', '/api/whatsapp/lite/config', { url: '', clear_key: true, sandbox: true });
+  const inst = await call('admin', 'POST', '/api/whatsapp/lite/instancias', { name: 'Avisos Vero', only_known: false });
+  await call('admin', 'POST', `/api/whatsapp/lite/instancias/${inst.data.id}/simular-conexao`, { phone: '5151977770000' });
+  const c1 = await userId('c1@t.com');
+  const adminId = await userId('admin@t.com');
+  appDb.prepare('UPDATE users SET whatsapp = ? WHERE id = ?').run('(51) 98888-0001', c1);
+  appDb.prepare('UPDATE users SET whatsapp = ? WHERE id = ?').run('(51) 98888-0009', adminId);
+  const logOf = (kind, contactId) => appDb.prepare('SELECT * FROM wa_automation_log WHERE kind = ? AND contact_id = ? ORDER BY id DESC').all(kind, contactId);
+  try {
+    // Desligado: nada entra na fila
+    const off = await call('admin', 'POST', '/api/cadastros', { name: 'Lead Sem Aviso', phone1: '11 91111-2001', origin: 'indicacao', relationship: 'lead', owner_id: c1 });
+    assert.equal(logOf('novo_lead', off.data.id).length, 0);
+    // Configuração: só o administrador; modelo vazio é recusado
+    assert.equal((await call('c1', 'GET', '/api/whatsapp/avisos')).status, 403);
+    assert.equal((await call('gestor', 'PUT', '/api/whatsapp/avisos', { enabled: true })).status, 403);
+    assert.equal((await call('admin', 'PUT', '/api/whatsapp/avisos', { new_lead: { template: '  ' } })).status, 400);
+    const cfg = await call('admin', 'PUT', '/api/whatsapp/avisos', { enabled: true, instance_id: inst.data.id });
+    assert.equal(cfg.status, 200, JSON.stringify(cfg.data));
+    assert.match(cfg.data.config.new_lead.template, /NOVO LEAD NO CRM/);
+    assert.match(cfg.data.config.r1.template, /NOVA R1 AGENDADA/);
+    assert.ok(cfg.data.vars.novo_lead.some(([k]) => k === 'origem_campanha'));
+    // Novo lead do líder para o especialista: aviso com nome, origem e campanha, enviado logo depois do cadastro
+    const lead = await call('admin', 'POST', '/api/cadastros', { name: 'Paula Aviso', phone1: '11 91111-2002', origin: 'indicacao', campaign: 'Consórcio Imóvel', relationship: 'lead', owner_id: c1 });
+    const [n] = logOf('novo_lead', lead.data.id);
+    assert.ok(n, 'aviso de novo lead na fila');
+    assert.equal(n.user_id, c1);
+    assert.equal(n.phone, '5551988880001');
+    assert.equal(n.status, 'simulada', n.error || '');
+    assert.match(n.body, /🚨 \*NOVO LEAD NO CRM!\*/);
+    assert.match(n.body, /\*Nome:\* Paula Aviso/);
+    assert.match(n.body, /\*Campanha:\* Consórcio Imóvel/);
+    assert.doesNotMatch(n.body, /\{\{/, 'todas as variáveis trocadas');
+    // O próprio especialista cadastrando o lead dele: sem aviso (opção padrão)
+    const own = await call('c1', 'POST', '/api/cadastros', { name: 'Lead Do Proprio', phone1: '11 91111-2003', origin: 'indicacao', relationship: 'lead' });
+    assert.equal(logOf('novo_lead', own.data.id).length, 0);
+    // R1 agendada pelo líder na agenda do especialista: aviso com data, horário e link
+    await triage('c1', lead.data.id);
+    const start = new Date(Date.now() + 3 * 86400000);
+    start.setUTCHours(13, 0, 0, 0);
+    const r1 = await call('admin', 'POST', '/api/reunioes/agendar', { kind: 'r1', contact_id: lead.data.id, start_at: start.toISOString(), end_at: new Date(start.getTime() + 45 * 60000).toISOString(), assigned_to: c1 });
+    assert.equal(r1.status, 200, JSON.stringify(r1.data));
+    const [m] = logOf('r1_agendada', lead.data.id);
+    assert.ok(m, 'aviso de R1 agendada');
+    assert.equal(m.task_id, r1.data.task_id);
+    assert.equal(m.status, 'simulada');
+    assert.match(m.body, /📅 \*NOVA R1 AGENDADA!\*/);
+    assert.match(m.body, /\*Lead:\* Paula Aviso/);
+    assert.match(m.body, /\*Horário:\* 10:00 às 10:45/);
+    assert.match(m.body, /Link da Call:\* a definir/);
+    // Responsável sem WhatsApp no perfil: fica registrado, sem envio
+    const g = await userId('gestor@t.com');
+    appDb.prepare('UPDATE users SET whatsapp = NULL, phone = NULL WHERE id = ?').run(g);
+    const lg = await call('admin', 'POST', '/api/cadastros', { name: 'Lead Do Gestor', phone1: '11 91111-2004', origin: 'indicacao', relationship: 'lead', owner_id: g });
+    assert.equal(logOf('novo_lead', lg.data.id)[0].status, 'sem_numero');
+    const v = (await call('admin', 'GET', '/api/whatsapp/avisos')).data;
+    assert.ok(v.users_without_number.some((u) => u.id === g));
+    assert.ok(v.recent.some((r) => r.kind_label === 'R1 agendada' && r.status_label.startsWith('Enviada')));
+    // Teste para o próprio WhatsApp, com dados de exemplo
+    const t = await call('admin', 'POST', '/api/whatsapp/avisos/teste', { kind: 'r1_agendada' });
+    assert.equal(t.status, 200, JSON.stringify(t.data));
+    assert.equal(t.data.to, '5551988880009');
+    assert.match(t.data.body, /Maria Exemplo/);
+    // O aviso que o conector devolve como mensagem enviada não vira conversa de lead
+    const token = appDb.prepare('SELECT webhook_token FROM wa_instances WHERE id = ?').get(inst.data.id).webhook_token;
+    const echo = await fetch(`${base}/api/whatsapp/lite/webhook/${token}`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event: 'messages.upsert', data: { key: { remoteJid: '5551988880001@s.whatsapp.net', fromMe: true, id: 'AVISO-ECO-1' }, message: { conversation: n.body }, messageTimestamp: Math.floor(Date.now() / 1000) } }) }).then((r) => r.json());
+    assert.equal(echo.mensagens, 0);
+    assert.equal(appDb.prepare("SELECT COUNT(*) AS n FROM wa_conversations WHERE channel = 'lite' AND peer = '5551988880001'").get().n, 0);
+    // Sem número conectado para enviar: fica registrado o motivo
+    appDb.prepare("UPDATE wa_instances SET status = 'desconectado'").run();
+    const lead2 = await call('admin', 'POST', '/api/cadastros', { name: 'Lead Sem Canal', phone1: '11 91111-2005', origin: 'indicacao', relationship: 'lead', owner_id: c1 });
+    const [x] = logOf('novo_lead', lead2.data.id);
+    assert.equal(x.status, 'falhou');
+    assert.match(x.error, /não está conectado/);
+  } finally {
+    await call('admin', 'PUT', '/api/whatsapp/avisos', { enabled: false });
+    appDb.prepare("UPDATE wa_instances SET status = 'conectado' WHERE id = ?").run(inst.data.id);
+    await call('admin', 'DELETE', `/api/whatsapp/lite/instancias/${inst.data.id}`);
+    await call('admin', 'PUT', '/api/whatsapp/lite/config', { sandbox: false });
+  }
+});
+
+test('Central de agendas e tarefas: fila do especialista por urgência e ações que concluem cada item', async () => {
+  await call('admin', 'PUT', '/api/whatsapp/lite/config', { url: '', clear_key: true, sandbox: true });
+  const c1 = await userId('c1@t.com');
+  const inst = await call('c1', 'POST', '/api/whatsapp/lite/instancias', { name: 'WhatsApp Central Teste', only_known: false });
+  await call('c1', 'POST', `/api/whatsapp/lite/instancias/${inst.data.id}/simular-conexao`, { phone: '5151966660000' });
+  try {
+    const lead = await call('c1', 'POST', '/api/cadastros', { name: 'Fila Teste Silva', phone1: '11 92222-3001', origin: 'indicacao', relationship: 'lead' });
+    const H = 3600e3;
+    const t1 = await call('c1', 'POST', '/api/tarefas', { contact_id: lead.data.id, type: 'ligar', title: 'Ligar para apresentar a simulação', due_at: new Date(Date.now() - 30 * H).toISOString() });
+    const t2 = await call('c1', 'POST', '/api/tarefas', { contact_id: lead.data.id, type: 'retorno', title: 'Retorno combinado', due_at: new Date(Date.now() - 2 * H).toISOString() });
+    const t3 = await call('c1', 'POST', '/api/tarefas', { contact_id: lead.data.id, type: 'documentacao', title: 'Pedir documentos', due_at: new Date(Date.now() + 5 * H).toISOString() });
+    // Reunião amanhã sem confirmação
+    const m = await call('c1', 'POST', '/api/tarefas', { contact_id: lead.data.id, type: 'reuniao', title: '[R1] Fila Teste', due_at: new Date(Date.now() + 20 * H).toISOString() });
+    appDb.prepare("UPDATE tasks SET meeting_kind = 'r1', ends_at = ?, meeting_url = 'https://meet.google.com/aaa-bbbb-ccc' WHERE id = ?").run(new Date(Date.now() + 21 * H).toISOString(), m.data.id);
+    // Escopo: o especialista vê só a fila dele; a equipe toda é da liderança
+    assert.equal((await call('c1', 'GET', '/api/central?assigned_to=todos')).status, 403);
+    assert.equal((await call('c1', 'GET', `/api/central?assigned_to=${await userId('c2@t.com')}`)).status, 403);
+    let d = (await call('c1', 'GET', '/api/central')).data;
+    const mine = d.items.filter((i) => i.contact_id === lead.data.id);
+    const k = (key) => mine.find((i) => i.key === key);
+    assert.equal(k(`task:${t1.data.id}`).category, 'ligacao');
+    assert.equal(k(`task:${t3.data.id}`).category, 'tarefa');
+    const conf = k(`confirmacao:${m.data.id}`);
+    assert.ok(conf, 'reunião a confirmar');
+    assert.match(conf.wa_text, /confirmar a nossa reunião amanhã/);
+    assert.match(conf.wa_text, /meet\.google\.com\/aaa-bbbb-ccc/);
+    // Ordem: atrasadas primeiro, da mais estourada para a menos; depois as próximas
+    const order = d.items.map((i) => i.key);
+    assert.ok(order.indexOf(`task:${t1.data.id}`) < order.indexOf(`task:${t2.data.id}`), 'a mais atrasada vem antes');
+    assert.ok(order.indexOf(`task:${t2.data.id}`) < order.indexOf(`task:${t3.data.id}`), 'atrasada antes da próxima');
+    assert.ok(d.items.every((i, idx) => idx === 0 || !(i.overdue && !d.items[idx - 1].overdue)), 'nenhuma atrasada depois de uma em dia');
+    assert.ok(d.kpis.atrasadas >= 2);
+    // WhatsApp pronto enviado pela Central: vai pelo número do especialista, fica no histórico e conclui a tarefa
+    const sent = await call('c1', 'POST', '/api/central/whatsapp', { contact_id: lead.data.id, body: k(`task:${t1.data.id}`).wa_text, task_id: t1.data.id });
+    assert.equal(sent.status, 200, JSON.stringify(sent.data));
+    assert.equal(sent.data.sent, true);
+    assert.equal(appDb.prepare('SELECT status FROM tasks WHERE id = ?').get(t1.data.id).status, 'concluida');
+    assert.equal(appDb.prepare('SELECT instance_id FROM wa_conversations WHERE id = ?').get(sent.data.conversation_id).instance_id, inst.data.id);
+    assert.ok(appDb.prepare("SELECT 1 FROM activities WHERE contact_id = ? AND type = 'mensagem_enviada'").get(lead.data.id), 'no histórico do lead');
+    // Pedido de confirmação: o item passa a "aguardando o cliente"; confirmada, vira reunião confirmada
+    await call('c1', 'POST', '/api/central/whatsapp', { contact_id: lead.data.id, body: conf.wa_text, confirm_meeting_id: m.data.id });
+    d = (await call('c1', 'GET', '/api/central')).data;
+    assert.equal(d.items.find((i) => i.key === `confirmacao:${m.data.id}`).waiting, true);
+    assert.equal(appDb.prepare('SELECT status FROM tasks WHERE id = ?').get(m.data.id).status, 'pendente', 'a reunião continua pendente');
+    await call('c1', 'POST', `/api/reunioes/${m.data.id}/confirmar`, {});
+    d = (await call('c1', 'GET', '/api/central')).data;
+    assert.ok(d.items.some((i) => i.key === `reuniao:${m.data.id}`));
+    // Reunião que já passou: registrar o resultado; não compareceu vira follow-up para remarcar
+    appDb.prepare('UPDATE tasks SET due_at = ?, ends_at = ? WHERE id = ?').run(new Date(Date.now() - 3 * H).toISOString(), new Date(Date.now() - 2 * H).toISOString(), m.data.id);
+    d = (await call('c1', 'GET', '/api/central')).data;
+    assert.equal(d.items.find((i) => i.key === `resultado:${m.data.id}`).overdue, true);
+    await call('c1', 'PATCH', `/api/tarefas/${t2.data.id}`, { action: 'concluir', notes: 'feito' });
+    await call('c1', 'PATCH', `/api/tarefas/${t3.data.id}`, { action: 'concluir', notes: 'feito' });
+    await call('c1', 'POST', `/api/reunioes/${m.data.id}/resultado`, { result: 'nao_compareceu' });
+    // As mensagens trocadas antes da reunião (a reunião foi "voltada no tempo" acima) ficam antes dela
+    appDb.prepare('UPDATE activities SET occurred_at = ? WHERE contact_id = ?').run(new Date(Date.now() - 5 * H).toISOString(), lead.data.id);
+    d = (await call('c1', 'GET', '/api/central')).data;
+    const ns = d.items.find((i) => i.key === `follow:${m.data.id}`);
+    assert.ok(ns, 'follow-up de quem não compareceu');
+    assert.equal(ns.no_show, true);
+    assert.match(ns.wa_text, /Vamos remarcar/);
+    // Retorno de WhatsApp: mensagem do cliente sem resposta entra na fila; respondida, sai
+    const token = appDb.prepare('SELECT webhook_token FROM wa_instances WHERE id = ?').get(inst.data.id).webhook_token;
+    await fetch(`${base}/api/whatsapp/lite/webhook/${token}`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event: 'messages.upsert', data: { key: { remoteJid: '5511922223001@s.whatsapp.net', fromMe: false, id: 'FILA-IN-1' }, pushName: 'Fila', message: { conversation: 'Desculpa, tive um imprevisto. Podemos remarcar?' }, messageTimestamp: Math.floor(Date.now() / 1000) + 3 } }) });
+    d = (await call('c1', 'GET', '/api/central')).data;
+    const w = d.items.find((i) => i.category === 'whatsapp' && i.contact_id === lead.data.id);
+    assert.ok(w, 'WhatsApp esperando resposta');
+    assert.match(w.detail, /imprevisto/);
+    assert.ok(!d.items.some((i) => i.key === `follow:${m.data.id}`), 'o cliente escreveu: o follow-up da reunião sai da fila');
+    await call('c1', 'POST', `/api/whatsapp/conversas/${w.conversation_id}/mensagens`, { body: 'Claro! Que tal amanhã às 10h?' });
+    d = (await call('c1', 'GET', '/api/central')).data;
+    assert.ok(!d.items.some((i) => i.key === w.key), 'respondida, sai da fila');
+    // Mensagem pelo WhatsApp do celular (sem número no CRM): registra e conclui
+    const t4 = await call('c1', 'POST', '/api/tarefas', { contact_id: lead.data.id, type: 'follow_up', title: 'Follow-up', due_at: new Date(Date.now() - H).toISOString() });
+    assert.equal((await call('c1', 'POST', '/api/central/feito', { contact_id: lead.data.id, task_id: t4.data.id, notes: 'Mandei pelo celular' })).status, 200);
+    assert.equal(appDb.prepare('SELECT status FROM tasks WHERE id = ?').get(t4.data.id).status, 'concluida');
+    // Liderança vê a equipe toda
+    await call('c1', 'POST', '/api/tarefas', { contact_id: lead.data.id, type: 'ligar', title: 'Ligar de novo', due_at: new Date(Date.now() + H).toISOString() });
+    const team = (await call('admin', 'GET', '/api/central?assigned_to=todos')).data;
+    assert.equal(team.owners, 'todos');
+    assert.ok(team.items.some((i) => i.assigned_to === c1));
+  } finally {
+    await call('c1', 'DELETE', `/api/whatsapp/lite/instancias/${inst.data.id}`);
+    await call('admin', 'PUT', '/api/whatsapp/lite/config', { sandbox: false });
+  }
+});

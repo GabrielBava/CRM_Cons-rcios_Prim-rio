@@ -127,6 +127,8 @@ function assign(db, user, contactId, toUser, method) {
   insertActivity(db, { contact_id: c.id, type: 'cadastro', notes: `Cadastro distribuído ${label} para ${toName}.`, user_id: user?.id ?? null });
   audit(db, user, 'contact', c.id, 'distribuido', { para: toName, metodo: method }, c.id);
   require('./notifications').notify(db, toUser, { kind: 'lead_distribuido', level: 'warn', title: `Novo lead para você: ${c.name}`, body: `Origem: ${optionLabel(db, 'origem', c.origin) || 'não informada'}. Faça o primeiro contato em até ${hours >= 1 ? `${hours} hora(s)` : `${Math.round(hours * 60)} minutos`}.`, link: `#/leads/${c.id}`, exclude: user?.id });
+  // Aviso por WhatsApp para o responsável (se ligado em Integrações › Avisos por WhatsApp)
+  require('./waautomation').enqueue(db, 'novo_lead', { contactId: c.id, userId: toUser, byUserId: user?.id ?? null });
 }
 
 /** Distribui os cadastros escolhidos para um especialista ou pela roleta. */
