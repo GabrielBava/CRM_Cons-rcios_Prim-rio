@@ -3730,6 +3730,10 @@ test('Avisos por WhatsApp: novo lead e R1 agendada para o responsável, pelo nú
     assert.equal((await call('admin', 'PUT', '/api/whatsapp/avisos', { new_lead: { template: '  ' } })).status, 400);
     const cfg = await call('admin', 'PUT', '/api/whatsapp/avisos', { enabled: true, instance_id: inst.data.id });
     assert.equal(cfg.status, 200, JSON.stringify(cfg.data));
+    assert.equal(cfg.data.config.skip_self, false, 'por padrão o próprio responsável também recebe');
+    assert.equal(cfg.data.config.r1.r2, true, 'R2 também avisa');
+    assert.equal(cfg.data.recipients.find((u) => u.id === c1).number, '5551988880001');
+    assert.equal(cfg.data.recipients.find((u) => u.id === c1).source, 'WhatsApp comercial');
     assert.match(cfg.data.config.new_lead.template, /NOVO LEAD NO CRM/);
     assert.match(cfg.data.config.r1.template, /NOVA R1 AGENDADA/);
     assert.ok(cfg.data.vars.novo_lead.some(([k]) => k === 'origem_campanha'));
@@ -3744,9 +3748,19 @@ test('Avisos por WhatsApp: novo lead e R1 agendada para o responsável, pelo nú
     assert.match(n.body, /\*Nome:\* Paula Aviso/);
     assert.match(n.body, /\*Campanha:\* Consórcio Imóvel/);
     assert.doesNotMatch(n.body, /\{\{/, 'todas as variáveis trocadas');
-    // O próprio especialista cadastrando o lead dele: sem aviso (opção padrão)
+    // O próprio especialista cadastrando o lead dele: também recebe (padrão); com a opção marcada, fica registrado sem envio
     const own = await call('c1', 'POST', '/api/cadastros', { name: 'Lead Do Proprio', phone1: '11 91111-2003', origin: 'indicacao', relationship: 'lead' });
-    assert.equal(logOf('novo_lead', own.data.id).length, 0);
+    assert.equal(logOf('novo_lead', own.data.id)[0].status, 'simulada');
+    await call('admin', 'PUT', '/api/whatsapp/avisos', { skip_self: true });
+    const own2 = await call('c1', 'POST', '/api/cadastros', { name: 'Lead Do Proprio Dois', phone1: '11 91111-2013', origin: 'indicacao', relationship: 'lead' });
+    assert.equal(logOf('novo_lead', own2.data.id)[0].status, 'ignorado');
+    await call('admin', 'PUT', '/api/whatsapp/avisos', { skip_self: false });
+    // WhatsApp comercial em qualquer formato (+55, 0 + DDD, espaços)
+    const { waNumber } = require('../server/services/waautomation');
+    assert.equal(waNumber('+55 (51) 98888-0001'), '5551988880001');
+    assert.equal(waNumber('051 98888-0001'), '5551988880001');
+    assert.equal(waNumber('51 8888-0001'), '555188880001');
+    assert.equal(waNumber('123'), null);
     // R1 agendada pelo líder na agenda do especialista: aviso com data, horário e link
     await triage('c1', lead.data.id);
     const start = new Date(Date.now() + 3 * 86400000);
@@ -3786,6 +3800,12 @@ test('Avisos por WhatsApp: novo lead e R1 agendada para o responsável, pelo nú
     const [x] = logOf('novo_lead', lead2.data.id);
     assert.equal(x.status, 'falhou');
     assert.match(x.error, /não está conectado/);
+    // Configuração salva na primeira versão (sem avisar o próprio responsável nem a R2): passa a avisar, mantendo os modelos
+    appDb.prepare("UPDATE settings SET value = ? WHERE key = 'wa_automations'").run(JSON.stringify({ enabled: true, skip_self: true, r1: { enabled: true, r2: false, template: 'Modelo {{nome_lead}}' } }));
+    const mig = (await call('admin', 'GET', '/api/whatsapp/avisos')).data.config;
+    assert.equal(mig.skip_self, false);
+    assert.equal(mig.r1.r2, true);
+    assert.equal(mig.r1.template, 'Modelo {{nome_lead}}');
   } finally {
     await call('admin', 'PUT', '/api/whatsapp/avisos', { enabled: false });
     appDb.prepare("UPDATE wa_instances SET status = 'conectado' WHERE id = ?").run(inst.data.id);

@@ -13,29 +13,41 @@ const { badRequest, forbidden, nowIso } = require('../util');
 const TZ = 'America/Sao_Paulo';
 const DEFAULT_NEW_LEAD = '🚨 *NOVO LEAD NO CRM!*\n\n*Nome:* {{nome_lead}}\n*Origem:* {{origem}}\n*Campanha:* {{campanha}}';
 const DEFAULT_R1 = '📅 *NOVA R1 AGENDADA!*\n\n*Lead:* {{nome_lead}}\n*Data:* {{data_reuniao}}\n*Horário:* {{horario_reuniao}}\n🔗 *Link da Call:* {{link_reuniao}}';
+// rev 2: o responsável recebe o aviso mesmo quando ele próprio cadastrou o lead ou agendou a reunião, e a R2 também avisa
+const REV = 2;
 const DEFAULTS = {
+  rev: REV,
   enabled: false,
   instance_id: null,
-  skip_self: true,
+  skip_self: false,
   new_lead: { enabled: true, template: DEFAULT_NEW_LEAD },
-  r1: { enabled: true, r2: false, template: DEFAULT_R1 },
+  r1: { enabled: true, r2: true, template: DEFAULT_R1 },
 };
 const KINDS = { novo_lead: 'Novo lead', r1_agendada: 'R1 agendada', novo_lead_teste: 'Teste · novo lead', r1_agendada_teste: 'Teste · R1 agendada' };
 const VARS = {
   novo_lead: [['nome_lead', 'nome do lead'], ['origem', 'origem'], ['campanha', 'campanha'], ['origem_campanha', 'origem · campanha'], ['telefone_lead', 'telefone do lead'], ['responsavel', 'responsável'], ['link_lead', 'link do lead no CRM']],
   r1_agendada: [['nome_lead', 'nome do lead'], ['data_reuniao', 'data'], ['horario_reuniao', 'horário'], ['link_reuniao', 'link da call'], ['tipo_reuniao', 'R1 ou R2'], ['telefone_lead', 'telefone do lead'], ['responsavel', 'responsável'], ['link_lead', 'link do lead no CRM']],
 };
-const STATUS_LABEL = { pendente: 'Na fila', enviando: 'Enviando', enviada: 'Enviada', simulada: 'Enviada (modo de teste)', falhou: 'Falhou', sem_numero: 'Responsável sem WhatsApp', sem_canal: 'Sem número para enviar' };
+const STATUS_LABEL = {
+  pendente: 'Na fila', enviando: 'Enviando', enviada: 'Enviada', simulada: 'Enviada (modo de teste)', falhou: 'Falhou', sem_numero: 'Responsável sem WhatsApp no perfil',
+  sem_canal: 'Sem número para enviar', ignorado: 'Não enviado: o próprio responsável fez a ação (opção marcada)',
+};
 const MAX_TRIES = 3;
 
 const isLead = (u) => u.role === 'admin' || u.role === 'gestor';
 const digits = (v) => String(v || '').replace(/\D/g, '');
 
 function config(db) {
-  const s = getSetting(db, 'wa_automations') || {};
+  const s = { ...(getSetting(db, 'wa_automations') || {}) };
+  // Configuração da primeira versão: passa a avisar também o próprio responsável e a R2 (pedido da Vero)
+  if ((s.rev || 1) < REV) {
+    delete s.skip_self;
+    if (s.r1) s.r1 = { ...s.r1, r2: true };
+  }
   return {
     ...DEFAULTS,
     ...s,
+    rev: REV,
     new_lead: { ...DEFAULTS.new_lead, ...(s.new_lead || {}) },
     r1: { ...DEFAULTS.r1, ...(s.r1 || {}) },
   };
@@ -50,13 +62,23 @@ function senderInstance(db, cfg = config(db)) {
     || null;
 }
 
-/** WhatsApp do usuário no formato do WhatsApp (55 + DDD + número). */
+/** Número no formato do WhatsApp (55 + DDD + número), aceitando +55, 0 + DDD e espaços. */
+function waNumber(v) {
+  let d = digits(v).replace(/^0+/, '');
+  if (d.length > 11 && d.startsWith('55')) return d.length <= 13 ? d : null;
+  if (d.length === 10 || d.length === 11) return `55${d}`;
+  return null;
+}
+/** WhatsApp do usuário: o WhatsApp comercial de Meu perfil; sem ele, o telefone. */
 function userNumber(db, userId) {
   const u = db.prepare('SELECT whatsapp, phone FROM users WHERE id = ?').get(Number(userId));
-  const d = digits(u?.whatsapp || u?.phone);
-  if (d.length < 10) return null;
-  return d.length <= 11 ? `55${d}` : d;
+  return waNumber(u?.whatsapp) || waNumber(u?.phone);
 }
+/** Mesmo número (com e sem o nono dígito). */
+const sameNumber = (a, b) => {
+  const c = require('./whatsapp').waCandidates(digits(a));
+  return !!b && c.includes(digits(b));
+};
 
 const fill = (template, vars) => String(template || '').replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (m, k) => (vars[k.toLowerCase()] ?? m));
 
@@ -109,7 +131,6 @@ function enqueue(db, kind, { contactId = null, taskId = null, userId, byUserId =
     if (!cfg.enabled || !userId) return null;
     if (kind === 'novo_lead' && !cfg.new_lead.enabled) return null;
     if (kind === 'r1_agendada' && !cfg.r1.enabled) return null;
-    if (cfg.skip_self && byUserId && Number(byUserId) === Number(userId)) return null;
     let vars;
     if (kind === 'r1_agendada') {
       const t = db.prepare('SELECT meeting_kind FROM tasks WHERE id = ?').get(Number(taskId));
@@ -123,8 +144,11 @@ function enqueue(db, kind, { contactId = null, taskId = null, userId, byUserId =
     if (dup) return null;
     const body = fill(kind === 'r1_agendada' ? cfg.r1.template : cfg.new_lead.template, vars).trim();
     const phone = userNumber(db, userId);
+    // Opção "não avisar quando o próprio responsável fez a ação": fica registrado, para ninguém achar que falhou
+    const self = cfg.skip_self && byUserId && Number(byUserId) === Number(userId);
+    const status = self ? 'ignorado' : phone ? 'pendente' : 'sem_numero';
     const r = db.prepare('INSERT INTO wa_automation_log (kind, contact_id, task_id, user_id, phone, body, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(kind, contactId ? Number(contactId) : null, taskId ? Number(taskId) : null, Number(userId), phone, body, phone ? 'pendente' : 'sem_numero', nowIso());
+      .run(kind, contactId ? Number(contactId) : null, taskId ? Number(taskId) : null, Number(userId), phone, body, status, nowIso());
     return Number(r.lastInsertRowid);
   } catch (e) {
     // O aviso nunca impede o cadastro ou o agendamento
@@ -175,13 +199,18 @@ function view(db, user) {
   const inst = senderInstance(db, cfg);
   const instances = db.prepare("SELECT id, name, phone, status FROM wa_instances ORDER BY status = 'conectado' DESC, name").all()
     .map((i) => ({ id: i.id, label: `${i.name}${i.phone ? ` · ${i.phone}` : ''}${i.status === 'conectado' ? '' : ' (desconectado)'}`, connected: i.status === 'conectado' }));
-  const missing = db.prepare("SELECT id, name FROM users WHERE active = 1 AND role IN ('consultor','gestor') AND COALESCE(whatsapp, '') = '' AND COALESCE(phone, '') = '' ORDER BY name").all();
+  const team = db.prepare("SELECT id, name, role, whatsapp, phone FROM users WHERE active = 1 AND role IN ('consultor','gestor','admin') ORDER BY name").all()
+    .map((u) => {
+      const number = waNumber(u.whatsapp) || waNumber(u.phone);
+      return { id: u.id, name: u.name, number, source: waNumber(u.whatsapp) ? 'WhatsApp comercial' : number ? 'telefone' : null, same_as_sender: !!(number && inst?.phone && sameNumber(number, inst.phone)) };
+    });
+  const missing = team.filter((u) => !u.number).map((u) => ({ id: u.id, name: u.name }));
   const recent = db.prepare(`SELECT l.id, l.kind, l.status, l.error, l.created_at, l.sent_at, u.name AS user_name, c.name AS contact_name
     FROM wa_automation_log l LEFT JOIN users u ON u.id = l.user_id LEFT JOIN contacts c ON c.id = l.contact_id ORDER BY l.id DESC LIMIT 15`).all()
     .map((r) => ({ ...r, kind_label: KINDS[r.kind] || r.kind, status_label: STATUS_LABEL[r.status] || r.status }));
   return {
-    config: cfg, can_edit: user.role === 'admin', instances, sender: inst ? { id: inst.id, name: inst.name, connected: inst.status === 'conectado' } : null,
-    users_without_number: missing, recent, vars: VARS, defaults: { new_lead: DEFAULT_NEW_LEAD, r1: DEFAULT_R1 },
+    config: cfg, can_edit: user.role === 'admin', instances, sender: inst ? { id: inst.id, name: inst.name, phone: inst.phone, connected: inst.status === 'conectado' } : null,
+    recipients: team, users_without_number: missing, recent, vars: VARS, defaults: { new_lead: DEFAULT_NEW_LEAD, r1: DEFAULT_R1 },
   };
 }
 
@@ -237,4 +266,4 @@ async function sendTest(db, user, data = {}) {
   return { ok: true, simulated: !!r.simulated, to: phone, body };
 }
 
-module.exports = { config, enqueue, flush, isOwnNotice, view, save, sendTest, fill, DEFAULT_NEW_LEAD, DEFAULT_R1 };
+module.exports = { config, enqueue, flush, isOwnNotice, view, save, sendTest, fill, waNumber, DEFAULT_NEW_LEAD, DEFAULT_R1 };

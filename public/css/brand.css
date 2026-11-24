@@ -2024,6 +2024,8 @@ html.nav-collapsed { --sidebar-w: 74px; }
 .notice-vars { display: flex; flex-wrap: wrap; gap: 6px; }
 .notice-vars .chip-sm { cursor: pointer; border: 1px dashed var(--border); background: var(--bg-card-2); }
 .notice-acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.notice-who { list-style: none; margin: 0 0 12px; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px 16px; }
+.notice-who li { display: flex; flex-direction: column; font-size: var(--fs-sm); }
 .lite-check { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .lite-check li { display: flex; gap: 10px; align-items: flex-start; line-height: 1.4; overflow-wrap: anywhere; }
 .lite-check li span { flex: none; display: inline-flex; margin-top: 1px; }

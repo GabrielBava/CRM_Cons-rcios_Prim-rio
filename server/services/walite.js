@@ -390,6 +390,14 @@ async function sendSystemText(db, instId, number, text) {
   const cfg = liteConfig(db);
   const inst = instRow(db, instId);
   if (!inst) throw badRequest('Número de envio não encontrado.');
+  // O CRM acha que caiu (o aviso de conexão do conector pode não ter chegado): confere no conector antes de desistir
+  if (inst.status !== 'conectado' && cfg.configured) {
+    const st = await evo(cfg, 'GET', `/instance/connectionState/${inst.instance_key}`, null, 10000).catch(() => null);
+    if ((st?.instance?.state || st?.state) === 'open') {
+      await markConnected(db, cfg, inst);
+      inst.status = 'conectado';
+    }
+  }
   if (inst.status !== 'conectado') throw badRequest(`O número "${inst.name}" não está conectado ao WhatsApp.`);
   if (!cfg.configured) {
     if (cfg.sandbox) return { simulated: true, wamid: null };

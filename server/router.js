@@ -758,13 +758,16 @@ function createRouter(db) {
   }
 
   /** Fila de distribuição: a cada 15 minutos a roleta distribui os leads que ainda estão sem especialista. */
-  function queueSweep() {
+  async function queueSweep() {
+    let r = null;
     try {
-      return require('./services/distribution').queueSweep(db);
+      r = require('./services/distribution').queueSweep(db);
     } catch (e) {
       console.error('Falha na distribuição automática da fila:', e.message);
-      return null;
     }
+    // Leads distribuídos pela rotina: os avisos por WhatsApp saem na hora
+    await waauto.flush(db).catch((e) => console.error('Falha ao enviar os avisos por WhatsApp:', e.message));
+    return r;
   }
 
   /** Rotina de manutenção: expiração de propostas vencidas. */

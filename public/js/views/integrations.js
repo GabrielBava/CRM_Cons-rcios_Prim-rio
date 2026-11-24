@@ -2,7 +2,7 @@
 // pessoal (WhatsApp Lite, Instagram, LinkedIn e Google Agenda); o líder e o administrador veem todas. O WhatsApp Lite
 // abre a janela própria: números conectados por QR Code, nova instância, QR e acesso dos membros.
 import { get, post, put, patch, del } from '../api.js';
-import { html, render, on, state, toast, toastError, confirmDialog, modal, relTime, $ } from '../ui.js';
+import { html, render, on, state, toast, toastError, confirmDialog, modal, relTime, fmtPhone, $ } from '../ui.js';
 import { icon } from '../icons.js';
 
 const TONE = { ativo: 'ok', teste: 'warn', aguardando: 'warn', disponivel: 'idle', nao_configurado: 'off', erro: 'err', em_breve: 'off' };
@@ -387,20 +387,23 @@ async function noticesDialog(onClose) {
         <p class="small muted">O responsável recebe no WhatsApp dele um aviso quando chega um <strong>novo lead</strong> para ele (cadastro, landing page, roleta ou agente de IA) e quando uma <strong>R1 é agendada</strong>. O aviso sai pelo número do WhatsApp Lite escolhido e vai para o WhatsApp cadastrado em Meu perfil.</p>
         ${!d.instances.length ? html`<div class="alert">Conecte primeiro um número no <strong>WhatsApp Lite</strong> (QR Code): é por ele que os avisos saem.</div>` : d.sender && !d.sender.connected ? html`<div class="alert">O número ${d.sender.name} está desconectado: os avisos ficam na fila até ele voltar (ou escolha outro número).</div>` : ''}
         ${d.users_without_number.length ? html`<div class="alert small">Sem WhatsApp no perfil (não recebem os avisos): <strong>${d.users_without_number.map((u) => u.name).join(', ')}</strong>. Cada um cadastra em Meu perfil › WhatsApp comercial.</div>` : ''}
+        ${d.recipients.some((u) => u.same_as_sender) ? html`<div class="alert small">${d.recipients.filter((u) => u.same_as_sender).map((u) => u.name).join(', ')}: o WhatsApp do perfil é o mesmo número que envia os avisos. O aviso chega na conversa "Você" (consigo mesmo), e o WhatsApp não mostra notificação. Para receber como mensagem normal, use outro número para enviar os avisos ou cadastre outro WhatsApp no perfil.</div>` : ''}
         <form data-form="notices" class="grid" novalidate>
           <label class="check full"><input type="checkbox" name="enabled" ${c.enabled ? 'checked' : ''} ${ro}> <strong>Ligar os avisos por WhatsApp</strong></label>
           <div class="field"><label>Número que envia os avisos</label><select name="instance_id" ${ro}><option value="">Automático (número central do agente ou o primeiro conectado)</option>${d.instances.map((i) => html`<option value="${i.id}" ${Number(c.instance_id) === i.id ? 'selected' : ''}>${i.label}</option>`)}</select></div>
-          <label class="check"><input type="checkbox" name="skip_self" ${c.skip_self ? 'checked' : ''} ${ro}> Não avisar quando o próprio responsável cadastrou o lead ou agendou a R1</label>
+          <label class="check"><input type="checkbox" name="skip_self" ${c.skip_self ? 'checked' : ''} ${ro}> Não avisar quando o próprio responsável cadastrou o lead ou agendou a reunião</label>
           <fieldset class="full notice-box"><legend><label class="check"><input type="checkbox" name="new_enabled" ${c.new_lead.enabled ? 'checked' : ''} ${ro}> Novo lead no CRM</label></legend>
             <textarea name="new_template" rows="6" maxlength="1000" ${ro}>${c.new_lead.template}</textarea>${vars('novo_lead', 'new_template')}
             ${d.can_edit ? html`<div class="notice-acts"><button type="button" class="btn small" data-test="novo_lead">Enviar teste para mim</button><button type="button" class="btn small ghost" data-reset="new_template">Voltar ao modelo padrão</button></div>` : ''}</fieldset>
           <fieldset class="full notice-box"><legend><label class="check"><input type="checkbox" name="r1_enabled" ${c.r1.enabled ? 'checked' : ''} ${ro}> R1 agendada</label></legend>
             <textarea name="r1_template" rows="7" maxlength="1000" ${ro}>${c.r1.template}</textarea>${vars('r1_agendada', 'r1_template')}
-            <label class="check"><input type="checkbox" name="r1_r2" ${c.r1.r2 ? 'checked' : ''} ${ro}> Avisar também quando a R2 for agendada</label>
+            <label class="check"><input type="checkbox" name="r1_r2" ${c.r1.r2 ? 'checked' : ''} ${ro}> Avisar também quando a R2 for agendada (o modelo serve para as duas; use {{tipo_reuniao}} para mostrar R1 ou R2)</label>
             ${d.can_edit ? html`<div class="notice-acts"><button type="button" class="btn small" data-test="r1_agendada">Enviar teste para mim</button><button type="button" class="btn small ghost" data-reset="r1_template">Voltar ao modelo padrão</button></div>` : ''}</fieldset>
           <p class="hint full">Use *texto* para negrito no WhatsApp. As variáveis entre {{chaves}} são trocadas pelos dados do lead e da reunião.</p>
           ${d.can_edit ? html`<div class="full"><button type="submit" class="btn primary">Salvar</button></div>` : html`<p class="hint full">Só o administrador altera estas configurações.</p>`}
         </form>
+        <h3 class="agent-h">Quem recebe</h3>
+        <ul class="notice-who">${d.recipients.map((u) => html`<li><strong>${u.name}</strong><small class="${u.number ? 'muted' : 'warn-text'}">${u.number ? `${fmtPhone(u.number)} · ${u.source}` : 'Sem WhatsApp no perfil'}${u.same_as_sender ? ' · mesmo número que envia' : ''}</small></li>`)}</ul>
         ${d.recent.length ? html`<h3 class="agent-h">Últimos avisos</h3><ul class="agent-log">${d.recent.map((r) => html`<li><span><b>${r.kind_label}</b>${r.contact_name ? ` · ${r.contact_name}` : ''} → ${r.user_name || '—'} <small class="muted">· ${r.status_label}${r.error ? ` (${r.error})` : ''}</small></span><small class="muted">${new Date(r.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</small></li>`)}</ul>` : ''}
       </div>`);
   };
