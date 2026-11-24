@@ -278,10 +278,22 @@ chmod 755 /usr/local/bin/vero-whatsapp
 
 # ---------------------------------------------------------------- subir
 etapa "Baixando e subindo o conector (a primeira vez leva alguns minutos)"
+# Se o Docker Hub não responder, usa o espelho do Google (mirror.gcr.io), que tem as mesmas imagens
+usar_espelho() {
+  [ -f /etc/docker/daemon.json ] && grep -q registry-mirrors /etc/docker/daemon.json && return 0
+  [ -s /etc/docker/daemon.json ] && return 1
+  mkdir -p /etc/docker
+  echo '{ "registry-mirrors": ["https://mirror.gcr.io"] }' > /etc/docker/daemon.json
+  systemctl restart docker && sleep 3
+}
 BAIXOU=0
 for tentativa in 1 2 3; do
   if docker compose pull -q; then BAIXOU=1; break; fi
-  [ "$tentativa" = 3 ] || { echo "O download falhou; tentando de novo em 20 segundos ($tentativa de 3)..."; sleep 20; }
+  if [ "$tentativa" != 3 ]; then
+    echo "O download falhou; tentando de novo em 20 segundos ($tentativa de 3)..."
+    [ "$tentativa" = 2 ] && usar_espelho && echo "Usando o espelho do Google para baixar os programas."
+    sleep 20
+  fi
 done
 [ "$BAIXOU" = 1 ] || falha "não foi possível baixar os programas do conector. Rode o instalador de novo em alguns minutos."
 docker compose up -d --remove-orphans
