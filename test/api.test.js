@@ -3087,6 +3087,7 @@ test('WhatsApp Lite (QR Code): instância no servidor Evolution, conexão, mensa
   const calls = [];
   let state = 'connecting';
   let hookFound = null;
+  let findRecords = [];
   const fake = http.createServer((req, res) => {
     let raw = '';
     req.on('data', (c) => (raw += c));
@@ -3099,6 +3100,7 @@ test('WhatsApp Lite (QR Code): instância no servidor Evolution, conexão, mensa
       if (u === '/instance/create') return send({ instance: { instanceName: body.instanceName, status: 'created' }, hash: 'tok', qrcode: { base64: 'data:image/png;base64,QUFB', code: '2@x' } });
       if (u.startsWith('/webhook/set/')) return send({ webhook: body.webhook });
       if (u.startsWith('/webhook/find/')) return send(hookFound);
+      if (u.startsWith('/chat/findMessages/')) return send({ messages: { total: findRecords.length, pages: 1, currentPage: 1, records: findRecords } });
       if (u.startsWith('/instance/connect/')) return send({ base64: 'data:image/png;base64,QkJC', code: '2@y' });
       if (u.startsWith('/instance/connectionState/')) return send({ instance: { state } });
       if (u.startsWith('/instance/fetchInstances')) return send([{ ownerJid: '5551988887777@s.whatsapp.net', profileName: 'Vero Teste' }]);
@@ -3270,6 +3272,39 @@ test('WhatsApp Lite (QR Code): instância no servidor Evolution, conexão, mensa
     assert.equal((await call('c1', 'POST', `/api/whatsapp/lite/instancias/${inst.data.id}/conferir`)).data.fixed, false, 'endereço certo: não recadastra');
     assert.ok(!calls.some((c) => c.url.startsWith('/webhook/set/')));
     assert.equal((await call('c2', 'POST', `/api/whatsapp/lite/instancias/${inst.data.id}/conferir`)).status, 403);
+    // Sem o aviso do conector (webhook fora do ar), o CRM busca no conector as respostas e os status de entrega ao
+    // mostrar a conversa ou a lista, sem repetir mensagens e sem contar duas vezes as que não entram
+    const out2 = await call('c1', 'POST', `/api/whatsapp/conversas/${conv.id}/mensagens`, { body: 'Conseguiu ver a simulação?' });
+    const nowS = Math.floor(Date.now() / 1000);
+    findRecords = [
+      { key: { id: 'SYNC-OUT', remoteJid: '5511938175701@s.whatsapp.net', fromMe: true }, messageType: 'conversation', message: { conversation: 'Conseguiu ver a simulação?' }, messageTimestamp: nowS - 30, MessageUpdate: [{ status: 'DELIVERY_ACK' }, { status: 'READ' }] },
+      { key: { id: out2.data.wamid, remoteJid: '5511938175701@s.whatsapp.net', fromMe: true }, messageType: 'conversation', message: { conversation: 'Conseguiu ver a simulação?' }, messageTimestamp: nowS - 20, MessageUpdate: [{ status: 'SERVER_ACK' }, { status: 'DELIVERY_ACK' }] },
+      { key: { id: 'SYNC-IN-1', remoteJid: '555511938175701@lid', remoteJidAlt: '5511938175701@s.whatsapp.net', fromMe: false }, pushName: 'Cliente', messageType: 'conversation', message: { conversation: 'Vi sim, gostei!' }, messageTimestamp: nowS - 10 },
+      { key: { id: 'SYNC-IN-2', remoteJid: '5521955554444@s.whatsapp.net', fromMe: false }, pushName: 'Outro', messageType: 'conversation', message: { conversation: 'número fora do CRM' }, messageTimestamp: nowS - 5 },
+    ];
+    const ignoredBefore = appDb.prepare('SELECT ignored_count FROM wa_instances WHERE id = ?').get(inst.data.id).ignored_count;
+    appDb.prepare('UPDATE wa_instances SET synced_at = NULL WHERE id = ?').run(inst.data.id);
+    const synced = (await call('c1', 'GET', `/api/whatsapp/conversas/${conv.id}`)).data;
+    assert.ok(calls.some((c) => c.url.startsWith('/chat/findMessages/') && c.body.where.messageTimestamp.gte && c.body.where.messageTimestamp.lte), 'busca por período');
+    assert.equal(synced.messages.filter((m) => m.body === 'Vi sim, gostei!').length, 1, 'resposta do lead buscada no conector');
+    assert.equal(synced.messages.find((m) => m.id === out2.data.id).status, 'entregue', 'status de entrega buscado no conector');
+    assert.equal(synced.messages.filter((m) => m.body === 'Conseguiu ver a simulação?').length, 2, 'mensagem enviada pelo CRM não se repete; a enviada pelo celular entra');
+    assert.equal(appDb.prepare('SELECT ignored_count FROM wa_instances WHERE id = ?').get(inst.data.id).ignored_count, ignoredBefore + 1);
+    appDb.prepare('UPDATE wa_instances SET synced_at = NULL WHERE id = ?').run(inst.data.id);
+    await call('c1', 'GET', '/api/whatsapp/conversas?canal=lite');
+    const again = (await call('c1', 'GET', `/api/whatsapp/conversas/${conv.id}`)).data;
+    assert.equal(again.messages.filter((m) => m.body === 'Vi sim, gostei!').length, 1, 'sem duplicar na segunda busca');
+    assert.equal(appDb.prepare('SELECT ignored_count FROM wa_instances WHERE id = ?').get(inst.data.id).ignored_count, ignoredBefore + 1, 'a mesma mensagem fora do CRM conta uma vez');
+    // Intervalo mínimo entre buscas
+    calls.length = 0;
+    await call('c1', 'GET', `/api/whatsapp/conversas/${conv.id}`);
+    assert.ok(!calls.some((c) => c.url.startsWith('/chat/findMessages/')), 'não busca de novo antes do intervalo');
+    // Conferir recebimento busca na hora e aponta o aviso atrasado (a última mensagem no conector é mais nova que o último aviso)
+    appDb.prepare('UPDATE wa_instances SET last_event_at = ? WHERE id = ?').run(new Date(Date.now() - 3600e3).toISOString(), inst.data.id);
+    const late = (await call('c1', 'POST', `/api/whatsapp/lite/instancias/${inst.data.id}/conferir`)).data;
+    assert.equal(late.sync_ok, true);
+    assert.equal(late.webhook_late, true);
+    findRecords = [];
     // Reconectar também recadastra o endereço de aviso
     calls.length = 0;
     await call('c1', 'POST', `/api/whatsapp/lite/instancias/${inst.data.id}/reconectar`);

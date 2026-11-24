@@ -548,11 +548,19 @@ function createRouter(db) {
     const f = comms.ticketFile(db, user, params.id);
     return sendBinary(res, f.filename, f.mime, f.content);
   });
+  const walite = require('./services/walite');
   add('GET', '/api/whatsapp/status', ({ user, req }) => wa.status(db, user, req));
   add('PUT', '/api/whatsapp/config', ({ user, body }) => wa.saveConfig(db, user, body));
-  add('GET', '/api/whatsapp/conversas', ({ user, query }) => wa.listConversations(db, user, query));
+  // WhatsApp Lite: antes de listar ou mostrar, busca no conector as mensagens que o aviso (webhook) não trouxe
+  add('GET', '/api/whatsapp/conversas', async ({ user, query }) => {
+    await walite.syncAll(db).catch(() => null);
+    return wa.listConversations(db, user, query);
+  });
   add('POST', '/api/whatsapp/conversas', ({ user, body }) => wa.startConversation(db, user, body));
-  add('GET', '/api/whatsapp/conversas/:id', ({ user, params, query }) => wa.getConversation(db, user, params.id, query));
+  add('GET', '/api/whatsapp/conversas/:id', async ({ user, params, query }) => {
+    await walite.syncConversation(db, params.id).catch(() => null);
+    return wa.getConversation(db, user, params.id, query);
+  });
   add('PATCH', '/api/whatsapp/conversas/:id', ({ user, params, body }) => wa.updateConversation(db, user, params.id, body));
   add('POST', '/api/whatsapp/conversas/:id/mensagens', ({ user, params, body }) => wa.sendMessage(db, user, params.id, body), { bodyLimit: 4.5e6 });
   add('GET', '/api/whatsapp/midia/:id', async ({ user, params, res }) => {
@@ -560,7 +568,6 @@ function createRouter(db) {
     return sendBinary(res, f.filename, f.mime, f.content);
   });
   // WhatsApp Lite (QR Code): números conectados pelos usuários num servidor compatível com a Evolution API
-  const walite = require('./services/walite');
   const waagent = require('./services/waagent');
   add('GET', '/api/whatsapp/agente', ({ user }) => waagent.view(db, user));
   add('PUT', '/api/whatsapp/agente', ({ user, body }) => waagent.save(db, user, body));

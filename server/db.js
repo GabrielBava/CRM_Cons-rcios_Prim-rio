@@ -1432,7 +1432,9 @@ const ADDED_COLUMNS = {
     ['lid', 'TEXT']],
   wa_messages: [['media_store_id', 'INTEGER REFERENCES wa_media(id)'], ['duration', 'INTEGER'], ['ai', 'INTEGER NOT NULL DEFAULT 0']],
   // WhatsApp Lite: mensagens que não entraram no CRM (motivo e quando) para o administrador conferir
-  wa_instances: [['ignored_count', 'INTEGER NOT NULL DEFAULT 0'], ['ignored_at', 'TEXT'], ['ignored_reason', 'TEXT'], ['ignored_peer', 'TEXT']],
+  wa_instances: [['ignored_count', 'INTEGER NOT NULL DEFAULT 0'], ['ignored_at', 'TEXT'], ['ignored_reason', 'TEXT'], ['ignored_peer', 'TEXT'],
+    // IDs das últimas mensagens que não entraram (para não contar duas vezes) e última busca de mensagens no conector
+    ['ignored_seen', 'TEXT'], ['synced_at', 'TEXT']],
   contacts: [
     ['rg', 'TEXT'], ['birthplace', 'TEXT'], ['nationality', 'TEXT'], ['sex', 'TEXT'], ['marital_status', 'TEXT'],
     ['property_regime', 'TEXT'], ['mother_name', 'TEXT'], ['income_range', 'TEXT'], ['net_worth_range', 'TEXT'],

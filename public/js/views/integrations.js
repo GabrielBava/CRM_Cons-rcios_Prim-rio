@@ -156,6 +156,9 @@ async function liteManager(onClose) {
       [r.crm_ok, r.crm_ok ? 'O CRM recebe os avisos do conector pelo endereço público.' : r.crm_message],
       [!!i.last_event_at, i.last_event_at ? `Último aviso do conector: ${relTime(i.last_event_at)}.` : 'O conector ainda não mandou nenhum aviso deste número.'],
     ];
+    if (r.sync_ok === false) rows.push([false, `O CRM não conseguiu buscar as mensagens no conector (${r.sync_message}).`]);
+    else if (r.sync_ok) rows.push([true, `O CRM busca as mensagens direto no conector${r.sync_new ? `: ${r.sync_new} mensagem(ns) que faltavam entraram agora` : ''}.`]);
+    if (r.webhook_late) rows.push([false, 'O conector não está conseguindo avisar o CRM na hora: o último aviso é mais antigo que a última mensagem. As respostas aparecem assim mesmo, buscadas a cada poucos segundos com a tela do WhatsApp aberta; para as notificações e o agente de IA responderem na hora, rode o diagnóstico na VPS (vero-whatsapp diagnostico).']);
     if (i.ignored_count) rows.push([false, `${i.ignored_count} mensagem(ns) recebida(s) não entraram no CRM. A última, ${relTime(i.ignored_at)}, de ${i.ignored_who}: ${i.ignored_label}.`]);
     const offerAll = i.only_known && i.ignored_reason === 'fora_do_crm';
     await modal({
