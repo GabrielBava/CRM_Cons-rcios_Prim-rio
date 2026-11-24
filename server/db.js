@@ -1471,6 +1471,8 @@ const ADDED_COLUMNS = {
     ['calendar_owner_id', 'INTEGER REFERENCES users(id)'], ['confirmation_sent_at', 'TEXT'],
     // Reuniões R1 e R2: tipo, remarcação (reunião anterior) e confirmação de presença pelo cliente
     ['meeting_kind', 'TEXT'], ['rescheduled_from', 'INTEGER REFERENCES tasks(id)'], ['confirmed_at', 'TEXT'],
+    // Central de agendas e tarefas: quando o especialista pediu ao cliente a confirmação da reunião (WhatsApp)
+    ['confirm_requested_at', 'TEXT'],
   ],
   products: [
     ['administrator_id', 'INTEGER REFERENCES administrators(id)'], ['plan_code', 'TEXT'], ['admin_fee_pct', 'REAL'], ['reserve_fund_pct', 'REAL'],
@@ -2350,6 +2352,26 @@ CREATE TABLE IF NOT EXISTS wa_agent_log (
 );
 CREATE INDEX IF NOT EXISTS idx_wa_agent_log ON wa_agent_log(conversation_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_wa_agent_log_action ON wa_agent_log(action, created_at);
+
+-- Avisos por WhatsApp para o responsável (novo lead, R1 agendada): fila e registro do envio
+CREATE TABLE IF NOT EXISTS wa_automation_log (
+  id INTEGER PRIMARY KEY,
+  kind TEXT NOT NULL,
+  contact_id INTEGER REFERENCES contacts(id),
+  task_id INTEGER REFERENCES tasks(id),
+  user_id INTEGER REFERENCES users(id),
+  phone TEXT,
+  body TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pendente',
+  error TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  wamid TEXT,
+  created_at TEXT NOT NULL,
+  sent_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_wa_automation_status ON wa_automation_log(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_wa_automation_ref ON wa_automation_log(kind, contact_id, task_id, user_id);
+CREATE INDEX IF NOT EXISTS idx_wa_automation_wamid ON wa_automation_log(wamid);
 
 -- Produtos do lead: oportunidades de cross-sell e up-sell nas 4 áreas (consórcio, planejamento, seguros, investimentos)
 CREATE TABLE IF NOT EXISTS lead_products (

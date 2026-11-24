@@ -1,6 +1,6 @@
 import { get, post, download } from '../api.js';
 import {
-  html, raw, render, $, $$, on, state, selectOptions, opts, toItems, userItems, stageItems, fmtMoney, fmtDateTime, fmtDate, relTime,
+  html, raw, render, $, $$, on, state, selectOptions, opts, toItems, userItems, stageItems, fmtMoney, fmtDateTime, fmtDate, relTime, fmtPhone,
   badge, optoutBadge, optLabel, K, can, toast, toastError, table, empty, fresh, crmTabs, modal, field, fixPlurals, parseMoneyBR, fmtMoneyInput,
 } from '../ui.js';
 import { bindDrawerLinks } from '../drawer.js';
@@ -346,46 +346,41 @@ function board(d, bulk, selected, archived) {
   )}</div><p class="muted small">Clique no nome para abrir o painel do lead sem sair do pipeline. Arraste os cartões entre as etapas: para R1 ou R2 abre o agendamento da reunião; para Perdido, os motivos de perda (MP). Ao arrastar, aparecem as áreas de arquivamento (Nutrição futura e Perdido). NS = não compareceu à reunião; R = reunião remarcada. Fechadas aparecem por ${d.closed_days} dias.</p>`;
 }
 
-const SLA_TONE = { ok: 'ok', atencao: 'warn', estourado: 'danger' };
-const fmtShort = (iso) => `${new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} ${new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
 const scoreTone = (n) => (n >= 70 ? 'hi' : n >= 40 ? 'mid' : 'lo');
 
-/** Marcas de reunião do cartão: NS (amarelo), R (azul), data da R1/R2 e se a R2 já foi marcada. */
-function meetingTags(o) {
+/** Marcas de reunião que pedem atenção no cartão: NS (não compareceu) e R (remarcada). */
+function meetingFlags(o) {
   const m = o.meetings || {};
   const out = [];
-  const one = (k, x) => {
-    if (!x) return;
-    const K = k.toUpperCase();
-    if (x.state === 'no_show') out.push(html`<span class="badge ns" title="${K}: o cliente não compareceu">NS</span>`);
-    if (x.state === 'remarcada') out.push(html`<span class="badge rm" title="${K} remarcada${x.reschedules > 1 ? ` ${x.reschedules}x` : ''}">R</span>`);
-    if (['agendada', 'remarcada'].includes(x.state)) out.push(html`<span class="chip-sm meet ${x.confirmed ? 'confirmed' : ''}" title="${K} agendada${x.confirmed ? ' (presença confirmada)' : ''}">${K} ${fmtShort(x.at)}</span>`);
-    if (x.state === 'realizada') out.push(html`<span class="chip-sm ok-chip">${K} feita</span>`);
-  };
-  one('r1', m.r1);
-  one('r2', m.r2);
-  if (['r1', 'r2'].includes(o.stage_key) && !m.r2) out.push(html`<span class="chip-sm muted">R2 não agendada</span>`);
-  return out.length ? html`<div class="card-meet">${out}</div>` : '';
+  for (const k of ['r1', 'r2']) {
+    const x = m[k];
+    if (x?.state === 'no_show') out.push(html`<span class="badge ns" title="${k.toUpperCase()}: o cliente não compareceu">NS</span>`);
+    if (x?.state === 'remarcada') out.push(html`<span class="badge rm" title="${k.toUpperCase()} remarcada">R</span>`);
+  }
+  return out;
 }
 
+/**
+ * Cartão do pipeline, sempre com os mesmos campos e na mesma ordem: nome, valor da oportunidade, responsável,
+ * telefone, área - campanha, próxima atividade e score do lead.
+ */
 function card(o, bulk, selected) {
   const late = o.next_action_at && new Date(o.next_action_at) < new Date() && o.status === 'aberta';
   const sel = selected.has(o.id);
   const campaign = o.campaign || o.origin_campaign || o.contact_campaign;
-  return html`<article class="opp-card prio-${o.priority} ${o.stalled ? 'stalled' : ''} ${sel ? 'selected' : ''} ${o.sla ? `sla-${o.sla.level}` : ''}" draggable="${can.write() && !bulk ? 'true' : 'false'}" data-id="${o.id}">
+  const phone = o.contact_whatsapp || o.contact_phone;
+  const area = optLabel('area_negocio', o.business_area || 'consorcio');
+  return html`<article class="opp-card clean prio-${o.priority} ${o.stalled ? 'stalled' : ''} ${sel ? 'selected' : ''} ${o.sla ? `sla-${o.sla.level}` : ''}" draggable="${can.write() && !bulk ? 'true' : 'false'}" data-id="${o.id}">
     ${bulk ? html`<input type="checkbox" class="card-check" data-sel="${o.id}" aria-label="Selecionar ${o.contact_name}" ${sel ? raw('checked') : ''}>` : ''}
-    <div class="card-title-row"><a href="#/leads/${o.contact_id}" class="title" data-drawer="${o.contact_id}" data-opp="${o.id}">${o.contact_name}</a>
-      <span class="card-badges">${o.wa_conversation_id ? html`<a class="wa-badge ${o.wa_unread ? 'unread' : ''}" href="#/comunicacao/whatsapp/${o.wa_conversation_id}" title="Tem conversa no WhatsApp${o.wa_unread ? ` · ${o.wa_unread} não lida(s)` : ''}" aria-label="Abrir a conversa no WhatsApp">${icon('whatsapp', 14)}${o.wa_unread ? html`<b>${o.wa_unread}</b>` : ''}</a>` : ''}${o.stage_kind === 'aberta' ? tempBadge(o.temperature, o.temperature_info) : ''}<span class="badge pfpj" title="${o.contact_kind === 'PJ' ? 'Pessoa jurídica' : 'Pessoa física'}">${o.contact_kind === 'PJ' ? 'PJ' : 'PF'}</span></span></div>
-    <div class="card-tags">${o.referred_by_name ? html`<span class="chip-sm ref-chip" title="Indicação de ${o.referred_by_name}">Indicação</span>` : ''}<span class="chip-sm area area-${o.business_area || 'consorcio'}" title="Área responsável">${optLabel('area_negocio', o.business_area || 'consorcio')}</span>${o.credit_category ? html`<span class="chip-sm muted">${optLabel('categoria_credito', o.credit_category)}</span>` : ''}</div>
-    <div class="small card-origin" title="Origem e campanha">${optLabel('origem', o.contact_origin) || 'Sem origem'}${campaign ? html` · <span class="muted">${campaign}</span>` : ''}</div>
-    <div class="card-metrics">
-      <span class="deal-value" title="Valor estimado${o.deal_value_source === 'proposta' ? ' (maior proposta ativa)' : ''}">${o.deal_value ? fmtMoney(o.deal_value) : html`<span class="muted">Sem valor</span>`}</span>
-      ${o.sla ? html`<span class="badge ${SLA_TONE[o.sla.level] || ''}" title="SLA da atividade">${o.sla.text}</span>` : ''}
-      ${o.score != null ? html`<span class="score s-${scoreTone(o.score)}" title="Score do lead (0 a 100)">${o.score}</span>` : ''}
-    </div>
-    ${meetingTags(o)}
-    <div class="small next ${late ? 'overdue' : ''}">${o.next_action ? html`▸ ${o.next_action} ${o.next_action_at ? html`<span>(${relTime(o.next_action_at)})</span>` : ''}` : html`<span class="warn-text">Sem próxima ação</span>`}</div>
-    <div class="card-foot"><span class="small muted">${o.owner_name || '—'} · ${o.days_in_stage}d na etapa</span>${optoutBadge(o.contact_optouts)}${o.status === 'perdida' && o.lost_reason ? badge(optLabel('motivo_perda', o.lost_reason), 'muted') : ''}</div>
+    <div class="oc-head"><a href="#/leads/${o.contact_id}" class="title" data-drawer="${o.contact_id}" data-opp="${o.id}">${o.contact_name}</a>
+      <span class="oc-badges">${meetingFlags(o)}${o.wa_conversation_id ? html`<a class="wa-badge ${o.wa_unread ? 'unread' : ''}" href="#/comunicacao/whatsapp/${o.wa_conversation_id}" title="Conversa no WhatsApp${o.wa_unread ? ` · ${o.wa_unread} não lida(s)` : ''}" aria-label="Abrir a conversa no WhatsApp">${icon('whatsapp', 14)}${o.wa_unread ? html`<b>${o.wa_unread}</b>` : ''}</a>` : ''}<span class="score s-${o.score != null ? scoreTone(o.score) : 'none'}" title="Score do lead (0 a 100)">${o.score != null ? o.score : '—'}</span></span></div>
+    <div class="oc-value" title="Valor da oportunidade${o.deal_value_source === 'proposta' ? ' (maior proposta ativa)' : ''}">${o.deal_value ? fmtMoney(o.deal_value) : html`<span class="muted">Sem valor</span>`}</div>
+    <ul class="oc-rows">
+      <li title="Responsável">${icon('usuarios', 13)}<span>${o.owner_name || 'Sem responsável'}</span></li>
+      <li title="Telefone">${icon('telefone', 13)}<span>${phone ? fmtPhone(phone) : html`<span class="muted">Sem telefone</span>`}</span></li>
+      <li title="Área - Campanha">${icon('bandeira', 13)}<span>${area} - ${campaign || html`<span class="muted">sem campanha</span>`}</span></li>
+      <li class="oc-next ${late ? 'overdue' : ''}" title="Próxima atividade">${icon('calendario', 13)}<span>${o.next_action ? html`${o.next_action}${o.next_action_at ? html` · ${relTime(o.next_action_at)}` : ''}` : html`<span class="warn-text">Sem próxima atividade</span>`}</span></li>
+    </ul>
   </article>`;
 }
 

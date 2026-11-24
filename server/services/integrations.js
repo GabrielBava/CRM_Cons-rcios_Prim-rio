@@ -319,6 +319,11 @@ function panel(db, user, req) {
       return [{ key: 'wa_agent', group: 'mensageria', name: 'Agente de IA', sub: 'Atende, qualifica e agenda a R1 no WhatsApp', icon: 'ia', scope: 'geral',
         status: ag.ok ? 'ativo' : ag.cfg?.enabled ? 'erro' : 'disponivel', label, action: ag.ok ? 'Gerenciar' : 'Configurar' }];
     })() : []),
+    ...(lead ? (() => {
+      const av = safe(() => require('./waautomation').config(db)) || {};
+      return [{ key: 'wa_avisos', group: 'mensageria', name: 'Avisos por WhatsApp', sub: 'Novo lead e R1 agendada para o responsável', icon: 'sino', scope: 'geral',
+        status: av.enabled ? 'ativo' : 'disponivel', label: av.enabled ? 'Ligado' : 'Desligado', action: av.enabled ? 'Gerenciar' : 'Configurar' }];
+    })() : []),
     { key: 'instagram', group: 'mensageria', name: 'Instagram', sub: 'Direct · Meta', icon: 'instagram', scope: 'usuario', ...soon },
     { key: 'linkedin', group: 'mensageria', name: 'LinkedIn', sub: 'Mensagens', icon: 'linkedin', scope: 'usuario', ...soon },
     { key: 'discadora', group: 'voz', name: 'Discadora', sub: 'Click-to-call · chamadas e gravações', icon: 'telefone', scope: 'geral', ...intStatus('discadora'), action: 'Configurar' },

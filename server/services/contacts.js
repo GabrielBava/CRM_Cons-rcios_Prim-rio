@@ -372,6 +372,10 @@ function createContact(db, user, data, opts = {}) {
       const t = now;
       db.prepare("INSERT INTO addresses (contact_id, type, cep, is_primary, created_at, updated_at) VALUES (?, 'residencial', ?, 1, ?, ?)").run(id, cep, t, t);
     }
+    // Lead novo com responsável: aviso por WhatsApp (sem responsável, o aviso sai quando a roleta distribuir)
+    if (ownerId && ['lead', 'prospect'].includes(row.relationship || 'prospect')) {
+      require('./waautomation').enqueue(db, 'novo_lead', { contactId: id, userId: ownerId, byUserId: user.id });
+    }
     return { id, code, duplicates_confirmed: dups };
   });
 }

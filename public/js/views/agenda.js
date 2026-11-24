@@ -1,10 +1,13 @@
-// 4. Agenda e tarefas: visão completa das tarefas do especialista (R1, follow-ups de proposta, revisar proposta,
-// pré-venda, ligações) em Hoje, Semana (calendário), Urgentes e Lista, com indicadores do dia.
-import { get } from '../api.js';
-import { html, render, $, $$, on, state, selectOptions, userItems, toItems, can, toastError, K, badge, fmtDateTime, relTime, subnav, empty } from '../ui.js';
-import { taskForm } from '../forms.js';
+// 4. Agendas e tarefas: a Central do especialista (tudo o que precisa ser feito numa fila só, atrasadas primeiro, com a
+// ação que conclui cada item: WhatsApp pronto, ligação, confirmação, resultado da reunião), a Semana (calendário) e a
+// Lista completa.
+import { get, post } from '../api.js';
+import { html, render, $, $$, on, state, selectOptions, userItems, toItems, can, toast, toastError, K, badge, fmtDateTime, relTime, subnav, empty, modal, confirmDialog, fmtPhone } from '../ui.js';
+import { taskForm, completeTaskWithActivity, activityForm } from '../forms.js';
 import { tasksTable, bindTasks } from './contact.js';
-import { scheduleR1Dialog, meetingLinks } from '../meeting.js';
+import { scheduleR1Dialog, meetingLinks, rescheduleDialog } from '../meeting.js';
+import { bindDrawerLinks } from '../drawer.js';
+import { icon } from '../icons.js';
 
 // Filtros rápidos por tipo de tarefa
 const GROUPS = {
@@ -31,14 +34,14 @@ const hhmm = (v) => new Date(v).toLocaleTimeString('pt-BR', { hour: '2-digit', m
 const late = (t) => t.status === 'pendente' && new Date(t.due_at) < new Date();
 
 export async function show(view, { params = {} } = {}) {
-  const visao = ['semana', 'urgentes', 'lista'].includes(params.visao) ? params.visao : 'hoje';
+  const visao = ['semana', 'lista'].includes(params.visao) ? params.visao : 'central';
+  if (visao === 'central') return showCentral(view);
   if (!saved.assigned_to && state.user.role === 'consultor') saved.assigned_to = String(state.user.id);
   let week = params.semana ? new Date(`${params.semana}T12:00:00`) : startOfWeek();
   render(view, html`<div class="page">
-    <div class="page-head"><div><h1>Agenda e tarefas</h1><p class="muted">Tudo o que precisa ser feito, por ordem de urgência. Tarefas de proposta, pré-venda e onboarding são criadas automaticamente.</p></div>
-      ${can.write() ? html`<div class="actions"><button class="btn primary" data-act="new">+ Nova tarefa</button><button class="btn r1" data-act="new-meeting">+ Agendar R1</button></div>` : ''}</div>
+    ${pageHead()}
     <div id="kpis"></div>
-    ${subnav([['#/agenda', 'Hoje', 'hoje'], ['#/agenda?visao=semana', 'Semana', 'semana'], ['#/agenda?visao=urgentes', 'Urgentes', 'urgentes'], ['#/agenda?visao=lista', 'Lista completa', 'lista']], visao)}
+    ${tabs(visao)}
     <form class="filters" data-f ${!can.manage() && visao !== 'lista' ? 'hidden' : ''}>
       ${can.manage() ? html`<label>Responsável<select name="assigned_to">${selectOptions(userItems(), saved.assigned_to, { placeholder: 'Todos' })}</select></label>` : ''}
       ${visao === 'lista'
@@ -66,14 +69,6 @@ export async function show(view, { params = {} } = {}) {
     </div>`);
   };
 
-  const card = (t, { time = true } = {}) => html`<div class="agenda-item ${late(t) ? 'late' : ''} prio-${t.priority || 'normal'}">
-    <div class="agenda-time">${time ? hhmm(t.due_at) : ''}</div>
-    <div class="agenda-body">${t.priority === 'urgente' ? html`${badge('Urgente', 'danger')} ` : t.priority === 'alta' ? html`${badge('Alta', 'warn')} ` : ''}<strong>${t.title}</strong>
-      <br><small>${K('task_types', t.type)}${t.contact_id ? html` · <a href="#/leads/${t.contact_id}">${t.contact_name}</a>` : ''}${can.manage() ? ` · ${t.assigned_name || '—'}` : ''}${late(t) ? html` · <span class="overdue">${relTime(t.due_at)}</span>` : ''}</small>
-      ${t.notes ? html`<br><small class="muted">${t.notes.length > 160 ? `${t.notes.slice(0, 160)}…` : t.notes}</small>` : ''}${t.type === 'reuniao' ? html`<br>${meetingLinks(t)}` : ''}</div>
-    ${t.status === 'pendente' && can.write() ? html`<div class="agenda-acts"><button class="btn small primary" data-task-act="done" data-id="${t.id}">Concluir</button><button class="btn small ghost" data-task-act="edit" data-id="${t.id}" title="Editar ou reagendar">✎</button></div>` : ''}
-  </div>`;
-
   const load = async () => {
     const d = Object.fromEntries(new FormData(form).entries());
     saved = { ...saved, ...d };
@@ -91,38 +86,12 @@ export async function show(view, { params = {} } = {}) {
       const all = (await get('/api/tarefas', q)).rows;
       kpis(all);
       rows = types ? all.filter((t) => types.split(',').includes(t.type)) : all;
-      if (visao === 'hoje') {
-        const today = dayKey(new Date());
-        const lateRows = rows.filter(late);
-        const todays = rows.filter((t) => !late(t) && dayKey(t.due_at) === today);
-        const tomorrow = rows.filter((t) => dayKey(t.due_at) === dayKey(Date.now() + 86400000));
-        const am = todays.filter((t) => new Date(t.due_at).getHours() < 12);
-        const pm = todays.filter((t) => new Date(t.due_at).getHours() >= 12);
-        render($('#list', view), html`<div class="cols">
-          <div>
-            ${lateRows.length ? html`<section class="card danger-card"><h3>Atrasadas (${lateRows.length})</h3>${lateRows.map((t) => card(t, { time: false }))}</section>` : ''}
-            <section class="card"><h3>Manhã</h3>${am.length ? am.map((t) => card(t)) : empty('Nada agendado para a manhã.')}</section>
-            <section class="card"><h3>Tarde</h3>${pm.length ? pm.map((t) => card(t)) : empty('Nada agendado para a tarde.')}</section>
-          </div>
-          <div>
-            <section class="card"><h3>Amanhã (${tomorrow.length})</h3>${tomorrow.length ? tomorrow.map((t) => card(t)) : empty('Nada agendado.')}</section>
-            <section class="card"><h3>Rotina sugerida do especialista</h3><ol class="tips">
-              <li><strong>8h–9h:</strong> atrasadas e urgentes (pré-venda sem acesso, propostas sem resposta).</li>
-              <li><strong>9h–12h:</strong> bloco de ligações: primeiro contato dos leads novos em até 5 minutos e follow-ups da régua de propostas (Dia 0 a Dia 21).</li>
-              <li><strong>Manhã:</strong> envie as propostas cedo; o follow-up D0 acontece no fim do mesmo dia.</li>
-              <li><strong>14h–17h:</strong> R1 (reuniões de diagnóstico) e apresentações de proposta.</li>
-              <li><strong>17h–18h:</strong> follow-up D0 das propostas enviadas pela manhã e planejamento do dia seguinte.</li>
-            </ol></section>
-          </div></div>`);
-      } else if (visao === 'urgentes') {
-        const urg = rows.filter((t) => t.priority === 'urgente' || t.priority === 'alta' || late(t));
-        render($('#list', view), html`<section class="card"><h3>Urgentes, prioridade alta e atrasadas (${urg.length})</h3>${urg.length ? urg.map((t) => card(t)) : empty('Nenhuma pendência urgente. 👏')}</section>`);
-      } else {
+      {
         const days = [...Array(7)].map((_, i) => new Date(week.getTime() + i * 86400000));
         const wkEnd = new Date(week.getTime() + 7 * 86400000);
         const before = rows.filter((t) => new Date(t.due_at) < week);
         render($('#list', view), html`<div class="week-nav"><button class="btn small" data-week="-1">◀ Semana anterior</button><strong>${days[0].toLocaleDateString('pt-BR')} a ${days[6].toLocaleDateString('pt-BR')}</strong><button class="btn small" data-week="1">Próxima semana ▶</button><button class="btn small ghost" data-week="0">Hoje</button></div>
-          ${before.length ? html`<div class="alert warn">${before.length} tarefa(s) pendente(s) de antes desta semana (veja em Hoje ou Urgentes).</div>` : ''}
+          ${before.length ? html`<div class="alert warn">${before.length} tarefa(s) pendente(s) de antes desta semana (veja na Central).</div>` : ''}
           <div class="week-grid">${days.map((d) => {
             const list = rows.filter((t) => dayKey(t.due_at) === dayKey(d));
             return html`<div class="week-day ${dayKey(d) === dayKey(new Date()) ? 'today' : ''} ${[0, 6].includes(d.getDay()) ? 'weekend' : ''}"><div class="week-head">${d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' })} <small>${list.length || ''}</small></div>
@@ -150,4 +119,194 @@ export async function show(view, { params = {} } = {}) {
   on(view, 'click', '[data-act=new]', async () => (await taskForm({})) && load());
   on(view, 'click', '[data-act=new-meeting]', async () => (await scheduleR1Dialog({})) && load());
   await load();
+}
+
+/* ------------------------- Central do especialista ------------------------- */
+
+const pageHead = () => html`<div class="page-head"><div><h1>Agendas e tarefas</h1><p class="muted">Tudo o que você precisa fazer, numa fila só: atrasadas primeiro (da mais estourada para a menos) e depois as próximas. Cada item já traz a ação que o conclui.</p></div>
+  ${can.write() ? html`<div class="actions"><button class="btn primary" data-act="new">+ Nova tarefa</button><button class="btn r1" data-act="new-meeting">+ Agendar R1</button></div>` : ''}</div>`;
+const tabs = (visao) => subnav([['#/agenda', 'Central', 'central'], ['#/agenda?visao=semana', 'Semana', 'semana'], ['#/agenda?visao=lista', 'Lista completa', 'lista']], visao);
+
+const CAT_ICON = { whatsapp: 'whatsapp', confirmacao: 'confirmar', resultado: 'bandeira', follow_reuniao: 'historico', follow_proposta: 'propostas', ligacao: 'telefone', reuniao: 'calendario', tarefa: 'lista' };
+let centralSaved = { assigned_to: '', cat: '' };
+
+/** "Atrasada há 2 d 4 h" / "em 35 min" / "hoje 14:30". */
+function whenLabel(i) {
+  const diff = Date.now() - Date.parse(i.due_at);
+  const abs = Math.abs(diff);
+  const d = Math.floor(abs / 86400000);
+  const h = Math.floor((abs % 86400000) / 3600000);
+  const m = Math.max(1, Math.floor((abs % 3600000) / 60000));
+  const dur = d ? `${d} d${h ? ` ${h} h` : ''}` : h ? `${h} h${m && h < 3 ? ` ${m} min` : ''}` : `${m} min`;
+  return diff > 0 ? `Atrasada há ${dur}` : abs < 12 * 3600000 ? `em ${dur}` : new Date(i.due_at).toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' });
+}
+
+function itemActions(i) {
+  const btn = (act, label, ic, cls = '') => html`<button type="button" class="btn small ${cls}" data-wq="${act}" data-key="${i.key}">${ic ? icon(ic, 14) : ''} ${label}</button>`;
+  const wa = i.wa_text && i.contact_id ? btn('wa', i.category === 'confirmacao' ? 'Pedir confirmação' : i.category === 'follow_proposta' ? 'WhatsApp com a proposta' : i.no_show ? 'WhatsApp para remarcar' : 'WhatsApp', 'whatsapp', 'primary') : '';
+  const call = i.phone ? btn('call', 'Ligar', 'telefone') : '';
+  switch (i.category) {
+    case 'whatsapp': return html`${btn('reply', 'Responder', 'whatsapp', 'primary')}${btn('open-wa', 'Abrir conversa', 'chat', 'ghost')}`;
+    case 'confirmacao': return html`${i.waiting ? '' : wa}${call}${btn('confirmed', 'Cliente confirmou', 'confirmar', i.waiting ? 'primary' : '')}`;
+    case 'resultado': return html`${btn('done-meeting', 'Realizada', 'confirmar', 'primary')}${btn('no-show', 'Não compareceu', 'parar')}${btn('reschedule', 'Remarcar', 'calendario', 'ghost')}`;
+    case 'reuniao': return html`${i.meeting?.url ? html`<a class="btn small primary" href="${i.meeting.url}" target="_blank" rel="noopener">${icon('externo', 14)} Entrar na reunião</a>` : ''}${wa}`;
+    case 'follow_reuniao': return html`${wa}${call}${i.no_show ? btn('reschedule', 'Remarcar', 'calendario', 'ghost') : ''}`;
+    case 'follow_proposta':
+    case 'ligacao': return html`${i.category === 'ligacao' ? html`${call ? btn('call', 'Ligar', 'telefone', 'primary') : ''}${wa}` : html`${wa}${call}`}${btn('done', 'Registrar', 'confirmar', 'ghost')}`;
+    default: return html`${btn('done', 'Concluir', 'confirmar', 'primary')}${wa}`;
+  }
+}
+
+function itemCard(i, { team }) {
+  return html`<article class="wq-item cat-${i.category} ${i.overdue ? 'late' : ''} ${i.waiting ? 'waiting' : ''}" data-item="${i.key}">
+    <div class="wq-when"><span>${whenLabel(i)}</span><small>${fmtDateTime(i.due_at)}</small></div>
+    <div class="wq-main">
+      <div class="wq-top"><span class="wq-cat">${icon(CAT_ICON[i.category] || 'lista', 13)} ${i.category_label}</span>${i.priority === 'urgente' ? badge('Urgente', 'danger') : i.priority === 'alta' && i.category !== 'whatsapp' ? badge('Alta', 'warn') : ''}${i.unread ? html`<span class="badge ok">${i.unread} não lida(s)</span>` : ''}</div>
+      <strong class="wq-title">${i.title}</strong>
+      <small class="wq-sub">${i.contact_id ? html`<a href="#/leads/${i.contact_id}" data-drawer="${i.contact_id}" ${i.opportunity_id ? `data-opp="${i.opportunity_id}"` : ''}>${i.contact_name}</a>` : i.contact_name || ''}${i.stage_name ? ` · ${i.stage_name}` : ''}${i.phone ? ` · ${fmtPhone(i.phone)}` : ''}${i.channel_label ? ` · ${i.channel_label}` : ''}${team && i.assigned_name ? ` · ${i.assigned_name}` : ''}</small>
+      ${i.detail ? html`<small class="wq-detail">${i.detail}</small>` : ''}
+      <form class="wq-reply" data-reply="${i.key}" hidden><textarea name="body" rows="2" placeholder="Escreva a resposta…" required></textarea><div class="wq-reply-acts"><button type="submit" class="btn small primary">${icon('enviar', 14)} Enviar</button><button type="button" class="btn small ghost" data-wq="reply-cancel" data-key="${i.key}">Cancelar</button></div></form>
+    </div>
+    <div class="wq-acts">${itemActions(i)}</div>
+  </article>`;
+}
+
+async function showCentral(view) {
+  if (!centralSaved.assigned_to) centralSaved.assigned_to = '';
+  const lead = can.manage();
+  render(view, html`<div class="page">${pageHead()}<div id="wq-kpis"></div>${tabs('central')}
+    <div class="wq-bar">${lead ? html`<label>Fila de<select data-wq-owner><option value="">Mim</option>${userItems().filter((u) => Number(u.value) !== state.user.id).map((u) => html`<option value="${u.value}" ${String(centralSaved.assigned_to) === String(u.value) ? 'selected' : ''}>${u.label}</option>`)}<option value="todos" ${centralSaved.assigned_to === 'todos' ? 'selected' : ''}>Toda a equipe</option></select></label>` : ''}
+      <div class="chips" data-wq-cats></div></div>
+    <section class="card wq-card"><header class="wq-head"><h3>Fila de trabalho</h3><small class="muted" data-wq-count></small></header><div class="wq-board" data-wq-board></div></section></div>`);
+  let d = null;
+  const byKey = (k) => d?.items.find((x) => x.key === k);
+  const draw = () => {
+    const k = d.kpis;
+    render($('#wq-kpis', view), html`<div class="kpis small">
+      <div class="kpi ${k.atrasadas ? 'alert-kpi' : ''}"><div class="kpi-label">Atrasadas</div><div class="kpi-value">${k.atrasadas}</div></div>
+      <div class="kpi"><div class="kpi-label">Para hoje</div><div class="kpi-value">${k.hoje}</div></div>
+      <div class="kpi ${k.whatsapp ? 'alert-kpi' : ''}"><div class="kpi-label">WhatsApp sem resposta</div><div class="kpi-value">${k.whatsapp}</div></div>
+      <div class="kpi"><div class="kpi-label">Reuniões a confirmar</div><div class="kpi-value">${k.confirmar}</div></div>
+      <div class="kpi"><div class="kpi-label">Na fila (7 dias)</div><div class="kpi-value">${k.total}</div></div></div>`);
+    render($('[data-wq-cats]', view), html`${[{ key: '', label: 'Todas', count: d.items.length }, ...d.categories.filter((c) => c.count)].map((c) => html`<button type="button" class="chip ${centralSaved.cat === c.key ? 'active' : ''}" data-wq-cat="${c.key}">${c.label} <b>${c.count}</b></button>`)}`);
+    const list = centralSaved.cat ? d.items.filter((i) => i.category === centralSaved.cat) : d.items;
+    $('[data-wq-count]', view).textContent = `${list.length} item(ns) · ${list.filter((i) => i.overdue).length} atrasado(s)`;
+    render($('[data-wq-board]', view), list.length ? html`${list.map((i) => itemCard(i, { team: d.owners === 'todos' }))}` : empty('Nada pendente por aqui. 👏'));
+  };
+  const load = async () => {
+    try {
+      d = await get('/api/central', { assigned_to: centralSaved.assigned_to || undefined });
+      draw();
+    } catch (e) {
+      toastError(e);
+    }
+  };
+  const contactOf = (id) => get(`/api/cadastros/${id}`);
+
+  // WhatsApp pronto: o especialista revisa e envia pelo WhatsApp do CRM (ou pelo celular, se o CRM não tiver número)
+  const sendWa = async (i) => {
+    const r = await modal({
+      title: `WhatsApp para ${i.contact_name}`,
+      wide: true,
+      submitLabel: 'Enviar',
+      body: html`<p class="hint">${i.phone ? `Para ${fmtPhone(i.phone)}. ` : ''}Revise a mensagem antes de enviar. Ela vai pelo WhatsApp do CRM e fica no histórico do lead${i.task_id && !['reuniao', 'resultado', 'confirmacao'].includes(i.category) ? '; a tarefa é concluída' : ''}.</p>
+        <div class="field full"><textarea name="body" rows="7" required>${i.wa_text}</textarea></div>`,
+      async onSubmit(f) {
+        return post('/api/central/whatsapp', { contact_id: i.contact_id, body: f.body, task_id: i.category === 'confirmacao' || i.category === 'reuniao' ? undefined : i.task_id, confirm_meeting_id: i.category === 'confirmacao' ? i.meeting.id : undefined });
+      },
+    });
+    if (!r) return;
+    if (r.sent) {
+      toast(i.category === 'confirmacao' ? 'Pedido de confirmação enviado. Quando o cliente responder, clique em "Cliente confirmou".' : 'Mensagem enviada.');
+      return load();
+    }
+    // Sem número no CRM: abre o WhatsApp do aparelho com a mensagem pronta e registra depois
+    window.open(r.fallback_url, '_blank', 'noopener');
+    if (await confirmDialog('Mensagem enviada?', 'O CRM ainda não tem um número do WhatsApp conectado para você, então a mensagem abriu no WhatsApp do seu aparelho. Depois de enviar, registre aqui para concluir o item e guardar no histórico do lead.', { confirmLabel: 'Registrar como enviada' })) {
+      await post('/api/central/feito', { contact_id: i.contact_id, notes: i.wa_text, task_id: i.category === 'confirmacao' || i.category === 'reuniao' ? undefined : i.task_id, confirm_meeting_id: i.category === 'confirmacao' ? i.meeting.id : undefined });
+      toast('Registrado.');
+      load();
+    }
+  };
+
+  // Ligar: abre o telefone (celular, softphone ou discadora) e o registro da ligação (resultado e próxima ação)
+  const call = async (i) => {
+    const to = String(i.phone || '').replace(/\D/g, '');
+    if (to) window.location.href = `tel:+${to.length <= 11 ? `55${to}` : to}`;
+    const c = await contactOf(i.contact_id);
+    const ok = i.task && i.task_id ? await completeTaskWithActivity({ ...i.task, title: `Ligar · ${i.task.title}` }, c) : await activityForm(c, { opportunity_id: i.opportunity_id, type: 'ligacao_realizada' });
+    if (ok) load();
+  };
+
+  on(view, 'change', '[data-wq-owner]', (e, el) => {
+    centralSaved.assigned_to = el.value;
+    load();
+  });
+  on(view, 'click', '[data-wq-cat]', (e, b) => {
+    centralSaved.cat = b.dataset.wqCat;
+    draw();
+  });
+  on(view, 'click', '[data-wq]', async (e, b) => {
+    const i = byKey(b.dataset.key);
+    if (!i) return;
+    const act = b.dataset.wq;
+    try {
+      if (act === 'wa') return sendWa(i);
+      if (act === 'call') return call(i);
+      if (act === 'reply' || act === 'reply-cancel') {
+        const f = $(`[data-reply="${i.key}"]`, view);
+        f.hidden = act === 'reply-cancel';
+        if (!f.hidden) f.body.focus();
+        return undefined;
+      }
+      if (act === 'open-wa') {
+        location.hash = `#/comunicacao/whatsapp/${i.conversation_id}`;
+        return undefined;
+      }
+      if (act === 'confirmed') {
+        await post(`/api/reunioes/${i.meeting.id}/confirmar`, {});
+        toast('Reunião confirmada.');
+        return load();
+      }
+      if (act === 'done-meeting' || act === 'no-show') {
+        const r = await post(`/api/reunioes/${i.meeting.id}/resultado`, { result: act === 'done-meeting' ? 'realizada' : 'nao_compareceu' });
+        toast(r.hint || (act === 'done-meeting' ? 'Reunião registrada como realizada.' : 'Registrado: o cliente não compareceu. O follow-up para remarcar entrou na fila.'));
+        return load();
+      }
+      if (act === 'reschedule') {
+        if (await rescheduleDialog(i.meeting.id, i.meeting.kind)) load();
+        return undefined;
+      }
+      if (act === 'done') {
+        const c = i.contact_id ? await contactOf(i.contact_id) : null;
+        const t = (await get('/api/tarefas', { contact_id: i.contact_id || undefined, status: 'pendente', limit: 200 })).rows.find((x) => x.id === i.task_id) || i.task;
+        const ok = c ? await completeTaskWithActivity(t, c) : await taskForm({ task: t });
+        if (ok) load();
+      }
+    } catch (ex) {
+      toastError(ex);
+    }
+    return undefined;
+  });
+  on(view, 'submit', '[data-reply]', async (e, f) => {
+    e.preventDefault();
+    const i = byKey(f.dataset.reply);
+    const body = f.body.value.trim();
+    if (!i || !body) return;
+    const b = f.querySelector('[type=submit]');
+    b.disabled = true;
+    try {
+      await post(`/api/whatsapp/conversas/${i.conversation_id}/mensagens`, { body });
+      toast('Resposta enviada.');
+      load();
+    } catch (ex) {
+      toastError(ex);
+      b.disabled = false;
+    }
+  });
+  on(view, 'click', '[data-act=new]', async () => (await taskForm({})) && load());
+  on(view, 'click', '[data-act=new-meeting]', async () => (await scheduleR1Dialog({})) && load());
+  bindDrawerLinks(view, () => ({ onChange: load }));
+  await load();
+  return undefined;
 }
