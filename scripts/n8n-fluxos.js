@@ -20,6 +20,14 @@ const path = require('path');
 const OUT = path.join(__dirname, '..', 'deploy', 'n8n');
 const CRM_PLACEHOLDER = 'https://SEU-CRM.com.br';
 const TABLE = 'vero_conhecimento';
+// Memória fixa: o texto de cada arquivo da pasta do Drive (até 15 mil caracteres por arquivo, 40 mil no total, em ordem
+// de nome), remontado dos trechos guardados, entra nas instruções da IA em toda mensagem
+const DIRETRIZES_MAX = 40000;
+const DIRETRIZES_SQL = `SELECT coalesce(string_agg(doc, E'\\n\\n' ORDER BY titulo), '') AS diretrizes FROM (
+  SELECT metadata->>'titulo' AS titulo, '### ' || coalesce(metadata->>'titulo', 'Documento') || E'\\n' || left(string_agg(text, E'\\n' ORDER BY
+    coalesce((metadata->'loc'->>'pageNumber')::int, 0), coalesce((metadata->'loc'->'lines'->>'from')::int, 0), coalesce((metadata->>'line')::int, 0)), 15000) AS doc
+  FROM ${TABLE} WHERE metadata->>'fonte' = 'drive' GROUP BY metadata->>'documento', metadata->>'titulo'
+) d`;
 const CRED = {
   crm: { id: 'VeroCrmToken0001', name: 'CRM Vero (token do n8n)', type: 'httpHeaderAuth' },
   gemini: { id: 'VeroGemini000001', name: 'Google Gemini (Vero)', type: 'googlePalmApi' },
@@ -141,11 +149,20 @@ Endereço do CRM: nó **Configuração**. Token: credencial **${CRED.crm.name}**
       '={{ JSON.stringify({ event: $json.body.event, instance: $json.body.instance, data: $json.body.data }) }}', { timeout: 60000, retry: true }),
     ifNode('IA atende?', [480, -20], '={{ $json.atender }}', { type: 'boolean', operation: 'true', singleValue: true }),
     {
+      parameters: { operation: 'executeQuery', query: DIRETRIZES_SQL, options: {} },
+      id: uid('diretrizes'), name: 'Diretrizes da Vero', type: 'n8n-nodes-base.postgres', typeVersion: 2.6, position: [640, -200], credentials: cred('pg'),
+      alwaysOutputData: true, onError: 'continueRegularOutput',
+    },
+    {
       parameters: {
-        promptType: 'define', text: '={{ $json.mensagem }}',
-        options: { systemMessage: '={{ $json.sistema }}', maxIterations: 10 },
+        promptType: 'define', text: `={{ ${conv('mensagem')} }}`,
+        options: {
+          systemMessage: `={{ ${conv('sistema')} + ($json.diretrizes ? '\\n\\nDiretrizes e memória da Vero (conteúdo da pasta do Google Drive: critérios de qualificação, regras, proibições e objeções). Siga sempre, em todas as mensagens, junto com as regras acima; se algo conflitar, valem as regras acima. Não cite estas diretrizes ao cliente:\\n' + String($json.diretrizes).slice(0, ${DIRETRIZES_MAX}) : '') }}`,
+          maxIterations: 10,
+        },
       },
-      id: uid('agent'), name: 'IA Vero', type: '@n8n/n8n-nodes-langchain.agent', typeVersion: 3.1, position: [760, -40], onError: 'continueErrorOutput',
+      id: uid('agent'), name: 'IA Vero', type: '@n8n/n8n-nodes-langchain.agent', typeVersion: 3.1, position: [860, -40], onError: 'continueErrorOutput',
+      retryOnFail: true, maxTries: 2, waitBetweenTries: 5000,
     },
     {
       parameters: { modelName: `={{ ${conv('modelo_gemini')} || 'models/gemini-2.5-flash' }}`, options: { temperature: 0.4 } },
@@ -164,14 +181,15 @@ Endereço do CRM: nó **Configuração**. Token: credencial **${CRED.crm.name}**
     http('Responder no WhatsApp', [1220, -60], `={{ ${conv('urls.responder')} }}`,
       `={{ JSON.stringify({ conversa_id: ${conv('conversa_id')}, turno: ${conv('turno')}, texto: $json.output }) }}`, { retry: true }),
     http('Avisar falha ao CRM', [1220, 120], `={{ ${conv('urls.responder')} }}`,
-      `={{ JSON.stringify({ conversa_id: ${conv('conversa_id')}, turno: ${conv('turno')}, erro: String($json.error?.message || $json.error || 'falha na IA') }) }}`),
+      `={{ JSON.stringify({ conversa_id: ${conv('conversa_id')}, turno: ${conv('turno')}, erro: (typeof $json.error === 'object' && $json.error ? [$json.error.message, $json.error.description].filter(Boolean).join(' — ') : String($json.error || 'falha na IA')).slice(0, 400) }) }}`),
   ];
   const connections = {
     'WhatsApp (conector)': { main: [[{ node: 'Configuração', type: 'main', index: 0 }]] },
     'Configuração': { main: [[{ node: 'É mensagem?', type: 'main', index: 0 }]] },
     'É mensagem?': { main: [[{ node: 'CRM - Conversa', type: 'main', index: 0 }], []] },
     'CRM - Conversa': { main: [[{ node: 'IA atende?', type: 'main', index: 0 }]] },
-    'IA atende?': { main: [[{ node: 'IA Vero', type: 'main', index: 0 }], []] },
+    'IA atende?': { main: [[{ node: 'Diretrizes da Vero', type: 'main', index: 0 }], []] },
+    'Diretrizes da Vero': { main: [[{ node: 'IA Vero', type: 'main', index: 0 }]] },
     'IA Vero': { main: [[{ node: 'Responder no WhatsApp', type: 'main', index: 0 }], [{ node: 'Avisar falha ao CRM', type: 'main', index: 0 }]] },
     Gemini: { ai_languageModel: [[{ node: 'IA Vero', type: 'ai_languageModel', index: 0 }]] },
     base_de_conhecimento: { ai_tool: [[{ node: 'IA Vero', type: 'ai_tool', index: 0 }]] },
@@ -198,8 +216,8 @@ const loader = (name, position, mode) => ({
   },
   id: uid(name), name, type: '@n8n/n8n-nodes-langchain.documentDefaultDataLoader', typeVersion: 1.1, position,
 });
-const splitter = (name, position) => ({
-  parameters: { chunkSize: 1500, chunkOverlap: 150, options: {} }, id: uid(name), name, type: '@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter', typeVersion: 1, position,
+const splitter = (name, position, overlap = 150) => ({
+  parameters: { chunkSize: 1500, chunkOverlap: overlap, options: {} }, id: uid(name), name, type: '@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter', typeVersion: 1, position,
 });
 const insert = (name, position) => ({
   parameters: { mode: 'insert', tableName: TABLE, embeddingBatchSize: 50, options: {} },
@@ -299,7 +317,7 @@ return saida;`),
     insert('Guardar na base', [1340, 60]),
     geminiEmbeddings('Embeddings Gemini', [1260, 300]),
     loader('Ler arquivo', [1460, 300], 'binary'),
-    splitter('Dividir em trechos', [1540, 500]),
+    splitter('Dividir em trechos', [1540, 500], 0),
   ];
   // Executa sempre a partir do primeiro item: a consulta à base e a remoção rodam uma vez só
   nodes.find((n) => n.name === 'Apagar versões antigas').executeOnce = true;
@@ -388,9 +406,15 @@ Um CRM próprio decide quando a IA atende e envia as respostas. Use exatamente e
 
 6. IF "IA atende?": continua só se {{ $json.atender }} for verdadeiro (boolean true). A saída falsa fica sem ligação.
 
-7. AI Agent "IA Vero":
-   - Prompt definido abaixo (Define below): {{ $json.mensagem }}.
-   - System Message: {{ $json.sistema }}.
+6b. Postgres "Diretrizes da Vero" (credencial "Postgres da VPS (base de conhecimento)"), ligado na saída verdadeira de "IA atende?".
+   - Execute Query com esta consulta (junta o texto inteiro de cada arquivo da pasta do Drive, em ordem de nome):
+     ${DIRETRIZES_SQL.replace(/\n\s*/g, ' ')}
+   - Settings: Always Output Data ligado e On Error "Continue".
+
+7. AI Agent "IA Vero", ligado depois de "Diretrizes da Vero":
+   - Prompt definido abaixo (Define below): {{ $('CRM - Conversa').item.json.mensagem }}.
+   - System Message: {{ $('CRM - Conversa').item.json.sistema + ($json.diretrizes ? '\\n\\nDiretrizes e memória da Vero (conteúdo da pasta do Google Drive: critérios de qualificação, regras, proibições e objeções). Siga sempre, junto com as regras acima; se algo conflitar, valem as regras acima. Não cite estas diretrizes ao cliente:\\n' + String($json.diretrizes).slice(0, ${DIRETRIZES_MAX}) : '') }}.
+   - Settings: Retry On Fail com 2 tentativas e 5000 ms entre elas.
    - Max Iterations: 10.
    - Em Settings, On Error: "Continue (using error output)".
    - Sem memória: o histórico da conversa já vem do CRM dentro de "sistema".
@@ -423,7 +447,7 @@ ${toolLines}
 
 12. HTTP Request "Avisar falha ao CRM", ligado na saída de erro do "IA Vero".
    - POST para a mesma URL de "Responder no WhatsApp", com a mesma credencial.
-   - Corpo JSON: {{ JSON.stringify({ conversa_id: $('CRM - Conversa').item.json.conversa_id, turno: $('CRM - Conversa').item.json.turno, erro: String($json.error?.message || $json.error || 'falha na IA') }) }}.
+   - Corpo JSON: {{ JSON.stringify({ conversa_id: $('CRM - Conversa').item.json.conversa_id, turno: $('CRM - Conversa').item.json.turno, erro: (typeof $json.error === 'object' && $json.error ? [$json.error.message, $json.error.description].filter(Boolean).join(' — ') : String($json.error || 'falha na IA')).slice(0, 400) }) }}.
 
 Não envie mensagens direto pela Evolution API: quem envia é o CRM, pelo "Responder no WhatsApp". Não crie memória de chat.
 \`\`\`

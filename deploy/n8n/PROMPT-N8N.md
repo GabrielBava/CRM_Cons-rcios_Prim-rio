@@ -40,9 +40,15 @@ Um CRM próprio decide quando a IA atende e envia as respostas. Use exatamente e
 
 6. IF "IA atende?": continua só se {{ $json.atender }} for verdadeiro (boolean true). A saída falsa fica sem ligação.
 
-7. AI Agent "IA Vero":
-   - Prompt definido abaixo (Define below): {{ $json.mensagem }}.
-   - System Message: {{ $json.sistema }}.
+6b. Postgres "Diretrizes da Vero" (credencial "Postgres da VPS (base de conhecimento)"), ligado na saída verdadeira de "IA atende?".
+   - Execute Query com esta consulta (junta o texto inteiro de cada arquivo da pasta do Drive, em ordem de nome):
+     SELECT coalesce(string_agg(doc, E'\n\n' ORDER BY titulo), '') AS diretrizes FROM ( SELECT metadata->>'titulo' AS titulo, '### ' || coalesce(metadata->>'titulo', 'Documento') || E'\n' || left(string_agg(text, E'\n' ORDER BY coalesce((metadata->'loc'->>'pageNumber')::int, 0), coalesce((metadata->'loc'->'lines'->>'from')::int, 0), coalesce((metadata->>'line')::int, 0)), 15000) AS doc FROM vero_conhecimento WHERE metadata->>'fonte' = 'drive' GROUP BY metadata->>'documento', metadata->>'titulo' ) d
+   - Settings: Always Output Data ligado e On Error "Continue".
+
+7. AI Agent "IA Vero", ligado depois de "Diretrizes da Vero":
+   - Prompt definido abaixo (Define below): {{ $('CRM - Conversa').item.json.mensagem }}.
+   - System Message: {{ $('CRM - Conversa').item.json.sistema + ($json.diretrizes ? '\n\nDiretrizes e memória da Vero (conteúdo da pasta do Google Drive: critérios de qualificação, regras, proibições e objeções). Siga sempre, junto com as regras acima; se algo conflitar, valem as regras acima. Não cite estas diretrizes ao cliente:\n' + String($json.diretrizes).slice(0, 40000) : '') }}.
+   - Settings: Retry On Fail com 2 tentativas e 5000 ms entre elas.
    - Max Iterations: 10.
    - Em Settings, On Error: "Continue (using error output)".
    - Sem memória: o histórico da conversa já vem do CRM dentro de "sistema".
@@ -100,7 +106,7 @@ Um CRM próprio decide quando a IA atende e envia as respostas. Use exatamente e
 
 12. HTTP Request "Avisar falha ao CRM", ligado na saída de erro do "IA Vero".
    - POST para a mesma URL de "Responder no WhatsApp", com a mesma credencial.
-   - Corpo JSON: {{ JSON.stringify({ conversa_id: $('CRM - Conversa').item.json.conversa_id, turno: $('CRM - Conversa').item.json.turno, erro: String($json.error?.message || $json.error || 'falha na IA') }) }}.
+   - Corpo JSON: {{ JSON.stringify({ conversa_id: $('CRM - Conversa').item.json.conversa_id, turno: $('CRM - Conversa').item.json.turno, erro: (typeof $json.error === 'object' && $json.error ? [$json.error.message, $json.error.description].filter(Boolean).join(' — ') : String($json.error || 'falha na IA')).slice(0, 400) }) }}.
 
 Não envie mensagens direto pela Evolution API: quem envia é o CRM, pelo "Responder no WhatsApp". Não crie memória de chat.
 ```

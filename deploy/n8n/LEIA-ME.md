@@ -83,6 +83,7 @@ O instalador pergunta:
 | Token do n8n | cole o token do passo 2 (não aparece ao colar; é normal) e tecle Enter |
 | Chave da API do Gemini | cole a chave (ou Enter para colocar depois no n8n) |
 | Seu e-mail para entrar no n8n | o e-mail do seu login no n8n |
+| Link da pasta do Google Drive | o endereço da pasta com a base de conhecimento (ex.: `https://drive.google.com/drive/folders/...`); Enter para pular |
 
 Para colar no PowerShell, clique com o **botão direito** do mouse.
 
@@ -128,7 +129,14 @@ No fim, ele mostra o endereço, o seu e-mail e a **senha inicial**. Para ver de 
 
 ## 6. Base de conhecimento: a "memória" de consórcio da IA
 
-A IA consulta a ferramenta **base_de_conhecimento** antes de responder dúvidas. Ela guarda trechos com busca por significado (pgvector), no Postgres da VPS. O conteúdo vem de três lugares.
+A IA usa a base de duas formas:
+- **Memória fixa (pasta do Google Drive):** o texto inteiro de cada arquivo da pasta entra nas instruções da IA em **toda mensagem**, em ordem de nome do arquivo. É o lugar dos critérios de qualificação e triagem, regras, proibições, guardrails e lista de objeções: a IA segue isso sempre, sem precisar procurar.
+  - Limites: até 15 mil caracteres por arquivo e 40 mil no total (cerca de 20 páginas). O que passar disso continua na consulta.
+  - Numere os arquivos para dar a ordem (ex.: "01 - Critérios de qualificação", "02 - Regras e proibições", "03 - Objeções").
+  - As regras fixas do CRM valem por cima: não prometer contemplação, não informar parcelas, taxas ou propostas, não pedir documentos.
+- **Consulta (ferramenta base_de_conhecimento):** a IA busca trechos por significado (pgvector, no Postgres da VPS) quando o lead pergunta algo. Vale para a pasta do Drive e para a base do CRM.
+
+O conteúdo vem de três lugares.
 
 **a) A base da IA do CRM** (perguntas, objeções, dicas, mensagens, o critério de fit e as orientações do agente): é copiada todo dia às 3h pelo fluxo **Vero - Base de conhecimento (CRM)**. Para atualizar, cadastre no CRM e rode o fluxo.
 
@@ -247,7 +255,7 @@ Quando alguém da equipe responde pelo CRM ou pelo celular, a IA para naquela co
 | A IA não responde e nada aparece em Executions no n8n | O conector não está avisando o n8n. Rode `sudo bash instalar-n8n.sh` de novo; confira `vero-whatsapp situacao` (n8n "Up"). |
 | Executions param em **IA atende?** | O CRM disse que a IA não atende. Abra a execução e veja `motivo` no nó **CRM - Conversa**: `ia_desligada`, `modo_de_teste`, `com_especialista`, `equipe_ja_atendia`, `agente_do_crm` (o provedor no CRM não é o n8n), `ocupada` (outra resposta em andamento). |
 | Erro 401 em **CRM - Conversa** | Token errado ou trocado. Gere outro no CRM e rode o instalador informando o novo token (ou edite a credencial **CRM Vero (token do n8n)**: valor `Bearer crm_n8n_...`). |
-| Erro no nó **Gemini** / o lead recebe "um especialista vai continuar..." | Chave do Gemini inválida ou limite do plano gratuito. Confira a credencial **Google Gemini (Vero)** e o modelo no CRM. |
+| O lead só recebe "Obrigada pela mensagem! Um especialista vai continuar..." | Essa é a mensagem de cortesia de quando a **IA falha** (o n8n tenta de novo uma vez antes). No CRM, Integrações › Agente de IA no WhatsApp mostra no topo "A IA falhou N vezes" com o erro e a causa provável: chave do Gemini inválida, limite do plano gratuito ou modelo inexistente (use "Buscar os modelos da conta"). Confira também a credencial **Google Gemini (Vero)** no n8n. |
 | "esta VPS não conseguiu falar com o CRM" | O instalador já testa os outros endereços da Vercel. Se nenhum responde, confira o endereço do CRM e mande o bloco "copie daqui". |
 | `https://n8n...` não abre | Registro A do DNS (passo 1.3) e portas 80/443 liberadas no painel da VPS. O HTTPS sai sozinho quando o DNS valer. |
 | VPS lenta ou o n8n reinicia sozinho | Pouca memória: passe a VPS para 2 GB. |

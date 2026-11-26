@@ -3964,6 +3964,11 @@ test('Agente de IA no n8n: token próprio, mensagem repassada pelo n8n, ações 
     assert.match(t1.data.sistema, /salvar_triagem/);
     assert.match(t1.data.sistema, /base_de_conhecimento/);
     assert.match(t1.data.sistema, /Dados do lead no CRM/);
+    // Roteiro de qualificação: a IA conduz etapa por etapa e sabe o que falta na triagem
+    assert.match(t1.data.sistema, /Roteiro de qualificação/);
+    assert.match(t1.data.sistema, /Nunca responda só agradecendo/);
+    assert.match(t1.data.sistema, /"faltam_na_triagem":\["interesse","dor","impacto","decisor","faixa_investimento","faixa_renda"\]/);
+    assert.match(t1.data.sistema, /"proximo_passo":"Triagem: perguntar interesse em seguir \(faltam 6 de 6\)\."/);
     assert.ok(t1.data.turno);
     assert.match(t1.data.urls.acao, /\/api\/integracoes\/n8n\/acao$/);
     let w = appDb.prepare('SELECT * FROM wa_conversations WHERE id = ?').get(convId);
@@ -4000,6 +4005,8 @@ test('Agente de IA no n8n: token próprio, mensagem repassada pelo n8n, ações 
     // A mensagem que ficou "ocupada" é atendida quando chega a próxima; o aviso repetido não gera outra resposta
     const t2 = await n8n('POST', '/mensagem', evo('5511932170001', 'Pode ser sim, no primeiro horário'));
     assert.equal(t2.data.atender, true);
+    assert.match(t2.data.sistema, /"faltam_na_triagem":\[\]/, 'triagem completa');
+    assert.match(t2.data.sistema, /"proximo_passo":"Triagem completa: avaliar o fit/);
     assert.match(t2.data.mensagem, /primeiro horário/);
     assert.match(t2.data.sistema, /Tenho .* Pode ser\?/, 'o histórico traz a resposta anterior da IA');
     const ag = await n8n('POST', '/acao/agendar_r1', { conversa_id: convId, turno: t2.data.turno, dados: { inicio: hrs.data.horarios[0].inicio, email: 'paula@exemplo.com' } });
@@ -4029,6 +4036,10 @@ test('Agente de IA no n8n: token próprio, mensagem repassada pelo n8n, ações 
     assert.equal(appDb.prepare('SELECT ai_status FROM wa_conversations WHERE id = ?').get(t4.data.conversa_id).ai_status, 'humano');
     assert.match(appDb.prepare("SELECT body FROM wa_messages WHERE conversation_id = ? AND direction = 'out' ORDER BY id DESC LIMIT 1").get(t4.data.conversa_id).body, /especialista/);
     assert.ok(appDb.prepare("SELECT 1 FROM wa_agent_log WHERE conversation_id = ? AND action = 'erro'").get(t4.data.conversa_id));
+    // A tela do agente mostra a falha das últimas 24 horas (o lead recebeu só a mensagem de cortesia)
+    const lastErr = (await call('admin', 'GET', '/api/whatsapp/agente')).data.last_error;
+    assert.ok(lastErr && lastErr.count >= 1);
+    assert.match(lastErr.detail, /Gemini: 429/);
 
     // Modo de teste e IA desligada: o n8n não responde
     await call('admin', 'PUT', '/api/whatsapp/agente', { test_numbers: '51 99999-0000' });

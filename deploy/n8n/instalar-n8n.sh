@@ -124,6 +124,8 @@ else
   perguntar CRM_TOKEN "Novo token do n8n (Enter para manter o atual)" "" 1
   perguntar GEMINI_KEY "Nova chave do Gemini (Enter para manter a atual)" "" 1
 fi
+DRIVE_ANTES="$(ler DRIVE_PASTA n8n.env)"
+perguntar DRIVE_PASTA "Link da pasta do Google Drive com a base de conhecimento (Enter para pular)" "$DRIVE_ANTES"
 
 N8N_DOMINIO="$(printf '%s' "$N8N_DOMINIO" | tr '[:upper:]' '[:lower:]' | sed -E 's#^https?://##; s#/.*$##')"
 [[ "$N8N_DOMINIO" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] || falha "endereço do n8n inválido: $N8N_DOMINIO"
@@ -140,6 +142,14 @@ if [ "$PRIMEIRA" = 1 ]; then
 fi
 [ -z "$CRM_TOKEN" ] || [[ "$CRM_TOKEN" =~ ^crm_n8n_[A-Za-z0-9_-]+$ ]] || falha "o token do n8n começa com crm_n8n_ (copie de novo no CRM)."
 [ -z "$GEMINI_KEY" ] || [[ "$GEMINI_KEY" =~ ^[A-Za-z0-9_-]{20,}$ ]] || falha "chave do Gemini inválida (copie de novo no Google AI Studio)."
+# Pasta do Drive: aceita o link (https://drive.google.com/drive/folders/...) ou só o ID; guarda o link limpo
+DRIVE_PASTA="$(printf '%s' "${DRIVE_PASTA:-}" | tr -d '[:space:]')"
+if [ -n "$DRIVE_PASTA" ]; then
+  ID_PASTA="$(printf '%s' "$DRIVE_PASTA" | sed -nE 's#.*folders/([-A-Za-z0-9_]+).*#\1#p')"
+  if [ -z "$ID_PASTA" ] && [[ "$DRIVE_PASTA" =~ ^[-A-Za-z0-9_]{15,}$ ]]; then ID_PASTA="$DRIVE_PASTA"; fi
+  [ -n "$ID_PASTA" ] || falha "link da pasta do Drive inválido: abra a pasta no navegador e copie o endereço (https://drive.google.com/drive/folders/...)."
+  DRIVE_PASTA="https://drive.google.com/drive/folders/$ID_PASTA"
+fi
 
 # ---------------------------------------------------------------- DNS e ligação com o CRM
 if [ "$N8N_DOMINIO" != "n8n.localhost" ] && [[ "$N8N_DOMINIO" != *.localhost ]]; then
@@ -220,6 +230,7 @@ cat > n8n.env <<EOF
 # NÃO publique nem envie este arquivo: ele tem a chave que protege as credenciais do n8n e a senha do banco.
 N8N_DOMINIO=$N8N_DOMINIO
 CRM_URL=$CRM_URL
+DRIVE_PASTA=$DRIVE_PASTA
 
 N8N_HOST=$N8N_DOMINIO
 N8N_PROTOCOL=https
@@ -363,6 +374,7 @@ for f in $FLUXOS; do
   else curl -fsSL "$RAW/deploy/n8n/$f" -o "$TMP/$f" || falha "não foi possível baixar o fluxo $f."
   fi
   sed -i "s#https://SEU-CRM.com.br#$CRM_URL#g" "$TMP/$f"
+  [ -z "$DRIVE_PASTA" ] || sed -i "s#COLE-AQUI-O-LINK-DA-PASTA-DO-DRIVE#$DRIVE_PASTA#g" "$TMP/$f"
 done
 chown -R 1000:1000 "$TMP"
 docker compose cp "$TMP/." n8n:/tmp/vero-importar/ >/dev/null
@@ -386,8 +398,13 @@ for f in $FLUXOS; do
     *) ID=VeroBaseDrive001 ;;
   esac
   if printf '%s\n' "$EXISTENTES" | grep -qx "$ID" && [ -z "${REIMPORTAR:-}" ]; then
-    echo "Fluxo $f já existe no n8n (mantido; REIMPORTAR=1 para trocar pelo original)."
-    continue
+    # Pasta do Drive nova: o fluxo do Drive é trocado pelo original já com a pasta
+    if [ "$ID" = VeroBaseDrive001 ] && [ -n "$DRIVE_PASTA" ] && [ "$DRIVE_PASTA" != "$DRIVE_ANTES" ]; then
+      echo "Pasta do Drive nova: atualizando o fluxo do Drive."
+    else
+      echo "Fluxo $f já existe no n8n (mantido; REIMPORTAR=1 para trocar pelo original)."
+      continue
+    fi
   fi
   docker compose exec -T n8n n8n import:workflow --input="/tmp/vero-importar/$f" >/dev/null 2>&1 || falha "não foi possível importar o fluxo $f."
   echo "Fluxo importado: $f"
@@ -477,7 +494,12 @@ if [ -n "$PROVEDOR" ] && [ "$PROVEDOR" != "n8n" ]; then
 fi
 echo " Ligar e desligar a IA, Assumir/Devolver e o modo de teste continuam no CRM."
 echo " Base de conhecimento: o fluxo \"Vero - Base de conhecimento (CRM)\" roda todo dia às 3h (ou abra e clique em Executar)."
-echo " Google Drive (opcional): fluxo \"Vero - Base de conhecimento (Google Drive)\" (guia em deploy/n8n/LEIA-ME.md)."
+if [ -n "$DRIVE_PASTA" ]; then
+  echo " Google Drive: pasta configurada no fluxo \"Vero - Base de conhecimento (Google Drive)\". Falta conectar a conta Google"
+  echo "   (credencial \"Google Drive (Vero)\", guia deploy/n8n/LEIA-ME.md seção 6c) e clicar em Execute e depois em Publish nesse fluxo."
+else
+  echo " Google Drive (opcional): fluxo \"Vero - Base de conhecimento (Google Drive)\" (guia em deploy/n8n/LEIA-ME.md)."
+fi
 echo
 echo " Para ver estes dados de novo:  vero-whatsapp dados    ·    Registros do n8n:  vero-whatsapp registros-n8n"
 echo "=================================================================================="

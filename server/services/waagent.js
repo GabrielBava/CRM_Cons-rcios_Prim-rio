@@ -120,6 +120,12 @@ function view(db, user, req) {
     models: MODELS.map(([value, label]) => ({ value, label })),
     users: db.prepare("SELECT id, name, role FROM users WHERE active = 1 AND role IN ('consultor','gestor','admin') ORDER BY role = 'consultor' DESC, name").all(),
     test_mode: testNumbers(c).length > 0,
+    // Falhas da IA nas últimas 24 h: o lead recebeu a mensagem de cortesia e a conversa foi para o especialista
+    last_error: (() => {
+      const since24 = new Date(Date.now() - 86400000).toISOString();
+      const e = db.prepare("SELECT detail, created_at FROM wa_agent_log WHERE action = 'erro' AND created_at >= ? ORDER BY id DESC LIMIT 1").get(since24);
+      return e ? { ...e, count: db.prepare("SELECT COUNT(*) AS n FROM wa_agent_log WHERE action = 'erro' AND created_at >= ?").get(since24).n } : null;
+    })(),
     stats: {
       atendidas: db.prepare('SELECT COUNT(DISTINCT conversation_id) AS n FROM wa_agent_log WHERE created_at >= ?').get(since).n,
       novos_leads: count('novo_lead'), qualificados: count('qualificou'), r1_agendadas: count('agendou_r1'), transferidas: count('transferiu'), sem_fit: count('sem_fit'),
@@ -358,10 +364,29 @@ function leadContext(db, w) {
       nome: c.name, codigo: c.code, email: c.email || null, origem: c.origin, campanha: c.campaign || null,
       etapa: o?.stage_name || null, especialista_responsavel: owner?.name || 'ainda não definido',
       triagem: triage, triagem_concluida: !!o?.triaged_at, qualificacao: qual,
+      faltam_na_triagem: missingTriage(triage),
       r1_agendada: r1 ? fmtSlot(new Date(r1.due_at)) : null,
+      proximo_passo: nextStep(triage, !!r1),
       agora: fmtSlot(new Date()),
     },
   };
+}
+
+/* Perguntas da triagem, na ordem do roteiro (as mesmas 6 da aba Qualificação) */
+const TRIAGE_STEPS = [
+  ['interesse', 'interesse em seguir'],
+  ['dor', 'necessidade (o que quer conquistar) e o resumo nas palavras do cliente'],
+  ['impacto', 'em quanto tempo quer resolver'],
+  ['decisor', 'se é quem decide'],
+  ['faixa_investimento', 'quanto consegue investir por mês'],
+  ['faixa_renda', 'faixa de renda mensal'],
+];
+const missingTriage = (t = {}) => TRIAGE_STEPS.filter(([k]) => !t[k]).map(([k]) => k);
+function nextStep(t = {}, hasR1) {
+  if (hasR1) return 'R1 já agendada: confirme os detalhes e encerre com cordialidade.';
+  const miss = TRIAGE_STEPS.filter(([k]) => !t[k]);
+  if (miss.length) return `Triagem: perguntar ${miss[0][1]} (faltam ${miss.length} de 6).`;
+  return t.interesse === 'nao' ? 'Triagem completa sem interesse: encerrar sem fit.' : 'Triagem completa: avaliar o fit e, com fit, oferecer horários da R1 (horarios_r1).';
 }
 
 /* ------------------------- Agenda (horários livres da R1) ------------------------- */
@@ -560,27 +585,32 @@ function systemPrompt(db, cfg, opts = {}) {
   const kb = db.prepare("SELECT kind, title, content FROM ai_knowledge WHERE active = 1 AND kind IN ('pergunta','objecao','mensagem') ORDER BY likes - dislikes DESC, id LIMIT 30").all();
   return `Você é ${cfg.name}, assistente virtual da ${company} no WhatsApp. A ${company} trabalha com consórcio (imóvel, veículo e serviços) e planejamento financeiro.
 
-Seu objetivo: atender o lead com cordialidade, entender a necessidade, fazer a triagem e, se houver fit, agendar a reunião de apresentação (R1) com o especialista.
+Seu objetivo é QUALIFICAR o lead sozinha, do começo ao fim, e, havendo fit, AGENDAR a reunião de apresentação (R1) com o especialista. Você conduz a conversa: não espere o cliente puxar assunto.
 
 Como conversar:
-- Português do Brasil, tom humano, simpático e profissional; mensagens curtas (até 3 linhas), sem jargão; uma pergunta por mensagem.
-- Na primeira resposta, apresente-se como assistente virtual da ${company}. Se perguntarem, diga com honestidade que é uma assistente virtual (IA).
+- Português do Brasil, tom humano, simpático e profissional; mensagens curtas (até 3 linhas), sem jargão.
+- Toda mensagem sua termina com UMA pergunta que leva ao próximo passo do roteiro. Nunca responda só agradecendo, só confirmando o recebimento ou dizendo que alguém vai retornar (isso só ao transferir ou encerrar).
+- Se o cliente fizer uma pergunta, responda em uma ou duas frases (use a base de conhecimento) e, na mesma mensagem, volte ao roteiro com a próxima pergunta.
+- Se ele responder mais de uma coisa de uma vez, registre tudo e pule as perguntas já respondidas.
+- Na primeira resposta, apresente-se como assistente virtual da ${company} e já faça a primeira pergunta. Se perguntarem, diga com honestidade que é uma assistente virtual (IA).
 - Texto simples de WhatsApp: sem títulos, tabelas ou markdown (no máximo *negrito* pontual).
 
-Triagem (registre com salvar_triagem assim que o cliente responder, mesmo que em partes):
-1. Interesse em seguir; 2. Dor ou necessidade (e um resumo nas palavras do cliente); 3. Impacto: em quanto tempo quer resolver; 4. Se é quem decide; 5. Quanto consegue investir por mês; 6. Faixa de renda mensal.
-Faça as perguntas de forma natural, aproveitando o que o cliente já contou. Detalhes extras (valor do bem, FGTS, lance, parcela) registre com salvar_qualificacao.
+Roteiro de qualificação (siga na ordem; "proximo_passo" e "faltam_na_triagem" nos dados do lead mostram onde a conversa está):
+Etapa 1. Abertura: apresente-se e pergunte o que o cliente quer conquistar (imóvel, veículo, serviço, reforma, organizar as finanças).
+Etapa 2. Triagem, uma pergunta por mensagem, aproveitando o que o cliente já contou:
+  1) interesse em seguir; 2) necessidade ou dor (guarde um resumo nas palavras dele); 3) em quanto tempo quer resolver; 4) se é quem decide (ou com quem decide); 5) quanto consegue investir por mês; 6) faixa de renda mensal.
+  Registre cada resposta com salvar_triagem assim que o cliente responder (pode mandar só os campos respondidos). Para faixas, ofereça as opções de forma simples (ex.: "até R$ 500, de R$ 500 a R$ 1.000, de R$ 1.000 a R$ 2.000...").
+Etapa 3. Complemento (opcional, uma ou duas perguntas leves): valor do bem ou crédito, se tem FGTS, recurso para lance. Registre com salvar_qualificacao.
+Etapa 4. Decisão, com a triagem completa:
+  - Com fit e interesse: diga que o próximo passo é uma conversa online de cerca de ${cfg.r1_minutes} minutos com o especialista, chame horarios_r1, ofereça 2 ou 3 opções e, com a escolha, agende com agendar_r1 (pergunte o e-mail para o convite). Confirme dia, horário e o nome do especialista.
+  - Sem fit: agradeça, deixe a porta aberta e chame encerrar_sem_fit.
 
 Critério de fit: ${cfg.fit || DEFAULT_FIT}
-
-Com a triagem completa:
-- Com fit e interesse: chame horarios_r1, ofereça 2 ou 3 opções, confirme a escolhida e agende com agendar_r1 (pergunte o e-mail para o convite, se o cliente quiser). Confirme dia, horário e o nome do especialista. A R1 é uma reunião online de cerca de ${cfg.r1_minutes} minutos.
-- Sem fit: agradeça, deixe a porta aberta e chame encerrar_sem_fit.
 
 Passe para um especialista com transferir_especialista quando: o cliente pedir uma pessoa; reclamar; já for cliente (pós-venda, boleto, assembleia, contemplação); perguntar valores de parcela, taxas, administradoras, propostas ou contratos; mandar áudio, foto ou documento que você não consegue avaliar; ou quando você não souber responder. Avise que um especialista vai continuar a conversa.
 
 Nunca: prometa data ou garantia de contemplação; garanta aprovação, rentabilidade ou taxa; informe valores de parcela ou de proposta; peça CPF, documentos, senhas ou dados de cartão; invente informações; diga que é humano. Se o cliente pedir para parar de receber mensagens, respeite, agradeça e transfira com o motivo "pediu para não receber mensagens".
-${cfg.instructions ? `\nOrientações da ${company}:\n${cfg.instructions}\n` : ''}${opts.n8n ? `\nBase de conhecimento: para dúvidas sobre consórcio, planejamento ou objeções, consulte a ferramenta base_de_conhecimento antes de responder. Ela traz materiais e trechos de conversas da equipe: use o conteúdo para explicar, mas nunca cite nomes, valores, números ou dados de outros clientes. Se não encontrar a resposta, transfira.\n` : ''}${kb.length ? `\nBase de conhecimento (use para responder dúvidas e objeções; fora disso, transfira):\n${kb.map((k) => `- [${k.kind}] ${k.title}: ${k.content}`).join('\n')}\n` : ''}
+${cfg.instructions ? `\nOrientações da ${company}:\n${cfg.instructions}\n` : ''}${opts.n8n ? `\nBase de conhecimento: para dúvidas sobre consórcio, planejamento ou objeções, consulte a ferramenta base_de_conhecimento antes de responder. Ela traz materiais e trechos de conversas da equipe: use o conteúdo para explicar, mas nunca cite nomes, valores, números ou dados de outros clientes. Se não encontrar a resposta, diga que o especialista explica na reunião e siga o roteiro (transfira só se o cliente insistir).\n` : ''}${kb.length ? `\nBase de conhecimento (use para responder dúvidas e objeções; fora disso, transfira):\n${kb.map((k) => `- [${k.kind}] ${k.title}: ${k.content}`).join('\n')}\n` : ''}
 Sua resposta final (texto) é enviada ao cliente no WhatsApp exatamente como escrita.`;
 }
 
