@@ -27,6 +27,7 @@ Arquivos desta pasta:
 | `fluxo-atendimento-whatsapp.json` | Fluxo principal: atendimento dos leads com IA. |
 | `fluxo-base-conhecimento-crm.json` | Todo dia às 3h, copia a base de conhecimento do CRM para o n8n. |
 | `fluxo-base-conhecimento-drive.json` | (Opcional) Arquivos de uma pasta do Google Drive entram na base. |
+| `fluxo-retomar-conversas.json` | A cada minuto, retoma as conversas devolvidas à IA que têm mensagens do lead sem resposta. |
 | `PROMPT-N8N.md` | Prompt para o construtor de IA do n8n gerar o mesmo fluxo (conta trial, premium ou outra). |
 
 Os fluxos são gerados a partir das ferramentas do agente do CRM (`npm run n8n:fluxos`), então os dois ficam sempre iguais.
@@ -209,7 +210,7 @@ A IA consulta essa base sozinha (ferramenta **base_de_conhecimento**) sempre que
 | Desligar a IA para todos | CRM › Integrações › Agente de IA no WhatsApp › desmarcar **Ligar o agente de IA** |
 | Que a IA atenda só alguns números | mesmo lugar, **Modo de teste** |
 | Assumir uma conversa | na conversa do CRM, **Assumir conversa** (a IA para) |
-| Devolver para a IA | na conversa, **Devolver para a IA** |
+| Devolver para a IA | na conversa, **Devolver para a IA**. Se o lead mandou mensagens que ficaram sem resposta, a IA lê o histórico e responde em até 1 minuto (fluxo **Vero - Retomar conversas devolvidas**) e continua a qualificação de onde parou. A mensagem de cortesia de quando a IA falhou não conta como resposta. |
 | Voltar para a IA do próprio CRM (sem n8n) | Provedor de IA: Gemini ou Claude |
 
 Quando alguém da equipe responde pelo CRM ou pelo celular, a IA para naquela conversa. A IA também passa a conversa para o especialista quando agenda a R1, quando o lead pede uma pessoa, quando não há fit ou quando o modelo falha (o lead recebe uma mensagem de cortesia).
@@ -244,7 +245,7 @@ Quando alguém da equipe responde pelo CRM ou pelo celular, a IA para naquela co
 | `vero-whatsapp registros-n8n` | Registros do n8n (Ctrl+C para sair) |
 | `vero-whatsapp dados` | Endereços, login do n8n e chave do conector |
 | `sudo bash instalar-n8n.sh` | Rodar de novo: atualiza a configuração e mantém conta, fluxos e credenciais. Também serve para trocar o token ou a chave (informe o novo valor). |
-| `sudo REIMPORTAR=1 bash instalar-n8n.sh` | Troca os fluxos pelos originais (apaga as mudanças feitas neles no n8n) |
+| `sudo REIMPORTAR=1 bash instalar-n8n.sh` | Troca os fluxos pelos originais. Antes, guarda a versão atual de cada um em `/opt/vero-whatsapp/backup-fluxos/` (para importar de volta no n8n, se precisar) |
 
 **Rodar de novo o instalador do conector** (`instalar-evolution.sh`) mantém o n8n: ele reconhece a instalação do n8n.
 
@@ -255,6 +256,7 @@ Quando alguém da equipe responde pelo CRM ou pelo celular, a IA para naquela co
 | A IA não responde e nada aparece em Executions no n8n | O conector não está avisando o n8n. Rode `sudo bash instalar-n8n.sh` de novo; confira `vero-whatsapp situacao` (n8n "Up"). |
 | Executions param em **IA atende?** | O CRM disse que a IA não atende. Abra a execução e veja `motivo` no nó **CRM - Conversa**: `ia_desligada`, `modo_de_teste`, `com_especialista`, `equipe_ja_atendia`, `agente_do_crm` (o provedor no CRM não é o n8n), `ocupada` (outra resposta em andamento). |
 | Erro 401 em **CRM - Conversa** | Token errado ou trocado. Gere outro no CRM e rode o instalador informando o novo token (ou edite a credencial **CRM Vero (token do n8n)**: valor `Bearer crm_n8n_...`). |
+| "n8n: Forbidden - perhaps check your credentials?" nas Últimas ações da IA | O Google recusou a chave do Gemini (403). Quase sempre é uma chave criada no Google Cloud para outra coisa (ex.: Google Agenda), sem a API do Gemini ativada, ou com restrição de site/IP. Crie a chave em **aistudio.google.com › Get API key**. No n8n, abra **Credentials › Google Gemini (Vero)**, cole em **API Key** e salve (o n8n testa a chave ao salvar). Depois, na conversa de teste, clique em **Devolver para a IA**. A partir desta versão, o fluxo confere a chave quando a IA falha e o CRM mostra o motivo exato do Google. |
 | O lead só recebe "Obrigada pela mensagem! Um especialista vai continuar..." | Essa é a mensagem de cortesia de quando a **IA falha** (o n8n tenta de novo uma vez antes). No CRM, Integrações › Agente de IA no WhatsApp mostra no topo "A IA falhou N vezes" com o erro e a causa provável: chave do Gemini inválida, limite do plano gratuito ou modelo inexistente (use "Buscar os modelos da conta"). Confira também a credencial **Google Gemini (Vero)** no n8n. |
 | "esta VPS não conseguiu falar com o CRM" | O instalador já testa os outros endereços da Vercel. Se nenhum responde, confira o endereço do CRM e mande o bloco "copie daqui". |
 | `https://n8n...` não abre | Registro A do DNS (passo 1.3) e portas 80/443 liberadas no painel da VPS. O HTTPS sai sozinho quando o DNS valer. |

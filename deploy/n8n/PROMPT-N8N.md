@@ -30,9 +30,11 @@ Um CRM próprio decide quando a IA atende e envia as respostas. Use exatamente e
 
 3. Set "Configuração": campo crm_url (texto) = "https://SEU-CRM.com.br", mantendo os demais campos (Include Other Input Fields).
 
-4. IF "É mensagem?": continua só se {{ $json.body.event }} for igual a "messages.upsert". A saída falsa fica sem ligação.
+3b. Execute Workflow Trigger "Retomada (conversa devolvida)": Input data mode "Accept all data", ligado também em "Configuração". O fluxo de retomada chama por aqui quando alguém clica em "Devolver para a IA".
 
-5. HTTP Request "CRM - Conversa": POST para {{ $json.crm_url }}/api/integracoes/n8n/mensagem.
+4. IF "É mensagem?": continua se {{ $json.body?.event }} for igual a "messages.upsert" OU se {{ $json.retomar === true }} for verdadeiro (combinação OR). A saída falsa fica sem ligação.
+
+5. HTTP Request "CRM - Conversa": POST para {{ $json.crm_url }}/api/integracoes/n8n/{{ $json.retomar === true ? "retomar" : "mensagem" }} (na retomada, o corpo é {"retomar": true}).
    - Autenticação: Generic Credential Type, Header Auth, credencial "CRM Vero (token do n8n)".
    - Corpo JSON: {{ JSON.stringify({ event: $json.body.event, instance: $json.body.instance, data: $json.body.data }) }}.
    - Tempo limite (timeout): 60000 ms. Ligue Retry On Fail com 3 tentativas e 3000 ms entre elas.
@@ -104,9 +106,17 @@ Um CRM próprio decide quando a IA atende e envia as respostas. Use exatamente e
    - Corpo JSON: {{ JSON.stringify({ conversa_id: $('CRM - Conversa').item.json.conversa_id, turno: $('CRM - Conversa').item.json.turno, texto: $json.output }) }}.
    - Retry On Fail: 3 tentativas.
 
-12. HTTP Request "Avisar falha ao CRM", ligado na saída de erro do "IA Vero".
+12. HTTP Request "Conferir a chave do Gemini", ligado na saída de erro do "IA Vero".
+   - GET https://generativelanguage.googleapis.com/v1beta/models?pageSize=1.
+   - Autenticação: Predefined Credential Type "Google Gemini (PaLM) API", credencial "Google Gemini (Vero)".
+   - Options › Response: Include Response Headers and Status ligado, Never Error ligado.
+   - Settings: Always Output Data ligado, On Error "Continue".
+   Serve para o CRM mostrar o motivo exato do Google quando a chave falha.
+
+13. HTTP Request "Avisar falha ao CRM", depois de "Conferir a chave do Gemini".
    - POST para a mesma URL de "Responder no WhatsApp", com a mesma credencial.
-   - Corpo JSON: {{ JSON.stringify({ conversa_id: $('CRM - Conversa').item.json.conversa_id, turno: $('CRM - Conversa').item.json.turno, erro: (typeof $json.error === 'object' && $json.error ? [$json.error.message, $json.error.description].filter(Boolean).join(' — ') : String($json.error || 'falha na IA')).slice(0, 400) }) }}.
+   - Corpo JSON: conversa_id e turno do "CRM - Conversa".
+   - Campo erro: a mensagem de erro do "IA Vero" ($('IA Vero').item.json.error). Quando o status da conferência for 400 ou mais, acrescente " | Google (chave do Gemini): " com $json.body.error.status, os motivos (details.reason) e $json.body.error.message.
 
 Não envie mensagens direto pela Evolution API: quem envia é o CRM, pelo "Responder no WhatsApp". Não crie memória de chat.
 ```
@@ -130,10 +140,11 @@ Não envie mensagens direto pela Evolution API: quem envia é o CRM, pelo "Respo
 - [ ] A saída de sucesso vai para **Responder no WhatsApp** (texto = `$json.output`), e a de erro para **Avisar falha ao CRM**.
 - [ ] Nada envia mensagem direto pela Evolution API.
 
-## Os outros dois fluxos
+## Os outros fluxos
 
-Os dois são simples. Importe os arquivos prontos:
+São simples. Importe os arquivos prontos:
 - `fluxo-base-conhecimento-crm.json`: todo dia às 3h, `GET /api/integracoes/n8n/conhecimento`, apaga a cópia anterior do CRM e grava na tabela `vero_conhecimento` com os Embeddings Gemini.
 - `fluxo-base-conhecimento-drive.json`: a cada hora, os arquivos de uma pasta do Google Drive entram na mesma tabela (novos e alterados entram; os que saem da pasta saem da base).
+- `fluxo-retomar-conversas.json`: a cada minuto, `GET /api/integracoes/n8n/pendentes`; havendo conversas devolvidas à IA com mensagens do lead sem resposta, chama o atendimento com {"retomar": true} (até 3 por minuto).
 
 Arquivo gerado por `npm run n8n:fluxos` a partir das ferramentas do agente do CRM.

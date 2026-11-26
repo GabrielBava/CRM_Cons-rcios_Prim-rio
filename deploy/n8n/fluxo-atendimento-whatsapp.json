@@ -36,10 +36,23 @@
     },
     {
       "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "66b04452-fbd1-4421-a83d-a64d501473bb",
+      "name": "Retomada (conversa devolvida)",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -400,
+        200
+      ]
+    },
+    {
+      "parameters": {
         "assignments": {
           "assignments": [
             {
-              "id": "bd6eb3b0-48a3-41ff-a263-63d66b4c9419",
+              "id": "208729ad-f5af-48ab-a937-53afc35358ee",
               "name": "crm_url",
               "value": "https://SEU-CRM.com.br",
               "type": "string"
@@ -49,7 +62,7 @@
         "includeOtherFields": true,
         "options": {}
       },
-      "id": "84b98ae2-ef35-41d0-af59-ba0d2e12f86d",
+      "id": "500aeeb3-6a83-4daf-a293-216e15d0334d",
       "name": "Configuração",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
@@ -69,21 +82,31 @@
           },
           "conditions": [
             {
-              "id": "0bc24eee-4305-44f1-acf8-e54efc7cb842",
-              "leftValue": "={{ $json.body.event }}",
+              "id": "19856eec-0a41-417a-a422-b3ce89cdb2ca",
+              "leftValue": "={{ $json.body?.event }}",
               "rightValue": "messages.upsert",
               "operator": {
                 "type": "string",
                 "operation": "equals"
               }
+            },
+            {
+              "id": "3033a1ab-7bf2-489a-acce-2f95a3752171",
+              "leftValue": "={{ $json.retomar === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
             }
           ],
-          "combinator": "and"
+          "combinator": "or"
         },
         "looseTypeValidation": true,
         "options": {}
       },
-      "id": "01d1d38b-f853-4019-aa15-50d6032e0be6",
+      "id": "f5cf2dd6-a352-4a29-a938-ed18b7c2f9df",
       "name": "É mensagem?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -95,17 +118,17 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $json.crm_url.replace(/\\/+$/, \"\") }}/api/integracoes/n8n/mensagem",
+        "url": "={{ $json.crm_url.replace(/\\/+$/, \"\") }}/api/integracoes/n8n/{{ $json.retomar === true ? \"retomar\" : \"mensagem\" }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ event: $json.body.event, instance: $json.body.instance, data: $json.body.data }) }}",
+        "jsonBody": "={{ JSON.stringify($json.retomar === true ? { retomar: true } : { event: $json.body.event, instance: $json.body.instance, data: $json.body.data }) }}",
         "options": {
           "timeout": 60000
         }
       },
-      "id": "9152a7bc-aadb-4b3e-a91e-cdfcc1d2b217",
+      "id": "0cb76530-2212-4c60-a22b-41eb5ffb7a9d",
       "name": "CRM - Conversa",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -134,7 +157,7 @@
           },
           "conditions": [
             {
-              "id": "0de9db0d-7153-40df-a575-b6ae0c6e52ad",
+              "id": "608b0724-d910-416e-ab1d-86775c00aa1c",
               "leftValue": "={{ $json.atender }}",
               "rightValue": "",
               "operator": {
@@ -149,7 +172,7 @@
         "looseTypeValidation": true,
         "options": {}
       },
-      "id": "e180f359-3c82-43a5-aefc-9d869f447c37",
+      "id": "4aa0f2c6-be6c-4ba7-aefb-7a6d4a0c29c7",
       "name": "IA atende?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -164,7 +187,7 @@
         "query": "SELECT coalesce(string_agg(doc, E'\\n\\n' ORDER BY titulo), '') AS diretrizes FROM (\n  SELECT metadata->>'titulo' AS titulo, '### ' || coalesce(metadata->>'titulo', 'Documento') || E'\\n' || left(string_agg(text, E'\\n' ORDER BY\n    coalesce((metadata->'loc'->>'pageNumber')::int, 0), coalesce((metadata->'loc'->'lines'->>'from')::int, 0), coalesce((metadata->>'line')::int, 0)), 15000) AS doc\n  FROM vero_conhecimento WHERE metadata->>'fonte' = 'drive' GROUP BY metadata->>'documento', metadata->>'titulo'\n) d",
         "options": {}
       },
-      "id": "54a31b9f-b6c2-46f2-a421-8cf2c41b389c",
+      "id": "3d208bca-cc93-428f-a272-15a57c0867fb",
       "name": "Diretrizes da Vero",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -190,7 +213,7 @@
           "maxIterations": 10
         }
       },
-      "id": "a07c7cb3-2173-4238-a942-faa4c3934ef5",
+      "id": "fb3f874d-a8be-4165-ae14-b400cec761f6",
       "name": "IA Vero",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 3.1,
@@ -210,7 +233,7 @@
           "temperature": 0.4
         }
       },
-      "id": "4b365a30-541e-4731-aa52-7860c4c79a94",
+      "id": "5797afc3-a04c-48dc-a3b2-f37763c5c080",
       "name": "Gemini",
       "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
       "typeVersion": 1.2,
@@ -234,7 +257,7 @@
         "includeDocumentMetadata": true,
         "options": {}
       },
-      "id": "7535fae4-1397-4a25-ac32-17e3cc8b5b67",
+      "id": "ac489e56-d9f8-4065-a337-15c8bd657313",
       "name": "base_de_conhecimento",
       "type": "@n8n/n8n-nodes-langchain.vectorStorePGVector",
       "typeVersion": 1.3,
@@ -253,7 +276,7 @@
       "parameters": {
         "modelName": "models/gemini-embedding-001"
       },
-      "id": "4af0d26e-29be-4a2f-a383-6ad58fe6e621",
+      "id": "dca439d5-cb02-46f0-a5a0-490245e9b08e",
       "name": "Embeddings Gemini",
       "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
       "typeVersion": 1,
@@ -282,7 +305,7 @@
           "timeout": 40000
         }
       },
-      "id": "ad1cd9a3-e72e-4b61-ae38-2cbf8f913afb",
+      "id": "cfe41323-87d9-4096-afaf-4040004c4a4b",
       "name": "salvar_triagem",
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.2,
@@ -311,7 +334,7 @@
           "timeout": 40000
         }
       },
-      "id": "8e424bfc-c04f-4519-a0f3-d6c70f568607",
+      "id": "0c73d041-61c4-4935-ac41-42572748b71d",
       "name": "salvar_qualificacao",
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.2,
@@ -340,7 +363,7 @@
           "timeout": 40000
         }
       },
-      "id": "740e4bbd-fa2c-44b5-a565-e63316094f7a",
+      "id": "2267a9fd-d6b3-4d36-a1ad-d0c45fae598e",
       "name": "horarios_r1",
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.2,
@@ -369,7 +392,7 @@
           "timeout": 40000
         }
       },
-      "id": "3e451aee-5d99-4277-a816-dd8684031f8e",
+      "id": "9a36a98e-23ba-4979-a0d0-2251819a4d65",
       "name": "agendar_r1",
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.2,
@@ -398,7 +421,7 @@
           "timeout": 40000
         }
       },
-      "id": "723e1b6e-ffac-4b28-a7f9-e41584d893cd",
+      "id": "18a49382-7b03-4004-ac64-6584ed0e2861",
       "name": "transferir_especialista",
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.2,
@@ -427,7 +450,7 @@
           "timeout": 40000
         }
       },
-      "id": "8ee35309-34fe-45aa-a793-a2c4ef0c4097",
+      "id": "bf599108-74d3-40a8-a1f9-25a14cd71417",
       "name": "encerrar_sem_fit",
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.2,
@@ -455,7 +478,7 @@
           "timeout": 30000
         }
       },
-      "id": "ddc2db71-d6dc-487e-a24c-e7085233d042",
+      "id": "6d638f7b-c324-4785-a0e1-8847253fd3d6",
       "name": "Responder no WhatsApp",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -475,23 +498,57 @@
     },
     {
       "parameters": {
+        "method": "GET",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "c876e0fd-d763-43a1-a0e1-c2b95fc38eb8",
+      "name": "Conferir a chave do Gemini",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1220,
+        120
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "VeroGemini000001",
+          "name": "Google Gemini (Vero)"
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "={{ $('CRM - Conversa').item.json.urls.responder }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ conversa_id: $('CRM - Conversa').item.json.conversa_id, turno: $('CRM - Conversa').item.json.turno, erro: (typeof $json.error === 'object' && $json.error ? [$json.error.message, $json.error.description].filter(Boolean).join(' — ') : String($json.error || 'falha na IA')).slice(0, 400) }) }}",
+        "jsonBody": "={{ JSON.stringify({ conversa_id: $('CRM - Conversa').item.json.conversa_id, turno: $('CRM - Conversa').item.json.turno, erro: (String((() => { const e = $('IA Vero').item.json.error; return typeof e === 'object' && e ? [e.message, e.description].filter(Boolean).join(' — ') : (e || 'falha na IA'); })()) + (($json.statusCode || 0) >= 400 ? ' | Google (chave do Gemini): ' + [$json.body?.error?.status, ($json.body?.error?.details || []).map((d) => d.reason).filter(Boolean).join(','), $json.body?.error?.message].filter(Boolean).join(' · ') : '')).slice(0, 500) }) }}",
         "options": {
           "timeout": 30000
         }
       },
-      "id": "9146a336-f8a6-4d61-a8ab-9b9831277908",
+      "id": "01710251-7ddd-49e0-a9a7-aa5b953abaa2",
       "name": "Avisar falha ao CRM",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1220,
+        1440,
         120
       ],
       "credentials": {
@@ -504,6 +561,17 @@
   ],
   "connections": {
     "WhatsApp (conector)": {
+      "main": [
+        [
+          {
+            "node": "Configuração",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retomada (conversa devolvida)": {
       "main": [
         [
           {
@@ -580,6 +648,17 @@
             "index": 0
           }
         ],
+        [
+          {
+            "node": "Conferir a chave do Gemini",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conferir a chave do Gemini": {
+      "main": [
         [
           {
             "node": "Avisar falha ao CRM",

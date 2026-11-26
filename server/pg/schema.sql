@@ -1,4 +1,4 @@
--- versão fa387333cc7eef88
+-- versão ddefcb7a308def21
 -- Schema do CRM Vero no Postgres (Supabase). Gerado por scripts/pg-schema.js a partir de server/db.js: não edite à mão.
 -- Idempotente: cria tabelas, colunas, índices e chaves estrangeiras que faltam; não apaga nada.
 CREATE TABLE IF NOT EXISTS "activities" (
@@ -1569,6 +1569,7 @@ CREATE TABLE IF NOT EXISTS "wa_conversations" (
   "ai_lock_at" text,
   "ai_seen_id" bigint,
   "ai_turns" bigint DEFAULT 0 NOT NULL,
+  "ai_resume_at" text,
   "lid" text
 );
 CREATE TABLE IF NOT EXISTS "wa_instance_access" (
@@ -2937,6 +2938,7 @@ ALTER TABLE "wa_conversations" ADD COLUMN IF NOT EXISTS "ai_updated_at" text;
 ALTER TABLE "wa_conversations" ADD COLUMN IF NOT EXISTS "ai_lock_at" text;
 ALTER TABLE "wa_conversations" ADD COLUMN IF NOT EXISTS "ai_seen_id" bigint;
 ALTER TABLE "wa_conversations" ADD COLUMN IF NOT EXISTS "ai_turns" bigint DEFAULT 0 NOT NULL;
+ALTER TABLE "wa_conversations" ADD COLUMN IF NOT EXISTS "ai_resume_at" text;
 ALTER TABLE "wa_conversations" ADD COLUMN IF NOT EXISTS "lid" text;
 ALTER TABLE "wa_instance_access" ADD COLUMN IF NOT EXISTS "level" text;
 ALTER TABLE "wa_instance_access" ADD COLUMN IF NOT EXISTS "updated_at" text;

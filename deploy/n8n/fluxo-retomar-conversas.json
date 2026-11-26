@@ -1,0 +1,187 @@
+{
+  "name": "Vero - Retomar conversas devolvidas",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Retomar conversas devolvidas à IA\nA cada minuto, pergunta ao CRM se alguém clicou em **Devolver para a IA** numa conversa com mensagens do lead sem resposta. Se houver, chama o fluxo **Vero - Atendimento no WhatsApp (IA)**, que lê o histórico e responde (até 3 conversas por minuto).\nAs execuções sem nada a fazer não ficam guardadas.",
+        "height": 220,
+        "width": 520,
+        "color": 4
+      },
+      "id": "29495d81-62a0-4e67-a1c4-dc2e12ee98e9",
+      "name": "Leia-me",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        -300
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "acf7c47f-0a4b-4088-a9c9-62c8c5880b14",
+      "name": "A cada minuto",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -400,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "bd6eb3b0-48a3-41ff-a263-63d66b4c9419",
+              "name": "crm_url",
+              "value": "https://SEU-CRM.com.br",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "84b98ae2-ef35-41d0-af59-ba0d2e12f86d",
+      "name": "Configuração",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.crm_url.replace(/\\/+$/, \"\") }}/api/integracoes/n8n/pendentes",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "1aa34afd-ea40-45ae-aa81-c8f415c94be9",
+      "name": "CRM - Conversas devolvidas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        40,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VeroCrmToken0001",
+          "name": "CRM Vero (token do n8n)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Uma chamada ao atendimento por conversa devolvida (até 3 por minuto)\nconst n = Math.min(3, Number($json.pendentes) || 0);\nreturn Array.from({ length: n }, () => ({ json: { retomar: true } }));"
+      },
+      "id": "7544395f-81e3-427a-a137-f45ad4bae912",
+      "name": "Uma por conversa",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "VeroAtendimento1",
+          "mode": "id"
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "cf9942d8-ac5f-4491-ad77-7ff93740dd1d",
+      "name": "Atendimento (retomar)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        480,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "A cada minuto": {
+      "main": [
+        [
+          {
+            "node": "Configuração",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuração": {
+      "main": [
+        [
+          {
+            "node": "CRM - Conversas devolvidas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CRM - Conversas devolvidas": {
+      "main": [
+        [
+          {
+            "node": "Uma por conversa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Uma por conversa": {
+      "main": [
+        [
+          {
+            "node": "Atendimento (retomar)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "timezone": "America/Sao_Paulo"
+  },
+  "id": "VeroRetomar00001",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "vero": "Gerado por scripts/n8n-fluxos.js (CRM Vero Consórcios)"
+  },
+  "tags": []
+}

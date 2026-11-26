@@ -605,6 +605,9 @@ function createRouter(db) {
   add('POST', '/api/integracoes/n8n/acao/:acao', ({ req, params, body }) => n8n.action(db, req, params.acao, body), { integration: true });
   add('POST', '/api/integracoes/n8n/acao', ({ req, body }) => n8n.action(db, req, body.acao, body), { integration: true });
   add('POST', '/api/integracoes/n8n/responder', ({ req, body }) => n8n.reply(db, req, body), { integration: true });
+  // Conversas devolvidas à IA com mensagens do lead esperando resposta (o fluxo de retomada do n8n confere a cada minuto)
+  add('GET', '/api/integracoes/n8n/pendentes', ({ req }) => n8n.pending(db, req), { integration: true });
+  add('POST', '/api/integracoes/n8n/retomar', ({ req }) => n8n.resume(db, req), { integration: true });
   // Webhook da Meta (API oficial do WhatsApp Business): verificação (GET) e mensagens/status (POST)
   add('GET', '/api/whatsapp/webhook', ({ query, res }) => wa.verifyWebhook(db, query, res), { integration: true });
   add('POST', '/api/whatsapp/webhook', ({ req, body }) => wa.receiveWebhook(db, req, body), { integration: true, bodyLimit: 4e6 });
