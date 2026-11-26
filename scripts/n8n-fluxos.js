@@ -143,10 +143,26 @@ Endereço do CRM: nó **Configuração**. Token: credencial **${CRED.crm.name}**
       parameters: { httpMethod: 'POST', path: 'vero-whatsapp', responseMode: 'onReceived', options: {} },
       id: uid('webhook'), name: 'WhatsApp (conector)', type: 'n8n-nodes-base.webhook', typeVersion: 2.1, position: [-400, 0], webhookId: 'b8f1e7a2-5c34-4d0e-9a61-7e2f0c9d4a11',
     },
+    {
+      parameters: { inputSource: 'passthrough' }, id: uid('retomada'), name: 'Retomada (conversa devolvida)', type: 'n8n-nodes-base.executeWorkflowTrigger', typeVersion: 1.1, position: [-400, 200],
+    },
     setNode('Configuração', [-180, 0], [['crm_url', CRM_PLACEHOLDER]]),
-    ifNode('É mensagem?', [40, 0], '={{ $json.body.event }}', { type: 'string', operation: 'equals' }, 'messages.upsert'),
-    http('CRM - Conversa', [260, -20], '={{ $json.crm_url.replace(/\\/+$/, "") }}/api/integracoes/n8n/mensagem',
-      '={{ JSON.stringify({ event: $json.body.event, instance: $json.body.instance, data: $json.body.data }) }}', { timeout: 60000, retry: true }),
+    {
+      parameters: {
+        conditions: {
+          options: { caseSensitive: true, leftValue: '', typeValidation: 'loose', version: 2 },
+          conditions: [
+            { id: uid('ev'), leftValue: '={{ $json.body?.event }}', rightValue: 'messages.upsert', operator: { type: 'string', operation: 'equals' } },
+            { id: uid('rt'), leftValue: '={{ $json.retomar === true }}', rightValue: '', operator: { type: 'boolean', operation: 'true', singleValue: true } },
+          ],
+          combinator: 'or',
+        },
+        looseTypeValidation: true, options: {},
+      },
+      id: uid('É mensagem?'), name: 'É mensagem?', type: 'n8n-nodes-base.if', typeVersion: 2.2, position: [40, 0],
+    },
+    http('CRM - Conversa', [260, -20], '={{ $json.crm_url.replace(/\\/+$/, "") }}/api/integracoes/n8n/{{ $json.retomar === true ? "retomar" : "mensagem" }}',
+      '={{ JSON.stringify($json.retomar === true ? { retomar: true } : { event: $json.body.event, instance: $json.body.instance, data: $json.body.data }) }}', { timeout: 60000, retry: true }),
     ifNode('IA atende?', [480, -20], '={{ $json.atender }}', { type: 'boolean', operation: 'true', singleValue: true }),
     {
       parameters: { operation: 'executeQuery', query: DIRETRIZES_SQL, options: {} },
@@ -196,6 +212,7 @@ Endereço do CRM: nó **Configuração**. Token: credencial **${CRED.crm.name}**
   ];
   const connections = {
     'WhatsApp (conector)': { main: [[{ node: 'Configuração', type: 'main', index: 0 }]] },
+    'Retomada (conversa devolvida)': { main: [[{ node: 'Configuração', type: 'main', index: 0 }]] },
     'Configuração': { main: [[{ node: 'É mensagem?', type: 'main', index: 0 }]] },
     'É mensagem?': { main: [[{ node: 'CRM - Conversa', type: 'main', index: 0 }], []] },
     'CRM - Conversa': { main: [[{ node: 'IA atende?', type: 'main', index: 0 }]] },
@@ -350,6 +367,36 @@ return saida;`),
   return flow('Vero - Base de conhecimento (Google Drive)', nodes, connections, { id: 'VeroBaseDrive001' });
 }
 
+/* ------------------------- 4) Retomar conversas devolvidas ------------------------- */
+
+function retomar() {
+  seq = 0;
+  const nodes = [
+    note('Leia-me', `## Retomar conversas devolvidas à IA
+A cada minuto, pergunta ao CRM se alguém clicou em **Devolver para a IA** numa conversa com mensagens do lead sem resposta. Se houver, chama o fluxo **Vero - Atendimento no WhatsApp (IA)**, que lê o histórico e responde (até 3 conversas por minuto).
+As execuções sem nada a fazer não ficam guardadas.`, [-420, -300], [520, 220], 4),
+    { parameters: { rule: { interval: [{ field: 'minutes', minutesInterval: 1 }] } }, id: uid('cron'), name: 'A cada minuto', type: 'n8n-nodes-base.scheduleTrigger', typeVersion: 1.2, position: [-400, 0] },
+    setNode('Configuração', [-180, 0], [['crm_url', CRM_PLACEHOLDER]], false),
+    http('CRM - Conversas devolvidas', [40, 0], '={{ $json.crm_url.replace(/\\/+$/, "") }}/api/integracoes/n8n/pendentes', null, { method: 'GET', timeout: 20000 }),
+    {
+      parameters: { jsCode: '// Uma chamada ao atendimento por conversa devolvida (até 3 por minuto)\nconst n = Math.min(3, Number($json.pendentes) || 0);\nreturn Array.from({ length: n }, () => ({ json: { retomar: true } }));' },
+      id: uid('code'), name: 'Uma por conversa', type: 'n8n-nodes-base.code', typeVersion: 2, position: [260, 0],
+    },
+    {
+      parameters: { source: 'database', workflowId: { __rl: true, value: 'VeroAtendimento1', mode: 'id' }, mode: 'each', options: { waitForSubWorkflow: true } },
+      id: uid('exec'), name: 'Atendimento (retomar)', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.1, position: [480, 0],
+    },
+  ];
+  nodes[3].onError = 'continueRegularOutput';
+  const connections = {
+    'A cada minuto': { main: [[{ node: 'Configuração', type: 'main', index: 0 }]] },
+    'Configuração': { main: [[{ node: 'CRM - Conversas devolvidas', type: 'main', index: 0 }]] },
+    'CRM - Conversas devolvidas': { main: [[{ node: 'Uma por conversa', type: 'main', index: 0 }]] },
+    'Uma por conversa': { main: [[{ node: 'Atendimento (retomar)', type: 'main', index: 0 }]] },
+  };
+  return flow('Vero - Retomar conversas devolvidas', nodes, connections, { id: 'VeroRetomar00001', settings: { saveDataSuccessExecution: 'none', saveManualExecutions: true } });
+}
+
 /* ------------------------- gravação ------------------------- */
 
 fs.mkdirSync(OUT, { recursive: true });
@@ -357,6 +404,7 @@ const files = {
   'fluxo-atendimento-whatsapp.json': atendimento(),
   'fluxo-base-conhecimento-crm.json': baseCrm(),
   'fluxo-base-conhecimento-drive.json': baseDrive(),
+  'fluxo-retomar-conversas.json': retomar(),
 };
 for (const [f, wf] of Object.entries(files)) {
   fs.writeFileSync(path.join(OUT, f), `${JSON.stringify(wf, null, 2)}\n`);
@@ -408,9 +456,11 @@ Um CRM próprio decide quando a IA atende e envia as respostas. Use exatamente e
 
 3. Set "Configuração": campo crm_url (texto) = "${CRM_PLACEHOLDER}", mantendo os demais campos (Include Other Input Fields).
 
-4. IF "É mensagem?": continua só se {{ $json.body.event }} for igual a "messages.upsert". A saída falsa fica sem ligação.
+3b. Execute Workflow Trigger "Retomada (conversa devolvida)": Input data mode "Accept all data", ligado também em "Configuração". O fluxo de retomada chama por aqui quando alguém clica em "Devolver para a IA".
 
-5. HTTP Request "CRM - Conversa": POST para {{ $json.crm_url }}/api/integracoes/n8n/mensagem.
+4. IF "É mensagem?": continua se {{ $json.body?.event }} for igual a "messages.upsert" OU se {{ $json.retomar === true }} for verdadeiro (combinação OR). A saída falsa fica sem ligação.
+
+5. HTTP Request "CRM - Conversa": POST para {{ $json.crm_url }}/api/integracoes/n8n/{{ $json.retomar === true ? "retomar" : "mensagem" }} (na retomada, o corpo é {"retomar": true}).
    - Autenticação: Generic Credential Type, Header Auth, credencial "CRM Vero (token do n8n)".
    - Corpo JSON: {{ JSON.stringify({ event: $json.body.event, instance: $json.body.instance, data: $json.body.data }) }}.
    - Tempo limite (timeout): 60000 ms. Ligue Retry On Fail com 3 tentativas e 3000 ms entre elas.
@@ -491,11 +541,12 @@ Não envie mensagens direto pela Evolution API: quem envia é o CRM, pelo "Respo
 - [ ] A saída de sucesso vai para **Responder no WhatsApp** (texto = \`$json.output\`), e a de erro para **Avisar falha ao CRM**.
 - [ ] Nada envia mensagem direto pela Evolution API.
 
-## Os outros dois fluxos
+## Os outros fluxos
 
-Os dois são simples. Importe os arquivos prontos:
+São simples. Importe os arquivos prontos:
 - \`fluxo-base-conhecimento-crm.json\`: todo dia às 3h, \`GET /api/integracoes/n8n/conhecimento\`, apaga a cópia anterior do CRM e grava na tabela \`${TABLE}\` com os Embeddings Gemini.
 - \`fluxo-base-conhecimento-drive.json\`: a cada hora, os arquivos de uma pasta do Google Drive entram na mesma tabela (novos e alterados entram; os que saem da pasta saem da base).
+- \`fluxo-retomar-conversas.json\`: a cada minuto, \`GET /api/integracoes/n8n/pendentes\`; havendo conversas devolvidas à IA com mensagens do lead sem resposta, chama o atendimento com {"retomar": true} (até 3 por minuto).
 
 Arquivo gerado por \`npm run n8n:fluxos\` a partir das ferramentas do agente do CRM.
 `;

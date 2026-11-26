@@ -4041,6 +4041,28 @@ test('Agente de IA no n8n: token próprio, mensagem repassada pelo n8n, ações 
     assert.ok(lastErr && lastErr.count >= 1);
     assert.match(lastErr.detail, /Gemini: 429/);
 
+    // Devolver para a IA com a mensagem do lead sem resposta (a cortesia não conta): o n8n retoma e a IA responde
+    const conv4 = t4.data.conversa_id;
+    const give = await call('admin', 'POST', `/api/whatsapp/conversas/${conv4}/ia`, { acao: 'devolver' });
+    assert.equal(give.status, 200, JSON.stringify(give.data));
+    assert.equal(give.data.retomada, 'n8n');
+    assert.equal(give.data.pendentes, 1);
+    assert.equal((await n8n('GET', '/pendentes')).data.pendentes, 1);
+    const rt = await n8n('POST', '/retomar', {});
+    assert.equal(rt.data.atender, true, JSON.stringify(rt.data));
+    assert.equal(rt.data.conversa_id, conv4);
+    assert.match(rt.data.mensagem, /Bom dia/, 'a mensagem que ficou sem resposta');
+    assert.match(rt.data.sistema, /Retomada: o especialista devolveu/);
+    assert.doesNotMatch(rt.data.sistema, /Obrigada pela mensagem! Um especialista/, 'a cortesia não entra no histórico');
+    assert.equal((await n8n('POST', '/responder', { conversa_id: conv4, turno: rt.data.turno, texto: 'Desculpe a demora! Me conta: o que você quer conquistar?' })).data.enviado, true);
+    assert.equal((await n8n('GET', '/pendentes')).data.pendentes, 0);
+    assert.equal((await n8n('POST', '/retomar', {})).data.motivo, 'nada_pendente');
+    // Sem mensagem pendente (a última é a resposta da IA), devolver não agenda retomada
+    await call('admin', 'POST', `/api/whatsapp/conversas/${conv4}/ia`, { acao: 'assumir' });
+    const give2 = await call('admin', 'POST', `/api/whatsapp/conversas/${conv4}/ia`, { acao: 'devolver' });
+    assert.equal(give2.data.retomada, null);
+    assert.equal((await n8n('GET', '/pendentes')).data.pendentes, 0);
+
     // Modo de teste e IA desligada: o n8n não responde
     await call('admin', 'PUT', '/api/whatsapp/agente', { test_numbers: '51 99999-0000' });
     // (número fora da lista nem entra no CRM: o número central só registra os autorizados)
@@ -4069,6 +4091,60 @@ test('Agente de IA no n8n: token próprio, mensagem repassada pelo n8n, ações 
     delete process.env.WA_AGENT_DEBOUNCE_MS;
     delete process.env.N8N_WAIT_LOCK_MS;
     await call('admin', 'PUT', '/api/whatsapp/agente', { enabled: false, provider: 'gemini', test_numbers: '', default_owner_id: null, n8n_transcripts: false });
+    await call('admin', 'PUT', '/api/whatsapp/lite/config', { sandbox: false });
+  }
+});
+
+test('Devolver para a IA: o agente do CRM lê o histórico e responde na hora a mensagem que ficou sem resposta (a cortesia não conta)', async () => {
+  const llm = require('../server/services/llm');
+  process.env.WA_AGENT_DEBOUNCE_MS = '0';
+  await call('admin', 'PUT', '/api/whatsapp/lite/config', { url: '', clear_key: true, sandbox: true });
+  const inst = await call('admin', 'POST', '/api/whatsapp/lite/instancias', { name: 'Central Retomada' });
+  await call('admin', 'POST', `/api/whatsapp/lite/instancias/${inst.data.id}/simular-conexao`, { phone: '5151960001111' });
+  const token = appDb.prepare('SELECT webhook_token FROM wa_instances WHERE id = ?').get(inst.data.id).webhook_token;
+  const c1 = await userId('c1@t.com');
+  let seq = 0;
+  const say = (text) => fetch(`${base}/api/whatsapp/lite/webhook/${token}`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event: 'messages.upsert', data: { key: { remoteJid: '5511931110001@s.whatsapp.net', fromMe: false, id: `RT-${++seq}` }, pushName: 'Renata', message: { conversation: text }, messageTimestamp: Math.floor(Date.now() / 1000) } }) }).then((r) => r.json());
+  let fail = true;
+  const seen = [];
+  llm.setGeminiFetch(async (url, init) => {
+    seen.push(JSON.parse(init.body));
+    if (fail) return { ok: false, status: 403, json: async () => ({ error: { code: 403, status: 'PERMISSION_DENIED', message: 'Generative Language API has not been used in project 1' } }) };
+    return { ok: true, status: 200, json: async () => ({ candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ text: 'Oi, Renata! Desculpe a demora. Me conta: o que você quer conquistar com o consórcio?' }] } }], usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 } }) };
+  });
+  try {
+    await call('admin', 'PUT', '/api/whatsapp/agente', { enabled: true, channel: 'lite', instance_id: inst.data.id, provider: 'gemini', gemini_api_key: 'AIza-teste-retomada', default_owner_id: c1, test_numbers: '' });
+    // A IA falha: o lead recebe a cortesia e a conversa vai para o especialista
+    await say('Oi, quero saber do consórcio de carro');
+    const conv = appDb.prepare("SELECT * FROM wa_conversations WHERE peer = '5511931110001'").get();
+    assert.equal(conv.ai_status, 'humano');
+    const last = () => appDb.prepare("SELECT body, ai FROM wa_messages WHERE conversation_id = ? AND direction = 'out' ORDER BY id DESC LIMIT 1").get(conv.id);
+    assert.match(last().body, /Obrigada pela mensagem/);
+    // Chave trocada; o especialista devolve: a IA responde na hora, lendo o histórico sem a cortesia
+    fail = false;
+    seen.length = 0;
+    const r = await call('admin', 'POST', `/api/whatsapp/conversas/${conv.id}/ia`, { acao: 'devolver' });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.equal(r.data.retomada, 'crm');
+    assert.equal(r.data.respondeu, true);
+    assert.equal(r.data.ai_status, 'ativa');
+    assert.match(last().body, /Desculpe a demora/);
+    assert.equal(last().ai, 1);
+    const sent = JSON.stringify(seen[0].contents);
+    assert.match(sent, /consórcio de carro/);
+    assert.doesNotMatch(sent, /Obrigada pela mensagem/, 'a cortesia não vai para a IA');
+    // Devolver de novo sem nada pendente: não chama a IA
+    await call('admin', 'POST', `/api/whatsapp/conversas/${conv.id}/ia`, { acao: 'assumir' });
+    const n = seen.length;
+    const r2 = await call('admin', 'POST', `/api/whatsapp/conversas/${conv.id}/ia`, { acao: 'devolver' });
+    assert.equal(r2.data.retomada, null);
+    assert.equal(seen.length, n);
+  } finally {
+    llm.setGeminiFetch(null);
+    delete process.env.WA_AGENT_DEBOUNCE_MS;
+    await call('admin', 'PUT', '/api/whatsapp/agente', { enabled: false, default_owner_id: null });
+    await call('admin', 'PUT', '/api/ia/config', { clear_gemini_key: true });
     await call('admin', 'PUT', '/api/whatsapp/lite/config', { sandbox: false });
   }
 });

@@ -92,15 +92,15 @@ async function message(db, req, body = {}) {
   return startTurn(db, req, job.conv, job.msg, registered);
 }
 
-async function startTurn(db, req, convId, msgId, registered) {
+async function startTurn(db, req, convId, msgId, registered, opts = {}) {
   const ag = agent();
   const no = (motivo) => ({ atender: false, motivo, conversa_id: convId, registradas: registered });
   let w = conv(db, convId);
   const gate = ag.gate(db, w);
   if (gate) return no(gate);
   if (ag.config(db).provider !== 'n8n') return no('agente_do_crm');
-  // Junta mensagens seguidas: só quem recebeu a última responde
-  const wait = ag.debounceMs();
+  // Junta mensagens seguidas: só quem recebeu a última responde (na retomada, sem esperar)
+  const wait = opts.retomada ? 0 : ag.debounceMs();
   if (wait) await sleep(wait);
   if (db.prepare("SELECT 1 FROM wa_messages WHERE conversation_id = ? AND direction = 'in' AND id > ?").get(convId, msgId)) return no('nova_mensagem');
   // Trava da conversa: uma resposta por vez (a anterior termina e esta segue)
@@ -136,7 +136,7 @@ async function startTurn(db, req, convId, msgId, registered) {
       assistente: cfg.name,
       // Modelo do Gemini escolhido no CRM (o nó Gemini do fluxo usa este valor)
       modelo_gemini: `models/${cfg.gemini_model || require('./llm').GEMINI_DEFAULT}`,
-      sistema: `${ag.systemPrompt(db, cfg, { n8n: true })}\n\nDados do lead no CRM (atualizados agora):\n${JSON.stringify(ctx.data)}${historico ? `\n\nConversa até aqui (a mais antiga primeiro):\n${historico}` : ''}`,
+      sistema: `${ag.systemPrompt(db, cfg, { n8n: true })}\n\nDados do lead no CRM (atualizados agora):\n${JSON.stringify(ctx.data)}${historico ? `\n\nConversa até aqui (a mais antiga primeiro):\n${historico}` : ''}${opts.retomada ? '\n\nRetomada: o especialista devolveu esta conversa para você agora. Leia o histórico, responda o que o cliente mandou e ficou sem resposta (se fizer sentido, peça desculpas pela demora em uma frase) e continue o roteiro com a próxima pergunta.' : ''}`,
       mensagem, lead: { nome: c.name, codigo: c.code, telefone: w.peer || w.wa_id || null },
       urls: { acao: `${base}/api/integracoes/n8n/acao`, responder: `${base}/api/integracoes/n8n/responder` },
     };
@@ -156,6 +156,11 @@ function transcript(db, w) {
     const k = KIND_TEXT[m.kind];
     return k ? `${k}${m.body && !/^(Foto|Áudio|Vídeo|Documento|Figurinha)$/.test(m.body) ? ` ${m.body}` : ''}` : m.body || '';
   };
+  // A mensagem de cortesia (falha da IA) não conta como resposta nem entra no histórico
+  const ag = agent();
+  const real = rows.filter((m) => !ag.isCourtesy(m));
+  rows.length = 0;
+  rows.push(...real);
   let cut = rows.length;
   while (cut > 0 && rows[cut - 1].direction === 'in') cut--;
   const before = rows.slice(0, cut).map((m) => {
@@ -208,7 +213,7 @@ async function action(db, req, name, body = {}) {
   return out;
 }
 
-const FALLBACK = 'Obrigada pela mensagem! Um especialista da nossa equipe vai continuar o seu atendimento em instantes.';
+const FALLBACK = () => agent().FALLBACK;
 
 async function reply(db, req, body = {}) {
   authenticate(db, req);
@@ -220,7 +225,7 @@ async function reply(db, req, body = {}) {
     if (body.erro) {
       ag.log(db, w, 'erro', `n8n: ${String(body.erro).slice(0, 300)}`);
       ag.applyHandoff(db, w, { contact: db.prepare('SELECT name FROM contacts WHERE id = ?').get(w.contact_id), handoff: { status: 'humano', reason: 'A IA ficou indisponível (fluxo do n8n)' } });
-      if (!text) text = FALLBACK;
+      if (!text) text = FALLBACK();
     }
     w = conv(db, w.id);
     if (w.ai_status === 'pausada') return { enviado: false, motivo: 'assumida' };
@@ -241,6 +246,28 @@ async function reply(db, req, body = {}) {
   } finally {
     db.prepare('UPDATE wa_conversations SET ai_lock_at = NULL WHERE id = ? AND ai_lock_at = ?').run(w.id, turno);
   }
+}
+
+/* ------------------------- Retomada de conversas devolvidas ------------------------- */
+
+/** Quantas conversas foram devolvidas à IA com mensagens do lead esperando resposta (o n8n confere a cada minuto). */
+function pending(db, req) {
+  authenticate(db, req);
+  const n = db.prepare("SELECT COUNT(*) AS n FROM wa_conversations WHERE ai_resume_at IS NOT NULL AND ai_status = 'ativa'").get().n;
+  return { pendentes: n };
+}
+
+/** Retoma a conversa devolvida mais antiga: o mesmo retorno de /mensagem, sem esperar e com o aviso de retomada. */
+async function resume(db, req) {
+  authenticate(db, req);
+  db.prepare("UPDATE wa_conversations SET ai_resume_at = NULL WHERE ai_resume_at IS NOT NULL AND COALESCE(ai_status, '') <> 'ativa'").run();
+  const w = db.prepare("SELECT * FROM wa_conversations WHERE ai_resume_at IS NOT NULL AND ai_status = 'ativa' ORDER BY ai_resume_at, id LIMIT 1").get();
+  if (!w) return { atender: false, motivo: 'nada_pendente' };
+  // Só uma retomada por conversa (outra chamada ao mesmo tempo pega a próxima)
+  if (!db.prepare('UPDATE wa_conversations SET ai_resume_at = NULL WHERE id = ? AND ai_resume_at = ?').run(w.id, w.ai_resume_at).changes) return { atender: false, motivo: 'ocupada' };
+  const pend = agent().pendingInbound(db, w.id);
+  if (!pend) return { atender: false, motivo: 'sem_mensagem', conversa_id: w.id };
+  return startTurn(db, req, w.id, pend.last, 0, { retomada: true });
 }
 
 /* ------------------------- Conferência e base de conhecimento ------------------------- */
@@ -301,4 +328,4 @@ function knowledge(db, req) {
   return { empresa: company, total: docs.length, transcricoes: transcripts, documentos: docs };
 }
 
-module.exports = { authenticate, rotateToken, info, message, action, reply, status, knowledge, mask, transcript, TURN_MS };
+module.exports = { authenticate, rotateToken, info, message, action, reply, status, knowledge, pending, resume, mask, transcript, TURN_MS };

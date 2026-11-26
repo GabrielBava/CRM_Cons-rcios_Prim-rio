@@ -30,9 +30,11 @@ Um CRM próprio decide quando a IA atende e envia as respostas. Use exatamente e
 
 3. Set "Configuração": campo crm_url (texto) = "https://SEU-CRM.com.br", mantendo os demais campos (Include Other Input Fields).
 
-4. IF "É mensagem?": continua só se {{ $json.body.event }} for igual a "messages.upsert". A saída falsa fica sem ligação.
+3b. Execute Workflow Trigger "Retomada (conversa devolvida)": Input data mode "Accept all data", ligado também em "Configuração". O fluxo de retomada chama por aqui quando alguém clica em "Devolver para a IA".
 
-5. HTTP Request "CRM - Conversa": POST para {{ $json.crm_url }}/api/integracoes/n8n/mensagem.
+4. IF "É mensagem?": continua se {{ $json.body?.event }} for igual a "messages.upsert" OU se {{ $json.retomar === true }} for verdadeiro (combinação OR). A saída falsa fica sem ligação.
+
+5. HTTP Request "CRM - Conversa": POST para {{ $json.crm_url }}/api/integracoes/n8n/{{ $json.retomar === true ? "retomar" : "mensagem" }} (na retomada, o corpo é {"retomar": true}).
    - Autenticação: Generic Credential Type, Header Auth, credencial "CRM Vero (token do n8n)".
    - Corpo JSON: {{ JSON.stringify({ event: $json.body.event, instance: $json.body.instance, data: $json.body.data }) }}.
    - Tempo limite (timeout): 60000 ms. Ligue Retry On Fail com 3 tentativas e 3000 ms entre elas.
@@ -138,10 +140,11 @@ Não envie mensagens direto pela Evolution API: quem envia é o CRM, pelo "Respo
 - [ ] A saída de sucesso vai para **Responder no WhatsApp** (texto = `$json.output`), e a de erro para **Avisar falha ao CRM**.
 - [ ] Nada envia mensagem direto pela Evolution API.
 
-## Os outros dois fluxos
+## Os outros fluxos
 
-Os dois são simples. Importe os arquivos prontos:
+São simples. Importe os arquivos prontos:
 - `fluxo-base-conhecimento-crm.json`: todo dia às 3h, `GET /api/integracoes/n8n/conhecimento`, apaga a cópia anterior do CRM e grava na tabela `vero_conhecimento` com os Embeddings Gemini.
 - `fluxo-base-conhecimento-drive.json`: a cada hora, os arquivos de uma pasta do Google Drive entram na mesma tabela (novos e alterados entram; os que saem da pasta saem da base).
+- `fluxo-retomar-conversas.json`: a cada minuto, `GET /api/integracoes/n8n/pendentes`; havendo conversas devolvidas à IA com mensagens do lead sem resposta, chama o atendimento com {"retomar": true} (até 3 por minuto).
 
 Arquivo gerado por `npm run n8n:fluxos` a partir das ferramentas do agente do CRM.

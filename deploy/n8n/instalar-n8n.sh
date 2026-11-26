@@ -22,7 +22,7 @@ RAW="https://raw.githubusercontent.com/gabrielbava/crm_cons-rcios_prim-rio/$REF"
 N8N_IMAGEM="n8nio/n8n:2.49.6"
 PG_IMAGEM="pgvector/pgvector:pg17"
 AQUI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FLUXOS="fluxo-atendimento-whatsapp.json fluxo-base-conhecimento-crm.json fluxo-base-conhecimento-drive.json"
+FLUXOS="fluxo-atendimento-whatsapp.json fluxo-base-conhecimento-crm.json fluxo-base-conhecimento-drive.json fluxo-retomar-conversas.json"
 
 etapa() { printf '\n==> %s\n' "$*"; }
 aviso() { printf 'Aviso: %s\n' "$*"; }
@@ -390,30 +390,45 @@ if ! docker compose exec -T n8n n8n export:credentials --id=VeroGDrive000001 --o
 fi
 
 EXISTENTES="$(docker compose exec -T n8n n8n list:workflow 2>/dev/null | cut -d'|' -f1 || true)"
+# Atendimento de uma versão antiga (sem o gatilho da retomada): atualiza sozinho, guardando uma cópia antes
+ATUALIZAR_ATENDIMENTO=0
+if printf '%s\n' "$EXISTENTES" | grep -qx VeroAtendimento1 \
+  && ! docker compose exec -T n8n n8n export:workflow --id=VeroAtendimento1 2>/dev/null | grep -q executeWorkflowTrigger; then
+  ATUALIZAR_ATENDIMENTO=1
+fi
+mkdir -p "$PASTA/backup-fluxos"
 IMPORTOU=0
 for f in $FLUXOS; do
   case "$f" in
     fluxo-atendimento-whatsapp.json) ID=VeroAtendimento1 ;;
     fluxo-base-conhecimento-crm.json) ID=VeroBaseCrm00001 ;;
+    fluxo-retomar-conversas.json) ID=VeroRetomar00001 ;;
     *) ID=VeroBaseDrive001 ;;
   esac
-  if printf '%s\n' "$EXISTENTES" | grep -qx "$ID" && [ -z "${REIMPORTAR:-}" ]; then
-    # Pasta do Drive nova: o fluxo do Drive é trocado pelo original já com a pasta
-    if [ "$ID" = VeroBaseDrive001 ] && [ -n "$DRIVE_PASTA" ] && [ "$DRIVE_PASTA" != "$DRIVE_ANTES" ]; then
-      echo "Pasta do Drive nova: atualizando o fluxo do Drive."
-    else
-      echo "Fluxo $f já existe no n8n (mantido; REIMPORTAR=1 para trocar pelo original)."
-      continue
+  if printf '%s\n' "$EXISTENTES" | grep -qx "$ID"; then
+    if [ -z "${REIMPORTAR:-}" ]; then
+      if [ "$ID" = VeroBaseDrive001 ] && [ -n "$DRIVE_PASTA" ] && [ "$DRIVE_PASTA" != "$DRIVE_ANTES" ]; then
+        # Pasta do Drive nova: o fluxo do Drive é trocado pelo original já com a pasta
+        echo "Pasta do Drive nova: atualizando o fluxo do Drive."
+      elif [ "$ID" = VeroAtendimento1 ] && [ "$ATUALIZAR_ATENDIMENTO" = 1 ]; then
+        echo "Fluxo de atendimento de uma versão antiga: atualizando (retomada de conversas devolvidas e conferência da chave)."
+      else
+        echo "Fluxo $f já existe no n8n (mantido; REIMPORTAR=1 para trocar pelo original)."
+        continue
+      fi
     fi
+    # Cópia da versão atual antes de trocar (para recuperar mudanças feitas no n8n)
+    docker compose exec -T n8n n8n export:workflow --id="$ID" > "$PASTA/backup-fluxos/$ID-$(date +%Y%m%d-%H%M%S).json" 2>/dev/null || true
   fi
   docker compose exec -T n8n n8n import:workflow --input="/tmp/vero-importar/$f" >/dev/null 2>&1 || falha "não foi possível importar o fluxo $f."
   echo "Fluxo importado: $f"
   IMPORTOU=1
 done
 if [ "$IMPORTOU" = 1 ]; then
-  # Publica o atendimento e a base do CRM (o do Google Drive fica para depois de escolher a pasta)
+  # Publica o atendimento, a base do CRM e a retomada (o do Google Drive fica para depois de conectar a conta Google)
   docker compose exec -T n8n n8n publish:workflow --id=VeroAtendimento1 >/dev/null 2>&1 || aviso "publique o fluxo \"Vero - Atendimento no WhatsApp (IA)\" no n8n."
   docker compose exec -T n8n n8n publish:workflow --id=VeroBaseCrm00001 >/dev/null 2>&1 || aviso "publique o fluxo \"Vero - Base de conhecimento (CRM)\" no n8n."
+  docker compose exec -T n8n n8n publish:workflow --id=VeroRetomar00001 >/dev/null 2>&1 || aviso "publique o fluxo \"Vero - Retomar conversas devolvidas\" no n8n."
 fi
 docker compose exec -T -u root n8n rm -rf /tmp/vero-importar >/dev/null 2>&1 || true
 rm -rf "$TMP"

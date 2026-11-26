@@ -35,6 +35,30 @@ const DEFAULTS = {
   n8n_transcripts: false,
 };
 const STATUS_LABEL = { ativa: 'IA atendendo', humano: 'Com o especialista', pausada: 'Especialista assumiu' };
+// Mensagem de cortesia quando a IA falha: não conta como resposta (ao devolver, a IA responde o que ficou pendente)
+const FALLBACK = 'Obrigada pela mensagem! Um especialista da nossa equipe vai continuar o seu atendimento em instantes.';
+const isCourtesy = (m) => m && m.direction === 'out' && !!m.ai && m.body === FALLBACK;
+
+/**
+ * Mensagens do lead que ficaram sem resposta de verdade (depois da última resposta da IA ou de uma pessoa, sem contar
+ * a mensagem de cortesia). Devolve a última delas e quantas são, ou null.
+ */
+function pendingInbound(db, convId) {
+  const rows = db.prepare('SELECT id, direction, ai, body FROM wa_messages WHERE conversation_id = ? ORDER BY id DESC LIMIT 60').all(convId);
+  let last = null;
+  let count = 0;
+  let replyId = 0;
+  for (const m of rows) {
+    if (m.direction === 'out') {
+      if (isCourtesy(m)) continue;
+      replyId = m.id;
+      break;
+    }
+    if (!last) last = m.id;
+    count++;
+  }
+  return last ? { last, count, replyId } : null;
+}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const debounceMs = () => Math.max(0, Number(process.env.WA_AGENT_DEBOUNCE_MS ?? 6000));
 const MAX_TURN_MS = 45000;
@@ -215,20 +239,33 @@ function setStatus(db, convId, status, reason) {
 }
 
 /** Especialista assume a conversa (a IA para) ou devolve para a IA. */
-function control(db, user, convId, data = {}) {
+async function control(db, user, convId, data = {}) {
   const wa = require('./whatsapp');
   const w = wa.loadConvForAgent(db, user, convId);
   const action = String(data.acao || data.action || '');
   if (action === 'assumir') {
     setStatus(db, w.id, 'pausada', `Assumida por ${user.name}`);
+    db.prepare('UPDATE wa_conversations SET ai_resume_at = NULL WHERE id = ?').run(w.id);
     log(db, w, 'assumida', user.name);
     if (!w.assigned_to && user.id) db.prepare('UPDATE wa_conversations SET assigned_to = ? WHERE id = ?').run(user.id, w.id);
-  } else if (action === 'devolver') {
-    if (!handlesConversation(db, w)) throw badRequest('Esta conversa não é do número atendido pelo agente de IA.');
-    setStatus(db, w.id, 'ativa', `Devolvida à IA por ${user.name}`);
-    log(db, w, 'devolvida', user.name);
-  } else throw badRequest('Ação inválida: use "assumir" ou "devolver".');
-  return { ai_status: action === 'assumir' ? 'pausada' : 'ativa' };
+    return { ai_status: 'pausada' };
+  }
+  if (action !== 'devolver') throw badRequest('Ação inválida: use "assumir" ou "devolver".');
+  if (!handlesConversation(db, w)) throw badRequest('Esta conversa não é do número atendido pelo agente de IA.');
+  setStatus(db, w.id, 'ativa', `Devolvida à IA por ${user.name}`);
+  log(db, w, 'devolvida', user.name);
+  // Mensagens do lead sem resposta: a IA lê o histórico e responde agora (no n8n, na próxima volta, em até 1 minuto)
+  const pend = pendingInbound(db, w.id);
+  if (!pend) return { ai_status: 'ativa', retomada: null };
+  db.prepare('UPDATE wa_conversations SET ai_seen_id = ? WHERE id = ?').run(pend.replyId || null, w.id);
+  const r = ready(db);
+  if (r.ok && r.cfg.provider === 'n8n') {
+    db.prepare('UPDATE wa_conversations SET ai_resume_at = ? WHERE id = ?').run(nowIso(), w.id);
+    return { ai_status: 'ativa', retomada: 'n8n', pendentes: pend.count };
+  }
+  if (!r.ok) return { ai_status: 'ativa', retomada: null, motivo: r.reason };
+  const out = await onInbound(db, w.id, pend.last, { now: true }).catch((e) => ({ erro: e.message }));
+  return { ai_status: db.prepare('SELECT ai_status FROM wa_conversations WHERE id = ?').get(w.id).ai_status, retomada: 'crm', pendentes: pend.count, respondeu: !!out?.reply };
 }
 
 /** Mensagem enviada por uma pessoa (pelo CRM ou pelo celular) numa conversa que a IA atendia: a IA para. */
@@ -267,14 +304,14 @@ function gate(db, w) {
   return null;
 }
 
-async function onInbound(db, convId, msgId) {
+async function onInbound(db, convId, msgId, opts = {}) {
   let w = db.prepare('SELECT * FROM wa_conversations WHERE id = ?').get(convId);
   if (gate(db, w)) return null;
   const r = ready(db);
   // Com o provedor n8n, quem responde é o fluxo do n8n (ele recebe a mensagem pelo conector)
   if (r.cfg.provider === 'n8n') return null;
-  // Junta mensagens seguidas: só quem recebeu a última responde
-  const wait = debounceMs();
+  // Junta mensagens seguidas: só quem recebeu a última responde (ao retomar uma conversa devolvida, sem esperar)
+  const wait = opts.now ? 0 : debounceMs();
   if (wait) await sleep(wait);
   const newer = db.prepare("SELECT 1 FROM wa_messages WHERE conversation_id = ? AND direction = 'in' AND id > ?").get(convId, msgId);
   if (newer) return { skipped: 'nova_mensagem' };
@@ -621,6 +658,7 @@ function history(db, w) {
   const rows = db.prepare('SELECT m.direction, m.kind, m.body, m.ai, u.name AS user_name FROM wa_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.conversation_id = ? ORDER BY m.id DESC LIMIT 40').all(w.id).reverse();
   const msgs = [];
   for (const m of rows) {
+    if (isCourtesy(m)) continue;
     const role = m.direction === 'in' ? 'user' : 'assistant';
     let text = m.direction === 'in' ? (KIND_TEXT[m.kind] ? `${KIND_TEXT[m.kind]}${m.body && !/^(Foto|Áudio|Vídeo|Documento|Figurinha)$/.test(m.body) ? ` ${m.body}` : ''}` : m.body) : m.body;
     if (m.direction === 'out' && !m.ai) text = `[mensagem enviada por ${m.user_name || 'um especialista'}] ${text || ''}`;
@@ -667,7 +705,7 @@ async function runTurn(db, cfg, w0) {
   } catch (e) {
     log(db, w, 'erro', `${llm.PROVIDERS[llm.providerOf(cfg.provider)]}: ${e.message}`, usage);
     ctx.handoff = { status: 'humano', reason: e.kind === 'rate_limit' ? 'Limite de uso da IA atingido (tente mais tarde ou troque o provedor)' : e.kind === 'auth' ? 'Chave da IA inválida' : 'A IA ficou indisponível' };
-    reply = 'Obrigada pela mensagem! Um especialista da nossa equipe vai continuar o seu atendimento em instantes.';
+    reply = FALLBACK;
   }
   w = db.prepare('SELECT * FROM wa_conversations WHERE id = ?').get(w.id);
   if (w.ai_status === 'pausada') return { skipped: 'assumida' };
@@ -707,5 +745,6 @@ module.exports = {
   config, ready, view, save, control, onInbound, humanReplied, handlesConversation, handlesInstance, answers, allowsPeer, freeSlots, fmtSlot, systemPrompt,
   // Usados pelo fluxo do n8n (server/services/n8n.js)
   gate, lock, debounceMs, ensureLead, setStatus, leadContext, tools, runTool, applyHandoff, sendAsAgent, log, testNumbersOf: testNumbers,
+  pendingInbound, isCourtesy, FALLBACK,
   STATUS_LABEL, AGENT_USER, DEFAULT_FIT,
 };

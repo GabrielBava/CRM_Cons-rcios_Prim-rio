@@ -1428,6 +1428,8 @@ const ADDED_COLUMNS = {
   wa_conversations: [['channel', "TEXT NOT NULL DEFAULT 'oficial'"], ['instance_id', 'INTEGER REFERENCES wa_instances(id)'], ['peer', 'TEXT'],
     // Agente de IA: ativa (IA atendendo), humano (transferida ao especialista), pausada (especialista assumiu)
     ['ai_status', 'TEXT'], ['ai_reason', 'TEXT'], ['ai_updated_at', 'TEXT'], ['ai_lock_at', 'TEXT'], ['ai_seen_id', 'INTEGER'], ['ai_turns', 'INTEGER NOT NULL DEFAULT 0'],
+    // Conversa devolvida à IA com mensagens do lead sem resposta: o fluxo do n8n retoma (a cada minuto)
+    ['ai_resume_at', 'TEXT'],
     // Endereçamento novo do WhatsApp (LID): identificador do cliente que às vezes vem no lugar do número
     ['lid', 'TEXT']],
   wa_messages: [['media_store_id', 'INTEGER REFERENCES wa_media(id)'], ['duration', 'INTEGER'], ['ai', 'INTEGER NOT NULL DEFAULT 0']],

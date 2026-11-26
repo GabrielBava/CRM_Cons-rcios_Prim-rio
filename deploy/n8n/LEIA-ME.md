@@ -27,6 +27,7 @@ Arquivos desta pasta:
 | `fluxo-atendimento-whatsapp.json` | Fluxo principal: atendimento dos leads com IA. |
 | `fluxo-base-conhecimento-crm.json` | Todo dia às 3h, copia a base de conhecimento do CRM para o n8n. |
 | `fluxo-base-conhecimento-drive.json` | (Opcional) Arquivos de uma pasta do Google Drive entram na base. |
+| `fluxo-retomar-conversas.json` | A cada minuto, retoma as conversas devolvidas à IA que têm mensagens do lead sem resposta. |
 | `PROMPT-N8N.md` | Prompt para o construtor de IA do n8n gerar o mesmo fluxo (conta trial, premium ou outra). |
 
 Os fluxos são gerados a partir das ferramentas do agente do CRM (`npm run n8n:fluxos`), então os dois ficam sempre iguais.
@@ -209,7 +210,7 @@ A IA consulta essa base sozinha (ferramenta **base_de_conhecimento**) sempre que
 | Desligar a IA para todos | CRM › Integrações › Agente de IA no WhatsApp › desmarcar **Ligar o agente de IA** |
 | Que a IA atenda só alguns números | mesmo lugar, **Modo de teste** |
 | Assumir uma conversa | na conversa do CRM, **Assumir conversa** (a IA para) |
-| Devolver para a IA | na conversa, **Devolver para a IA** |
+| Devolver para a IA | na conversa, **Devolver para a IA**. Se o lead mandou mensagens que ficaram sem resposta, a IA lê o histórico e responde em até 1 minuto (fluxo **Vero - Retomar conversas devolvidas**) e continua a qualificação de onde parou. A mensagem de cortesia de quando a IA falhou não conta como resposta. |
 | Voltar para a IA do próprio CRM (sem n8n) | Provedor de IA: Gemini ou Claude |
 
 Quando alguém da equipe responde pelo CRM ou pelo celular, a IA para naquela conversa. A IA também passa a conversa para o especialista quando agenda a R1, quando o lead pede uma pessoa, quando não há fit ou quando o modelo falha (o lead recebe uma mensagem de cortesia).
@@ -244,7 +245,7 @@ Quando alguém da equipe responde pelo CRM ou pelo celular, a IA para naquela co
 | `vero-whatsapp registros-n8n` | Registros do n8n (Ctrl+C para sair) |
 | `vero-whatsapp dados` | Endereços, login do n8n e chave do conector |
 | `sudo bash instalar-n8n.sh` | Rodar de novo: atualiza a configuração e mantém conta, fluxos e credenciais. Também serve para trocar o token ou a chave (informe o novo valor). |
-| `sudo REIMPORTAR=1 bash instalar-n8n.sh` | Troca os fluxos pelos originais (apaga as mudanças feitas neles no n8n) |
+| `sudo REIMPORTAR=1 bash instalar-n8n.sh` | Troca os fluxos pelos originais. Antes, guarda a versão atual de cada um em `/opt/vero-whatsapp/backup-fluxos/` (para importar de volta no n8n, se precisar) |
 
 **Rodar de novo o instalador do conector** (`instalar-evolution.sh`) mantém o n8n: ele reconhece a instalação do n8n.
 

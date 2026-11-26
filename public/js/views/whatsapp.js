@@ -717,8 +717,14 @@ export async function whatsapp(view, openId, params, tabs) {
   });
   const aiControl = async (acao) => {
     try {
-      await post(`/api/whatsapp/conversas/${conv.id}/ia`, { acao });
-      toast(acao === 'assumir' ? 'Você assumiu a conversa: a IA não responde mais aqui.' : 'Conversa devolvida para a IA.');
+      if (acao === 'devolver') toast('Devolvendo para a IA…');
+      const r = await post(`/api/whatsapp/conversas/${conv.id}/ia`, { acao });
+      const n = r.pendentes || 0;
+      const pend = n === 1 ? 'a mensagem do lead que ficou sem resposta' : `as ${n} mensagens do lead que ficaram sem resposta`;
+      toast(acao === 'assumir' ? 'Você assumiu a conversa: a IA não responde mais aqui.'
+        : r.retomada === 'n8n' ? `Conversa devolvida: a IA vai ler o histórico e responder ${pend} em até 1 minuto.`
+          : r.retomada === 'crm' ? (r.respondeu ? `Conversa devolvida: a IA leu o histórico e respondeu ${pend}.` : 'Conversa devolvida, mas a IA não conseguiu responder agora (veja Integrações › Agente de IA).')
+            : 'Conversa devolvida para a IA: ela responde na próxima mensagem do lead.');
       await loadList();
       openConv(conv.id, { silent: true });
     } catch (e) {
