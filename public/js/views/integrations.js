@@ -456,6 +456,18 @@ async function noticesDialog(onClose) {
   return undefined;
 }
 
+/** Falha da IA nas últimas 24 h, com a causa provável em português. */
+function agentErrorText(e) {
+  const t = String(e.detail || '');
+  const hint = /chave|api key|api_key|401|403|permission|unauthori/i.test(t) ? 'A chave da IA parece inválida: confira a chave (no n8n, a credencial do Gemini).'
+    : /429|limite|quota|rate|resource.?exhausted/i.test(t) ? 'Limite de uso da IA atingido (no plano gratuito do Gemini há limite por minuto e por dia).'
+      : /404|not.?found|model|modelo/i.test(t) ? 'O modelo escolhido não existe ou não está liberado na conta: use "Buscar os modelos da conta" e escolha outro.'
+        : /bad request|400|invalid/i.test(t) ? 'O Google recusou o pedido: confira a chave do Gemini (no n8n, a credencial "Google Gemini (Vero)") e o modelo escolhido.'
+        : /envio/i.test(t) ? 'A resposta da IA não saiu pelo WhatsApp: confira se o número central está conectado.'
+          : 'Confira a configuração abaixo.';
+  return html`<strong>A IA falhou ${e.count} ${e.count === 1 ? 'vez' : 'vezes'} nas últimas 24 horas.</strong> Nessas conversas, o lead recebeu só a mensagem de cortesia ("um especialista vai continuar...") e a conversa passou para o especialista. ${hint}<br><small class="muted">Último erro (${new Date(e.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}): ${t.slice(0, 220)}</small>`;
+}
+
 async function agentDialog(onClose) {
   let d;
   try {
@@ -482,6 +494,7 @@ async function agentDialog(onClose) {
         <small>${d.ready ? html`<span class="dot-ok"></span> Atendendo no ${c.channel === 'oficial' ? 'número oficial' : 'número central'}${isN8n ? ' pelo n8n' : ''}` : c.enabled ? 'Ligado, mas falta configurar (veja abaixo)' : 'Desligado'}</small></div><button type="button" class="icon" data-x aria-label="Fechar">×</button></header>
       <div class="int-body">
         <p class="small muted">Quando um lead escreve no número central, a IA responde na hora, faz a triagem (as 6 perguntas da aba Qualificação), registra no CRM e, se houver fit, agenda a R1 na agenda do especialista. Depois passa a conversa para ele. O especialista pode assumir a qualquer momento.</p>
+        ${d.last_error ? html`<div class="alert">${agentErrorText(d.last_error)}</div>` : ''}
         ${isN8n && !nn.has_token ? html`<div class="alert">Falta gerar o <strong>token do n8n</strong> (abaixo) e colocar no fluxo do n8n na VPS.</div>` : ''}
         ${isN8n && nn.has_token && !nn.last_call_at ? html`<div class="alert small">O n8n ainda não falou com o CRM. Rode o instalador do n8n na VPS com este token (guia em <code>deploy/n8n/LEIA-ME.md</code>).</div>` : ''}
         ${!isN8n && !d.llm.has_key ? html`<div class="alert">Falta a chave do ${gem ? 'Gemini' : 'Claude'}: informe abaixo${gem ? html` (crie grátis em <strong>Google AI Studio › Get API key</strong>)` : ' (console da Anthropic)'} ou em <a href="#/configuracoes/integracoes" data-x>Configurações › Integrações › IA generativa</a>.</div>` : ''}

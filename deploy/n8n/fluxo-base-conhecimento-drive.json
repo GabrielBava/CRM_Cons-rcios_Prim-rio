@@ -3,9 +3,9 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Base de conhecimento do Google Drive\nArquivos colocados (ou alterados) na pasta escolhida entram na base da IA: materiais sobre consórcio, roteiros, transcrições de ligações e reuniões (PDF, Word, Google Docs, TXT, CSV).\n1. Crie a credencial **Google Drive (Vero)** (Google Drive OAuth2).\n2. Escolha a mesma pasta nos dois gatilhos.\n3. Publique o fluxo. A cada hora ele confere a pasta.\nEvite dados pessoais de clientes nos arquivos: a IA pode usar o conteúdo nas respostas.",
-        "height": 280,
-        "width": 560,
+        "content": "## Base de conhecimento do Google Drive\nOs arquivos de uma pasta do Drive entram na base da IA: materiais sobre consórcio, roteiros, perguntas frequentes, transcrições de ligações e reuniões (Google Docs, Planilhas e Apresentações, PDF, Word, TXT, CSV).\n1. Credencial **Google Drive (Vero)**: cole o ID e a chave do cliente OAuth do Google e clique em **Sign in with Google**.\n2. No nó **Pasta do Drive**, cole o link da pasta.\n3. Clique em **Execute** para importar tudo agora e depois em **Publish**.\nA cada hora ele confere a pasta: arquivo novo ou alterado entra (a versão anterior sai), e arquivo tirado da pasta sai da base.\nEvite dados pessoais de clientes nos arquivos: a IA pode usar o conteúdo nas respostas.",
+        "height": 300,
+        "width": 600,
         "color": 4
       },
       "id": "29495d81-62a0-4e67-a1c4-dc2e12ee98e9",
@@ -13,92 +13,49 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -420,
-        -340
+        -460,
+        -360
       ]
     },
     {
       "parameters": {
-        "pollTimes": {
-          "item": [
+        "rule": {
+          "interval": [
             {
-              "mode": "everyHour"
+              "field": "cronExpression",
+              "expression": "20 * * * *"
             }
           ]
-        },
-        "triggerOn": "specificFolder",
-        "folderToWatch": {
-          "__rl": true,
-          "value": "",
-          "mode": "list",
-          "cachedResultName": ""
-        },
-        "event": "fileCreated",
-        "options": {}
-      },
-      "id": "90499214-4522-4f84-a2fa-f8f108ae9634",
-      "name": "Arquivo novo na pasta",
-      "type": "n8n-nodes-base.googleDriveTrigger",
-      "typeVersion": 1,
-      "position": [
-        -400,
-        0
-      ],
-      "credentials": {
-        "googleDriveOAuth2Api": {
-          "id": "VeroGDrive000001",
-          "name": "Google Drive (Vero)"
         }
-      }
+      },
+      "id": "acf7c47f-0a4b-4088-a9c9-62c8c5880b14",
+      "name": "A cada hora",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -440,
+        0
+      ]
     },
     {
-      "parameters": {
-        "pollTimes": {
-          "item": [
-            {
-              "mode": "everyHour"
-            }
-          ]
-        },
-        "triggerOn": "specificFolder",
-        "folderToWatch": {
-          "__rl": true,
-          "value": "",
-          "mode": "list",
-          "cachedResultName": ""
-        },
-        "event": "fileUpdated",
-        "options": {}
-      },
-      "id": "b9e1ac80-9a31-4aa8-a8cb-b5f38c8cd301",
-      "name": "Arquivo alterado na pasta",
-      "type": "n8n-nodes-base.googleDriveTrigger",
+      "parameters": {},
+      "id": "1fa79bf3-2c5b-4a92-aca7-8ec7ba5fedd1",
+      "name": "Importar agora",
+      "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
       "position": [
-        -400,
-        200
-      ],
-      "credentials": {
-        "googleDriveOAuth2Api": {
-          "id": "VeroGDrive000001",
-          "name": "Google Drive (Vero)"
-        }
-      }
+        -440,
+        180
+      ]
     },
     {
       "parameters": {
         "assignments": {
           "assignments": [
             {
-              "id": "36822b37-e6ca-4555-afbe-74b830979328",
-              "name": "id",
-              "value": "={{ $json.id }}",
-              "type": "string"
-            },
-            {
-              "id": "c77430a4-3793-42c0-aad8-7d65c932e9b0",
-              "name": "nome",
-              "value": "={{ $json.name }}",
+              "id": "83dfcb64-c58c-452f-a359-d2490b8318ff",
+              "name": "pasta",
+              "value": "COLE-AQUI-O-LINK-DA-PASTA-DO-DRIVE",
               "type": "string"
             }
           ]
@@ -106,28 +63,66 @@
         "includeOtherFields": false,
         "options": {}
       },
-      "id": "19301f94-87cd-409b-aa49-0b72702d71b1",
-      "name": "Arquivo",
+      "id": "b340bc17-c585-43d2-a472-c7efee85a9ed",
+      "name": "Pasta do Drive",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        -180,
-        100
+        -220,
+        80
       ]
     },
     {
       "parameters": {
+        "resource": "fileFolder",
+        "operation": "search",
+        "searchMethod": "query",
+        "queryString": "",
+        "returnAll": true,
+        "filter": {
+          "folderId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "={{ (String($json.pasta).match(/folders\\/([-\\w]+)/) || [null, String($json.pasta).trim()])[1] }}"
+          },
+          "whatToSearch": "files",
+          "includeTrashed": false
+        },
+        "options": {
+          "fields": [
+            "*"
+          ]
+        }
+      },
+      "id": "96d7eae8-0f66-4474-a41d-ab8735a23809",
+      "name": "Arquivos da pasta",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        0,
+        80
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "VeroGDrive000001",
+          "name": "Google Drive (Vero)"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
         "operation": "executeQuery",
-        "query": "DO $$ BEGIN IF to_regclass('public.vero_conhecimento') IS NOT NULL THEN DELETE FROM vero_conhecimento WHERE metadata->>'documento' = 'drive-{{ String($json.id).replace(/[^A-Za-z0-9_-]/g, '') }}'; END IF; END $$;",
+        "query": "SELECT metadata->>'documento' AS documento, max(metadata->>'modificado') AS modificado FROM vero_conhecimento WHERE metadata->>'fonte' = 'drive' GROUP BY 1",
         "options": {}
       },
-      "id": "eb17b3b4-f049-4171-a718-10927da85db1",
-      "name": "Apagar a versão anterior",
+      "id": "ffa85b4c-eb69-46b2-af13-eae427097809",
+      "name": "Já na base",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        40,
-        100
+        220,
+        80
       ],
       "credentials": {
         "postgres": {
@@ -135,14 +130,64 @@
           "name": "Postgres da VPS (base de conhecimento)"
         }
       },
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Compara a pasta com a base: arquivo novo ou alterado entra; arquivo que saiu da pasta é apagado da base\nconst LIDOS = /^(application\\/vnd\\.google-apps\\.(document|spreadsheet|presentation)|application\\/pdf|application\\/vnd\\.openxmlformats-officedocument\\.wordprocessingml\\.document|application\\/epub\\+zip|application\\/json|text\\/.+)$/;\nconst naBase = new Map($('Já na base').all().filter((i) => i.json.documento).map((i) => [i.json.documento, i.json.modificado]));\nconst arquivos = $('Arquivos da pasta').all().map((i) => i.json).filter((f) => f.id && LIDOS.test(f.mimeType || ''));\nconst naPasta = new Set(arquivos.map((f) => 'drive-' + f.id));\nconst saida = [];\nfor (const f of arquivos) {\n  const documento = 'drive-' + f.id;\n  if (naBase.get(documento) !== f.modifiedTime) saida.push({ json: { acao: 'importar', id: f.id, nome: f.name, modificado: f.modifiedTime, documento } });\n}\nfor (const documento of naBase.keys()) if (!naPasta.has(documento)) saida.push({ json: { acao: 'remover', documento } });\nreturn saida;"
+      },
+      "id": "e9fbf760-9012-4086-aa09-9e071b4bd8e2",
+      "name": "O que mudou",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=DELETE FROM vero_conhecimento WHERE metadata->>'fonte' = 'drive' AND metadata->>'documento' IN ({{ $('O que mudou').all().map((i) => \"'\" + String(i.json.documento).replace(/[^A-Za-z0-9_-]/g, '') + \"'\").join(', ') || \"''\" }})",
+        "options": {}
+      },
+      "id": "bf284aac-b697-4caf-a886-c273017d1f9c",
+      "name": "Apagar versões antigas",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        660,
+        80
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "VeroPostgres0001",
+          "name": "Postgres da VPS (base de conhecimento)"
+        }
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "return $('O que mudou').all().filter((i) => i.json.acao === 'importar').map((i) => ({ json: i.json }));"
+      },
+      "id": "83825af8-d554-4852-acfc-7f9c26bfd56e",
+      "name": "Arquivos para importar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        80
+      ]
     },
     {
       "parameters": {
         "operation": "download",
         "fileId": {
           "__rl": true,
-          "value": "={{ $('Arquivo').item.json.id }}",
+          "value": "={{ $json.id }}",
           "mode": "id"
         },
         "options": {
@@ -155,20 +200,21 @@
           }
         }
       },
-      "id": "cc273354-de0b-4ceb-ac0e-b9fac60a827f",
+      "id": "4a972f9a-a0ee-4523-aa2b-650b9a920847",
       "name": "Baixar arquivo",
       "type": "n8n-nodes-base.googleDrive",
       "typeVersion": 3,
       "position": [
-        260,
-        100
+        1100,
+        80
       ],
       "credentials": {
         "googleDriveOAuth2Api": {
           "id": "VeroGDrive000001",
           "name": "Google Drive (Vero)"
         }
-      }
+      },
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -177,13 +223,13 @@
         "embeddingBatchSize": 50,
         "options": {}
       },
-      "id": "057facff-3c39-4270-afc0-5233a3875ccf",
+      "id": "777cd3c5-34f8-4bd8-a1f8-8e0346e9b31e",
       "name": "Guardar na base",
       "type": "@n8n/n8n-nodes-langchain.vectorStorePGVector",
       "typeVersion": 1.3,
       "position": [
-        500,
-        100
+        1340,
+        60
       ],
       "credentials": {
         "postgres": {
@@ -196,13 +242,13 @@
       "parameters": {
         "modelName": "models/gemini-embedding-001"
       },
-      "id": "e5ab7ab9-8022-4a73-ad21-78c229f92825",
+      "id": "67c5156e-4a83-4fdf-a32d-6911a6ea6c13",
       "name": "Embeddings Gemini",
       "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
       "typeVersion": 1,
       "position": [
-        420,
-        320
+        1260,
+        300
       ],
       "credentials": {
         "googlePalmApi": {
@@ -226,11 +272,15 @@
               },
               {
                 "name": "documento",
-                "value": "=drive-{{ $('Arquivo').item.json.id }}"
+                "value": "={{ $json.documento }}"
               },
               {
                 "name": "titulo",
-                "value": "={{ $('Arquivo').item.json.nome }}"
+                "value": "={{ $json.nome }}"
+              },
+              {
+                "name": "modificado",
+                "value": "={{ $json.modificado }}"
               },
               {
                 "name": "tipo",
@@ -240,66 +290,110 @@
           }
         }
       },
-      "id": "bf3f329d-e1b3-40ee-abc4-86cf58a8b3ad",
+      "id": "1274ff6d-4127-40f1-a8dd-fc3ee0a4f934",
       "name": "Ler arquivo",
       "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
       "typeVersion": 1.1,
       "position": [
-        620,
-        320
+        1460,
+        300
       ]
     },
     {
       "parameters": {
         "chunkSize": 1500,
-        "chunkOverlap": 150,
+        "chunkOverlap": 0,
         "options": {}
       },
-      "id": "e01b7466-e7d2-40c3-a5bc-da7f8194f2fa",
+      "id": "51556f5e-b491-4d97-a031-2af9b1a7308b",
       "name": "Dividir em trechos",
       "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
       "typeVersion": 1,
       "position": [
-        700,
-        520
+        1540,
+        500
       ]
     }
   ],
   "connections": {
-    "Arquivo novo na pasta": {
+    "A cada hora": {
       "main": [
         [
           {
-            "node": "Arquivo",
+            "node": "Pasta do Drive",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Arquivo alterado na pasta": {
+    "Importar agora": {
       "main": [
         [
           {
-            "node": "Arquivo",
+            "node": "Pasta do Drive",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Arquivo": {
+    "Pasta do Drive": {
       "main": [
         [
           {
-            "node": "Apagar a versão anterior",
+            "node": "Arquivos da pasta",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Apagar a versão anterior": {
+    "Arquivos da pasta": {
+      "main": [
+        [
+          {
+            "node": "Já na base",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Já na base": {
+      "main": [
+        [
+          {
+            "node": "O que mudou",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "O que mudou": {
+      "main": [
+        [
+          {
+            "node": "Apagar versões antigas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apagar versões antigas": {
+      "main": [
+        [
+          {
+            "node": "Arquivos para importar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Arquivos para importar": {
       "main": [
         [
           {
@@ -318,7 +412,8 @@
             "type": "main",
             "index": 0
           }
-        ]
+        ],
+        []
       ]
     },
     "Embeddings Gemini": {

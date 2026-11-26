@@ -9,6 +9,8 @@
 # DOMINIO: subdomínio com registro A apontando para o IP da VPS (o HTTPS automático depende disso).
 # Rodar de novo atualiza a configuração e mantém a chave, as senhas e o WhatsApp conectado.
 # No fim, mostra o endereço e a chave para colar no CRM (Integrações › WhatsApp Lite › Servidor do WhatsApp Lite).
+# Opcional: CRM_URL=https://crm.seudominio.com.br confere se a VPS alcança o CRM (aviso das mensagens) e, se o caminho
+# normal até a Vercel não responder, fixa outro endereço da Vercel no conector.
 # Com o n8n instalado (deploy/n8n/instalar-n8n.sh), mantém o n8n, o aviso do conector para ele e o endereço do n8n.
 set -euo pipefail
 
@@ -134,6 +136,38 @@ etapa "Configuração em $PASTA"
 mkdir -p "$PASTA"
 cd "$PASTA"
 ler() { grep -m1 "^$1=" "${2:-.env}" 2>/dev/null | cut -d= -f2- || true; }
+# ---------------------------------------------------------------- caminho até o CRM (Vercel)
+# Algumas redes de VPS (já visto na Locaweb) não alcançam os endereços novos da Vercel: a conexão fica esperando até
+# o tempo acabar. A Vercel atende o mesmo site em qualquer endereço dela; se o caminho normal não responde, testa
+# outros endereços da Vercel e fixa no conector (e no n8n) o primeiro que responder.
+# Usa CRM_URL; define CRM_HOST, CRM_PORTA e CRM_IP_FIXO (vazio quando o caminho normal funciona).
+VERCEL_IPS="76.76.21.21 76.76.21.98 216.198.79.1 64.29.17.1"
+crm_responde() { # [ip] -> código HTTP de /api/saude (000 = sem conexão)
+  local fixo=()
+  if [ -n "${1:-}" ]; then fixo=(--resolve "$CRM_HOST:$CRM_PORTA:$1"); fi
+  curl -s -o /dev/null -w '%{http_code}' --connect-timeout 8 --max-time 20 "${fixo[@]}" "$CRM_URL/api/saude" 2>/dev/null || true
+}
+caminho_crm() {
+  CRM_HOST="$(printf '%s' "$CRM_URL" | sed -E 's#^https?://##; s#/.*$##; s#:.*$##')"
+  CRM_PORTA="$(printf '%s' "$CRM_URL" | sed -nE 's#^https?://[^/:]+:([0-9]+).*#\1#p')"
+  if [ -z "$CRM_PORTA" ]; then
+    if [[ "$CRM_URL" =~ ^http:// ]]; then CRM_PORTA=80; else CRM_PORTA=443; fi
+  fi
+  CRM_IP_FIXO=""
+  local cod ip
+  cod="$(crm_responde)"
+  if [ -n "$cod" ] && [ "$cod" != 000 ]; then return 0; fi
+  for ip in ${VERO_CRM_IPS:-} $(ler CRM_IP_FIXO crm.env) $VERCEL_IPS; do
+    cod="$(crm_responde "$ip")"
+    if [ -n "$cod" ] && [ "$cod" != 000 ]; then CRM_IP_FIXO="$ip"; return 0; fi
+  done
+  return 1
+}
+guardar_caminho_crm() {
+  { echo "# Caminho desta VPS até o CRM. Gerado pelos instaladores; rode o instalador de novo para mudar."
+    echo "CRM_URL=$CRM_URL"
+    echo "CRM_IP_FIXO=$CRM_IP_FIXO"; } > crm.env
+}
 CHAVE="$(ler AUTHENTICATION_API_KEY)"
 SENHA="$(ler POSTGRES_PASSWORD)"
 [ -n "$CHAVE" ] || CHAVE="$(openssl rand -hex 24)"
@@ -147,7 +181,6 @@ fi
 if [ -n "$N8N_DOMINIO" ]; then
   AVISO_GLOBAL="# n8n nesta VPS (instalar-n8n.sh): o conector avisa o n8n de cada mensagem pela rede interna da VPS.
 # O aviso de cada número para o CRM continua (status de entrega, conexão e QR Code).
-COMPOSE_FILE=docker-compose.yml:docker-compose.n8n.yml
 WEBHOOK_GLOBAL_ENABLED=true
 WEBHOOK_GLOBAL_URL=http://n8n:5678/webhook/vero-whatsapp
 WEBHOOK_GLOBAL_WEBHOOK_BY_EVENTS=false
@@ -169,6 +202,25 @@ else
 WEBHOOK_GLOBAL_ENABLED=false"
 fi
 
+CRM_URL="$(printf '%s' "${CRM_URL:-$(ler CRM_URL crm.env)}" | sed -E 's#/+$##')"
+CRM_IP_FIXO=""
+if [ -n "$CRM_URL" ]; then
+  etapa "Conferindo o caminho desta VPS até o CRM ($CRM_URL)"
+  if caminho_crm; then
+    if [ -n "$CRM_IP_FIXO" ]; then
+      echo "O caminho normal até a Vercel não responde nesta VPS; o conector vai avisar o CRM pelo endereço $CRM_IP_FIXO da Vercel."
+    else
+      echo "A VPS alcança o CRM."
+    fi
+    guardar_caminho_crm
+  else
+    aviso "esta VPS não alcança o CRM ($CRM_URL) por nenhum caminho testado. Enquanto isso, o CRM busca as mensagens no conector quando a tela do WhatsApp está aberta."
+  fi
+fi
+COMPOSE_ARQS="docker-compose.yml"
+[ -z "$N8N_DOMINIO" ] || COMPOSE_ARQS="$COMPOSE_ARQS:docker-compose.n8n.yml"
+[ -z "$CRM_IP_FIXO" ] || COMPOSE_ARQS="$COMPOSE_ARQS:docker-compose.crm.yml"
+
 umask 077
 cat > .env <<EOF
 # Conector do WhatsApp Lite (Evolution API v2) do CRM Vero Consórcios. Gerado por instalar-evolution.sh.
@@ -176,6 +228,8 @@ cat > .env <<EOF
 # Para mudar algo, rode o instalador de novo (a chave e a senha são mantidas).
 DOMINIO=$DOMINIO
 TZ=America/Sao_Paulo
+# Arquivos do Docker Compose (o n8n e o caminho fixo até o CRM entram quando instalados)
+COMPOSE_FILE=$COMPOSE_ARQS
 
 SERVER_NAME=evolution
 SERVER_TYPE=http
@@ -287,6 +341,23 @@ volumes:
   caddy_data:
   caddy_config:
 EOF
+
+if [ -n "$CRM_IP_FIXO" ]; then
+  {
+    echo "# Caminho fixo até o CRM: a rede desta VPS não alcança o endereço normal da Vercel. Gerado pelo instalador."
+    echo "services:"
+    echo "  evolution-api:"
+    echo "    extra_hosts:"
+    echo "      - \"$CRM_HOST:$CRM_IP_FIXO\""
+    if [ -n "$N8N_DOMINIO" ]; then
+      echo "  n8n:"
+      echo "    extra_hosts:"
+      echo "      - \"$CRM_HOST:$CRM_IP_FIXO\""
+    fi
+  } > docker-compose.crm.yml
+else
+  rm -f docker-compose.crm.yml
+fi
 
 cat > Caddyfile <<'EOF'
 # HTTPS automático (Let's Encrypt) no endereço do conector, encaminhando para a Evolution API

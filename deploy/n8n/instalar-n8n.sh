@@ -36,6 +36,55 @@ command -v curl >/dev/null 2>&1 || falha "curl não encontrado (apt-get install 
 cd "$PASTA"
 
 ler() { grep -m1 "^$1=" "${2:-.env}" 2>/dev/null | cut -d= -f2- || true; }
+# ---------------------------------------------------------------- caminho até o CRM (Vercel)
+# Algumas redes de VPS (já visto na Locaweb) não alcançam os endereços novos da Vercel: a conexão fica esperando até
+# o tempo acabar. A Vercel atende o mesmo site em qualquer endereço dela; se o caminho normal não responde, testa
+# outros endereços da Vercel e fixa no conector (e no n8n) o primeiro que responder.
+# Usa CRM_URL; define CRM_HOST, CRM_PORTA e CRM_IP_FIXO (vazio quando o caminho normal funciona).
+VERCEL_IPS="76.76.21.21 76.76.21.98 216.198.79.1 64.29.17.1"
+crm_responde() { # [ip] -> código HTTP de /api/saude (000 = sem conexão)
+  local fixo=()
+  if [ -n "${1:-}" ]; then fixo=(--resolve "$CRM_HOST:$CRM_PORTA:$1"); fi
+  curl -s -o /dev/null -w '%{http_code}' --connect-timeout 8 --max-time 20 "${fixo[@]}" "$CRM_URL/api/saude" 2>/dev/null || true
+}
+caminho_crm() {
+  CRM_HOST="$(printf '%s' "$CRM_URL" | sed -E 's#^https?://##; s#/.*$##; s#:.*$##')"
+  CRM_PORTA="$(printf '%s' "$CRM_URL" | sed -nE 's#^https?://[^/:]+:([0-9]+).*#\1#p')"
+  if [ -z "$CRM_PORTA" ]; then
+    if [[ "$CRM_URL" =~ ^http:// ]]; then CRM_PORTA=80; else CRM_PORTA=443; fi
+  fi
+  CRM_IP_FIXO=""
+  local cod ip
+  cod="$(crm_responde)"
+  if [ -n "$cod" ] && [ "$cod" != 000 ]; then return 0; fi
+  for ip in ${VERO_CRM_IPS:-} $(ler CRM_IP_FIXO crm.env) $VERCEL_IPS; do
+    cod="$(crm_responde "$ip")"
+    if [ -n "$cod" ] && [ "$cod" != 000 ]; then CRM_IP_FIXO="$ip"; return 0; fi
+  done
+  return 1
+}
+guardar_caminho_crm() {
+  { echo "# Caminho desta VPS até o CRM. Gerado pelos instaladores; rode o instalador de novo para mudar."
+    echo "CRM_URL=$CRM_URL"
+    echo "CRM_IP_FIXO=$CRM_IP_FIXO"; } > crm.env
+}
+diagnostico_crm() {
+  local ip r alvo
+  echo
+  echo "------------------------- copie daqui (não tem senha nem token) -------------------------"
+  echo "CRM: $CRM_HOST · DNS: $(getent ahostsv4 "$CRM_HOST" 2>/dev/null | awk '{print $1}' | sort -u | tr '\n' ' ')"
+  r="$(curl -sS -o /dev/null -w '%{http_code} %{remote_ip}' --connect-timeout 8 --max-time 20 "$CRM_URL/api/saude" 2>&1 | tail -1 || true)"
+  echo "caminho normal: $r"
+  for ip in $VERCEL_IPS; do
+    r="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 8 --max-time 20 --resolve "$CRM_HOST:$CRM_PORTA:$ip" "$CRM_URL/api/saude" 2>&1 | tail -1 || true)"
+    echo "vercel $ip: $r"
+  done
+  for alvo in https://github.com https://vercel.com https://www.google.com; do
+    r="$(curl -sS -o /dev/null -w '%{http_code} %{remote_ip}' --connect-timeout 8 --max-time 15 "$alvo" 2>&1 | tail -1 || true)"
+    echo "$alvo: $r"
+  done
+  echo "----------------------------------------- até aqui -----------------------------------------"
+}
 DOMINIO="$(ler DOMINIO)"
 SENHA_PG="$(ler POSTGRES_PASSWORD)"
 [ -n "$DOMINIO" ] && [ -n "$SENHA_PG" ] || falha "o arquivo $PASTA/.env está incompleto. Rode de novo o instalador do conector."
@@ -75,6 +124,8 @@ else
   perguntar CRM_TOKEN "Novo token do n8n (Enter para manter o atual)" "" 1
   perguntar GEMINI_KEY "Nova chave do Gemini (Enter para manter a atual)" "" 1
 fi
+DRIVE_ANTES="$(ler DRIVE_PASTA n8n.env)"
+perguntar DRIVE_PASTA "Link da pasta do Google Drive com a base de conhecimento (Enter para pular)" "$DRIVE_ANTES"
 
 N8N_DOMINIO="$(printf '%s' "$N8N_DOMINIO" | tr '[:upper:]' '[:lower:]' | sed -E 's#^https?://##; s#/.*$##')"
 [[ "$N8N_DOMINIO" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] || falha "endereço do n8n inválido: $N8N_DOMINIO"
@@ -91,6 +142,14 @@ if [ "$PRIMEIRA" = 1 ]; then
 fi
 [ -z "$CRM_TOKEN" ] || [[ "$CRM_TOKEN" =~ ^crm_n8n_[A-Za-z0-9_-]+$ ]] || falha "o token do n8n começa com crm_n8n_ (copie de novo no CRM)."
 [ -z "$GEMINI_KEY" ] || [[ "$GEMINI_KEY" =~ ^[A-Za-z0-9_-]{20,}$ ]] || falha "chave do Gemini inválida (copie de novo no Google AI Studio)."
+# Pasta do Drive: aceita o link (https://drive.google.com/drive/folders/...) ou só o ID; guarda o link limpo
+DRIVE_PASTA="$(printf '%s' "${DRIVE_PASTA:-}" | tr -d '[:space:]')"
+if [ -n "$DRIVE_PASTA" ]; then
+  ID_PASTA="$(printf '%s' "$DRIVE_PASTA" | sed -nE 's#.*folders/([-A-Za-z0-9_]+).*#\1#p')"
+  if [ -z "$ID_PASTA" ] && [[ "$DRIVE_PASTA" =~ ^[-A-Za-z0-9_]{15,}$ ]]; then ID_PASTA="$DRIVE_PASTA"; fi
+  [ -n "$ID_PASTA" ] || falha "link da pasta do Drive inválido: abra a pasta no navegador e copie o endereço (https://drive.google.com/drive/folders/...)."
+  DRIVE_PASTA="https://drive.google.com/drive/folders/$ID_PASTA"
+fi
 
 # ---------------------------------------------------------------- DNS e ligação com o CRM
 if [ "$N8N_DOMINIO" != "n8n.localhost" ] && [[ "$N8N_DOMINIO" != *.localhost ]]; then
@@ -103,11 +162,26 @@ if [ "$N8N_DOMINIO" != "n8n.localhost" ] && [[ "$N8N_DOMINIO" != *.localhost ]];
   fi
 fi
 
+etapa "Conferindo o caminho desta VPS até o CRM ($CRM_URL)"
+if caminho_crm; then
+  if [ -n "$CRM_IP_FIXO" ]; then
+    echo "O caminho normal até a Vercel não responde nesta VPS, mas o endereço $CRM_IP_FIXO da Vercel responde."
+    echo "O n8n e o conector vão falar com o CRM por ele (isso também faz o conector voltar a avisar o CRM das mensagens)."
+  else
+    echo "A VPS alcança o CRM."
+  fi
+  guardar_caminho_crm
+else
+  diagnostico_crm
+  falha "esta VPS não conseguiu falar com o CRM ($CRM_URL) por nenhum caminho. Confira se o endereço abre no navegador e mande o bloco acima para o suporte (ou para quem está configurando)."
+fi
+FIXO_CRM=()
+[ -z "$CRM_IP_FIXO" ] || FIXO_CRM=(--resolve "$CRM_HOST:$CRM_PORTA:$CRM_IP_FIXO")
+
 PROVEDOR=""
 if [ -n "$CRM_TOKEN" ]; then
-  etapa "Conferindo a ligação desta VPS com o CRM ($CRM_URL)"
   RESP="$(mktemp)"
-  COD="$(curl -sS -o "$RESP" -w '%{http_code}' --max-time 30 -H "Authorization: Bearer $CRM_TOKEN" "$CRM_URL/api/integracoes/n8n/status" 2>"$RESP.err" || true)"
+  COD="$(curl -sS -o "$RESP" -w '%{http_code}' --max-time 30 "${FIXO_CRM[@]}" -H "Authorization: Bearer $CRM_TOKEN" "$CRM_URL/api/integracoes/n8n/status" 2>"$RESP.err" || true)"
   case "$COD" in
     200)
       PROVEDOR="$(grep -o '"provedor":"[a-z0-9]*"' "$RESP" | head -1 | cut -d'"' -f4 || true)"
@@ -156,6 +230,7 @@ cat > n8n.env <<EOF
 # NÃO publique nem envie este arquivo: ele tem a chave que protege as credenciais do n8n e a senha do banco.
 N8N_DOMINIO=$N8N_DOMINIO
 CRM_URL=$CRM_URL
+DRIVE_PASTA=$DRIVE_PASTA
 
 N8N_HOST=$N8N_DOMINIO
 N8N_PROTOCOL=https
@@ -257,7 +332,7 @@ if [ ! -f "$EVO" ]; then
   EVO="$(mktemp)"
   curl -fsSL "$RAW/deploy/whatsapp-lite/instalar-evolution.sh" -o "$EVO" || falha "não foi possível baixar o instalador do conector."
 fi
-VERO_SEM_RESUMO=1 VERO_PASTA="$PASTA" DOMINIO="$DOMINIO" bash "$EVO"
+VERO_SEM_RESUMO=1 VERO_PASTA="$PASTA" DOMINIO="$DOMINIO" CRM_URL="$CRM_URL" bash "$EVO"
 grep -q '^COMPOSE_FILE=docker-compose.yml:docker-compose.n8n.yml' .env || falha "o instalador do conector não ligou o n8n (use a versão mais nova do instalador do conector)."
 
 etapa "Aguardando o n8n iniciar (até 5 minutos)"
@@ -268,7 +343,10 @@ for _ in $(seq 1 60); do
   sleep 5
 done
 [ "$OK_N8N" = 1 ] || falha "o n8n não iniciou. Veja os registros com: vero-whatsapp registros-n8n"
-docker compose exec -T -e PGOPTIONS=--client-min-messages=warning base-ia psql -U vero -d base_ia -qc "CREATE EXTENSION IF NOT EXISTS vector" >/dev/null \
+# A tabela da base de conhecimento (as mesmas colunas que o n8n cria) já existe antes do primeiro fluxo rodar
+docker compose exec -T -e PGOPTIONS=--client-min-messages=warning base-ia psql -U vero -d base_ia -q \
+  -c "CREATE EXTENSION IF NOT EXISTS vector" \
+  -c "CREATE TABLE IF NOT EXISTS vero_conhecimento (id uuid NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY, text text, metadata jsonb, embedding vector)" >/dev/null \
   || falha "a base de conhecimento (pgvector) não ativou. Veja: vero-whatsapp situacao"
 
 
@@ -296,10 +374,20 @@ for f in $FLUXOS; do
   else curl -fsSL "$RAW/deploy/n8n/$f" -o "$TMP/$f" || falha "não foi possível baixar o fluxo $f."
   fi
   sed -i "s#https://SEU-CRM.com.br#$CRM_URL#g" "$TMP/$f"
+  [ -z "$DRIVE_PASTA" ] || sed -i "s#COLE-AQUI-O-LINK-DA-PASTA-DO-DRIVE#$DRIVE_PASTA#g" "$TMP/$f"
 done
 chown -R 1000:1000 "$TMP"
 docker compose cp "$TMP/." n8n:/tmp/vero-importar/ >/dev/null
 docker compose exec -T n8n n8n import:credentials --input=/tmp/vero-importar/credenciais.json >/dev/null 2>&1 || falha "não foi possível criar as credenciais no n8n (vero-whatsapp registros-n8n)."
+# Google Drive: credencial em branco, já ligada ao fluxo do Drive (você cola o ID e a chave do cliente OAuth e entra
+# com o Google). Só cria se ainda não existe, para não apagar o acesso já autorizado.
+if ! docker compose exec -T n8n n8n export:credentials --id=VeroGDrive000001 --output=/tmp/vero-importar/drive-existe.json >/dev/null 2>&1; then
+  printf '[{"id":"VeroGDrive000001","name":"Google Drive (Vero)","type":"googleDriveOAuth2Api","data":{"clientId":"","clientSecret":""}}]' > "$TMP/drive.json"
+  chown 1000:1000 "$TMP/drive.json"
+  docker compose cp "$TMP/drive.json" n8n:/tmp/vero-importar/drive.json >/dev/null 2>&1 \
+    && docker compose exec -T n8n n8n import:credentials --input=/tmp/vero-importar/drive.json >/dev/null 2>&1 \
+    || aviso "não foi possível criar a credencial do Google Drive; crie no n8n (Google Drive OAuth2 API) se for usar o Drive."
+fi
 
 EXISTENTES="$(docker compose exec -T n8n n8n list:workflow 2>/dev/null | cut -d'|' -f1 || true)"
 IMPORTOU=0
@@ -310,8 +398,13 @@ for f in $FLUXOS; do
     *) ID=VeroBaseDrive001 ;;
   esac
   if printf '%s\n' "$EXISTENTES" | grep -qx "$ID" && [ -z "${REIMPORTAR:-}" ]; then
-    echo "Fluxo $f já existe no n8n (mantido; REIMPORTAR=1 para trocar pelo original)."
-    continue
+    # Pasta do Drive nova: o fluxo do Drive é trocado pelo original já com a pasta
+    if [ "$ID" = VeroBaseDrive001 ] && [ -n "$DRIVE_PASTA" ] && [ "$DRIVE_PASTA" != "$DRIVE_ANTES" ]; then
+      echo "Pasta do Drive nova: atualizando o fluxo do Drive."
+    else
+      echo "Fluxo $f já existe no n8n (mantido; REIMPORTAR=1 para trocar pelo original)."
+      continue
+    fi
   fi
   docker compose exec -T n8n n8n import:workflow --input="/tmp/vero-importar/$f" >/dev/null 2>&1 || falha "não foi possível importar o fluxo $f."
   echo "Fluxo importado: $f"
@@ -401,7 +494,12 @@ if [ -n "$PROVEDOR" ] && [ "$PROVEDOR" != "n8n" ]; then
 fi
 echo " Ligar e desligar a IA, Assumir/Devolver e o modo de teste continuam no CRM."
 echo " Base de conhecimento: o fluxo \"Vero - Base de conhecimento (CRM)\" roda todo dia às 3h (ou abra e clique em Executar)."
-echo " Google Drive (opcional): fluxo \"Vero - Base de conhecimento (Google Drive)\" (guia em deploy/n8n/LEIA-ME.md)."
+if [ -n "$DRIVE_PASTA" ]; then
+  echo " Google Drive: pasta configurada no fluxo \"Vero - Base de conhecimento (Google Drive)\". Falta conectar a conta Google"
+  echo "   (credencial \"Google Drive (Vero)\", guia deploy/n8n/LEIA-ME.md seção 6c) e clicar em Execute e depois em Publish nesse fluxo."
+else
+  echo " Google Drive (opcional): fluxo \"Vero - Base de conhecimento (Google Drive)\" (guia em deploy/n8n/LEIA-ME.md)."
+fi
 echo
 echo " Para ver estes dados de novo:  vero-whatsapp dados    ·    Registros do n8n:  vero-whatsapp registros-n8n"
 echo "=================================================================================="

@@ -20,6 +20,14 @@ const path = require('path');
 const OUT = path.join(__dirname, '..', 'deploy', 'n8n');
 const CRM_PLACEHOLDER = 'https://SEU-CRM.com.br';
 const TABLE = 'vero_conhecimento';
+// Memória fixa: o texto de cada arquivo da pasta do Drive (até 15 mil caracteres por arquivo, 40 mil no total, em ordem
+// de nome), remontado dos trechos guardados, entra nas instruções da IA em toda mensagem
+const DIRETRIZES_MAX = 40000;
+const DIRETRIZES_SQL = `SELECT coalesce(string_agg(doc, E'\\n\\n' ORDER BY titulo), '') AS diretrizes FROM (
+  SELECT metadata->>'titulo' AS titulo, '### ' || coalesce(metadata->>'titulo', 'Documento') || E'\\n' || left(string_agg(text, E'\\n' ORDER BY
+    coalesce((metadata->'loc'->>'pageNumber')::int, 0), coalesce((metadata->'loc'->'lines'->>'from')::int, 0), coalesce((metadata->>'line')::int, 0)), 15000) AS doc
+  FROM ${TABLE} WHERE metadata->>'fonte' = 'drive' GROUP BY metadata->>'documento', metadata->>'titulo'
+) d`;
 const CRED = {
   crm: { id: 'VeroCrmToken0001', name: 'CRM Vero (token do n8n)', type: 'httpHeaderAuth' },
   gemini: { id: 'VeroGemini000001', name: 'Google Gemini (Vero)', type: 'googlePalmApi' },
@@ -141,11 +149,20 @@ Endereço do CRM: nó **Configuração**. Token: credencial **${CRED.crm.name}**
       '={{ JSON.stringify({ event: $json.body.event, instance: $json.body.instance, data: $json.body.data }) }}', { timeout: 60000, retry: true }),
     ifNode('IA atende?', [480, -20], '={{ $json.atender }}', { type: 'boolean', operation: 'true', singleValue: true }),
     {
+      parameters: { operation: 'executeQuery', query: DIRETRIZES_SQL, options: {} },
+      id: uid('diretrizes'), name: 'Diretrizes da Vero', type: 'n8n-nodes-base.postgres', typeVersion: 2.6, position: [640, -200], credentials: cred('pg'),
+      alwaysOutputData: true, onError: 'continueRegularOutput',
+    },
+    {
       parameters: {
-        promptType: 'define', text: '={{ $json.mensagem }}',
-        options: { systemMessage: '={{ $json.sistema }}', maxIterations: 10 },
+        promptType: 'define', text: `={{ ${conv('mensagem')} }}`,
+        options: {
+          systemMessage: `={{ ${conv('sistema')} + ($json.diretrizes ? '\\n\\nDiretrizes e memória da Vero (conteúdo da pasta do Google Drive: critérios de qualificação, regras, proibições e objeções). Siga sempre, em todas as mensagens, junto com as regras acima; se algo conflitar, valem as regras acima. Não cite estas diretrizes ao cliente:\\n' + String($json.diretrizes).slice(0, ${DIRETRIZES_MAX}) : '') }}`,
+          maxIterations: 10,
+        },
       },
-      id: uid('agent'), name: 'IA Vero', type: '@n8n/n8n-nodes-langchain.agent', typeVersion: 3.1, position: [760, -40], onError: 'continueErrorOutput',
+      id: uid('agent'), name: 'IA Vero', type: '@n8n/n8n-nodes-langchain.agent', typeVersion: 3.1, position: [860, -40], onError: 'continueErrorOutput',
+      retryOnFail: true, maxTries: 2, waitBetweenTries: 5000,
     },
     {
       parameters: { modelName: `={{ ${conv('modelo_gemini')} || 'models/gemini-2.5-flash' }}`, options: { temperature: 0.4 } },
@@ -164,14 +181,15 @@ Endereço do CRM: nó **Configuração**. Token: credencial **${CRED.crm.name}**
     http('Responder no WhatsApp', [1220, -60], `={{ ${conv('urls.responder')} }}`,
       `={{ JSON.stringify({ conversa_id: ${conv('conversa_id')}, turno: ${conv('turno')}, texto: $json.output }) }}`, { retry: true }),
     http('Avisar falha ao CRM', [1220, 120], `={{ ${conv('urls.responder')} }}`,
-      `={{ JSON.stringify({ conversa_id: ${conv('conversa_id')}, turno: ${conv('turno')}, erro: String($json.error?.message || $json.error || 'falha na IA') }) }}`),
+      `={{ JSON.stringify({ conversa_id: ${conv('conversa_id')}, turno: ${conv('turno')}, erro: (typeof $json.error === 'object' && $json.error ? [$json.error.message, $json.error.description].filter(Boolean).join(' — ') : String($json.error || 'falha na IA')).slice(0, 400) }) }}`),
   ];
   const connections = {
     'WhatsApp (conector)': { main: [[{ node: 'Configuração', type: 'main', index: 0 }]] },
     'Configuração': { main: [[{ node: 'É mensagem?', type: 'main', index: 0 }]] },
     'É mensagem?': { main: [[{ node: 'CRM - Conversa', type: 'main', index: 0 }], []] },
     'CRM - Conversa': { main: [[{ node: 'IA atende?', type: 'main', index: 0 }]] },
-    'IA atende?': { main: [[{ node: 'IA Vero', type: 'main', index: 0 }], []] },
+    'IA atende?': { main: [[{ node: 'Diretrizes da Vero', type: 'main', index: 0 }], []] },
+    'Diretrizes da Vero': { main: [[{ node: 'IA Vero', type: 'main', index: 0 }]] },
     'IA Vero': { main: [[{ node: 'Responder no WhatsApp', type: 'main', index: 0 }], [{ node: 'Avisar falha ao CRM', type: 'main', index: 0 }]] },
     Gemini: { ai_languageModel: [[{ node: 'IA Vero', type: 'ai_languageModel', index: 0 }]] },
     base_de_conhecimento: { ai_tool: [[{ node: 'IA Vero', type: 'ai_tool', index: 0 }]] },
@@ -190,7 +208,7 @@ const loader = (name, position, mode) => ({
     options: {
       metadata: {
         metadataValues: mode === 'binary'
-          ? [['fonte', 'drive'], ['documento', "=drive-{{ $('Arquivo').item.json.id }}"], ['titulo', "={{ $('Arquivo').item.json.nome }}"], ['tipo', 'arquivo']]
+          ? [['fonte', 'drive'], ['documento', '={{ $json.documento }}'], ['titulo', '={{ $json.nome }}'], ['modificado', '={{ $json.modificado }}'], ['tipo', 'arquivo']]
             .map(([n, v]) => ({ name: n, value: v }))
           : [['fonte', '={{ $json.fonte }}'], ['documento', '={{ $json.id }}'], ['titulo', '={{ $json.titulo }}'], ['tipo', '={{ $json.tipo }}']].map(([n, v]) => ({ name: n, value: v })),
       },
@@ -198,8 +216,8 @@ const loader = (name, position, mode) => ({
   },
   id: uid(name), name, type: '@n8n/n8n-nodes-langchain.documentDefaultDataLoader', typeVersion: 1.1, position,
 });
-const splitter = (name, position) => ({
-  parameters: { chunkSize: 1500, chunkOverlap: 150, options: {} }, id: uid(name), name, type: '@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter', typeVersion: 1, position,
+const splitter = (name, position, overlap = 150) => ({
+  parameters: { chunkSize: 1500, chunkOverlap: overlap, options: {} }, id: uid(name), name, type: '@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter', typeVersion: 1, position,
 });
 const insert = (name, position) => ({
   parameters: { mode: 'insert', tableName: TABLE, embeddingBatchSize: 50, options: {} },
@@ -251,42 +269,68 @@ A cópia anterior do CRM é trocada pela nova (os arquivos do Google Drive ficam
 
 function baseDrive() {
   seq = 0;
-  const trigger = (name, event, position) => ({
-    parameters: {
-      pollTimes: { item: [{ mode: 'everyHour' }] }, triggerOn: 'specificFolder',
-      folderToWatch: { __rl: true, value: '', mode: 'list', cachedResultName: '' }, event, options: {},
-    },
-    id: uid(name), name, type: 'n8n-nodes-base.googleDriveTrigger', typeVersion: 1, position, credentials: cred('drive'),
+  const drive = (name, position, parameters, extra = {}) => ({
+    parameters, id: uid(name), name, type: 'n8n-nodes-base.googleDrive', typeVersion: 3, position, credentials: cred('drive'), ...extra,
   });
+  const code = (name, position, jsCode) => ({ parameters: { jsCode }, id: uid(name), name, type: 'n8n-nodes-base.code', typeVersion: 2, position });
   const nodes = [
     note('Leia-me', `## Base de conhecimento do Google Drive
-Arquivos colocados (ou alterados) na pasta escolhida entram na base da IA: materiais sobre consórcio, roteiros, transcrições de ligações e reuniões (PDF, Word, Google Docs, TXT, CSV).
-1. Crie a credencial **${CRED.drive.name}** (Google Drive OAuth2).
-2. Escolha a mesma pasta nos dois gatilhos.
-3. Publique o fluxo. A cada hora ele confere a pasta.
-Evite dados pessoais de clientes nos arquivos: a IA pode usar o conteúdo nas respostas.`, [-420, -340], [560, 280], 4),
-    trigger('Arquivo novo na pasta', 'fileCreated', [-400, 0]),
-    trigger('Arquivo alterado na pasta', 'fileUpdated', [-400, 200]),
-    setNode('Arquivo', [-180, 100], [['id', '={{ $json.id }}'], ['nome', '={{ $json.name }}']], false),
-    pgQuery('Apagar a versão anterior', [40, 100], deleteWhere("metadata->>'documento' = 'drive-{{ String($json.id).replace(/[^A-Za-z0-9_-]/g, '') }}'")),
-    {
-      parameters: {
-        operation: 'download', fileId: { __rl: true, value: "={{ $('Arquivo').item.json.id }}", mode: 'id' },
-        options: { googleFileConversion: { conversion: { docsToFormat: 'text/plain', sheetsToFormat: 'text/csv', slidesToFormat: 'application/pdf' } } },
+Os arquivos de uma pasta do Drive entram na base da IA: materiais sobre consórcio, roteiros, perguntas frequentes, transcrições de ligações e reuniões (Google Docs, Planilhas e Apresentações, PDF, Word, TXT, CSV).
+1. Credencial **${CRED.drive.name}**: cole o ID e a chave do cliente OAuth do Google e clique em **Sign in with Google**.
+2. No nó **Pasta do Drive**, cole o link da pasta.
+3. Clique em **Execute** para importar tudo agora e depois em **Publish**.
+A cada hora ele confere a pasta: arquivo novo ou alterado entra (a versão anterior sai), e arquivo tirado da pasta sai da base.
+Evite dados pessoais de clientes nos arquivos: a IA pode usar o conteúdo nas respostas.`, [-460, -360], [600, 300], 4),
+    { parameters: { rule: { interval: [{ field: 'cronExpression', expression: '20 * * * *' }] } }, id: uid('cron'), name: 'A cada hora', type: 'n8n-nodes-base.scheduleTrigger', typeVersion: 1.2, position: [-440, 0] },
+    { parameters: {}, id: uid('manual'), name: 'Importar agora', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [-440, 180] },
+    setNode('Pasta do Drive', [-220, 80], [['pasta', 'COLE-AQUI-O-LINK-DA-PASTA-DO-DRIVE']], false),
+    drive('Arquivos da pasta', [0, 80], {
+      resource: 'fileFolder', operation: 'search', searchMethod: 'query', queryString: '', returnAll: true,
+      filter: {
+        folderId: { __rl: true, mode: 'id', value: "={{ (String($json.pasta).match(/folders\\/([-\\w]+)/) || [null, String($json.pasta).trim()])[1] }}" },
+        whatToSearch: 'files', includeTrashed: false,
       },
-      id: uid('download'), name: 'Baixar arquivo', type: 'n8n-nodes-base.googleDrive', typeVersion: 3, position: [260, 100], credentials: cred('drive'),
+      options: { fields: ['*'] },
+    }, { alwaysOutputData: true }),
+    {
+      parameters: { operation: 'executeQuery', query: `SELECT metadata->>'documento' AS documento, max(metadata->>'modificado') AS modificado FROM ${TABLE} WHERE metadata->>'fonte' = 'drive' GROUP BY 1`, options: {} },
+      id: uid('base'), name: 'Já na base', type: 'n8n-nodes-base.postgres', typeVersion: 2.6, position: [220, 80], credentials: cred('pg'), alwaysOutputData: true, executeOnce: true,
     },
-    insert('Guardar na base', [500, 100]),
-    geminiEmbeddings('Embeddings Gemini', [420, 320]),
-    loader('Ler arquivo', [620, 320], 'binary'),
-    splitter('Dividir em trechos', [700, 520]),
+    code('O que mudou', [440, 80], `// Compara a pasta com a base: arquivo novo ou alterado entra; arquivo que saiu da pasta é apagado da base
+const LIDOS = /^(application\\/vnd\\.google-apps\\.(document|spreadsheet|presentation)|application\\/pdf|application\\/vnd\\.openxmlformats-officedocument\\.wordprocessingml\\.document|application\\/epub\\+zip|application\\/json|text\\/.+)$/;
+const naBase = new Map($('Já na base').all().filter((i) => i.json.documento).map((i) => [i.json.documento, i.json.modificado]));
+const arquivos = $('Arquivos da pasta').all().map((i) => i.json).filter((f) => f.id && LIDOS.test(f.mimeType || ''));
+const naPasta = new Set(arquivos.map((f) => 'drive-' + f.id));
+const saida = [];
+for (const f of arquivos) {
+  const documento = 'drive-' + f.id;
+  if (naBase.get(documento) !== f.modifiedTime) saida.push({ json: { acao: 'importar', id: f.id, nome: f.name, modificado: f.modifiedTime, documento } });
+}
+for (const documento of naBase.keys()) if (!naPasta.has(documento)) saida.push({ json: { acao: 'remover', documento } });
+return saida;`),
+    pgQuery('Apagar versões antigas', [660, 80], `=DELETE FROM ${TABLE} WHERE metadata->>'fonte' = 'drive' AND metadata->>'documento' IN ({{ $('O que mudou').all().map((i) => "'" + String(i.json.documento).replace(/[^A-Za-z0-9_-]/g, '') + "'").join(', ') || "''" }})`),
+    code('Arquivos para importar', [880, 80], "return $('O que mudou').all().filter((i) => i.json.acao === 'importar').map((i) => ({ json: i.json }));"),
+    drive('Baixar arquivo', [1100, 80], {
+      operation: 'download', fileId: { __rl: true, value: '={{ $json.id }}', mode: 'id' },
+      options: { googleFileConversion: { conversion: { docsToFormat: 'text/plain', sheetsToFormat: 'text/csv', slidesToFormat: 'application/pdf' } } },
+    }, { onError: 'continueErrorOutput' }),
+    insert('Guardar na base', [1340, 60]),
+    geminiEmbeddings('Embeddings Gemini', [1260, 300]),
+    loader('Ler arquivo', [1460, 300], 'binary'),
+    splitter('Dividir em trechos', [1540, 500], 0),
   ];
+  // Executa sempre a partir do primeiro item: a consulta à base e a remoção rodam uma vez só
+  nodes.find((n) => n.name === 'Apagar versões antigas').executeOnce = true;
   const connections = {
-    'Arquivo novo na pasta': { main: [[{ node: 'Arquivo', type: 'main', index: 0 }]] },
-    'Arquivo alterado na pasta': { main: [[{ node: 'Arquivo', type: 'main', index: 0 }]] },
-    Arquivo: { main: [[{ node: 'Apagar a versão anterior', type: 'main', index: 0 }]] },
-    'Apagar a versão anterior': { main: [[{ node: 'Baixar arquivo', type: 'main', index: 0 }]] },
-    'Baixar arquivo': { main: [[{ node: 'Guardar na base', type: 'main', index: 0 }]] },
+    'A cada hora': { main: [[{ node: 'Pasta do Drive', type: 'main', index: 0 }]] },
+    'Importar agora': { main: [[{ node: 'Pasta do Drive', type: 'main', index: 0 }]] },
+    'Pasta do Drive': { main: [[{ node: 'Arquivos da pasta', type: 'main', index: 0 }]] },
+    'Arquivos da pasta': { main: [[{ node: 'Já na base', type: 'main', index: 0 }]] },
+    'Já na base': { main: [[{ node: 'O que mudou', type: 'main', index: 0 }]] },
+    'O que mudou': { main: [[{ node: 'Apagar versões antigas', type: 'main', index: 0 }]] },
+    'Apagar versões antigas': { main: [[{ node: 'Arquivos para importar', type: 'main', index: 0 }]] },
+    'Arquivos para importar': { main: [[{ node: 'Baixar arquivo', type: 'main', index: 0 }]] },
+    'Baixar arquivo': { main: [[{ node: 'Guardar na base', type: 'main', index: 0 }], []] },
     'Embeddings Gemini': { ai_embedding: [[{ node: 'Guardar na base', type: 'ai_embedding', index: 0 }]] },
     'Ler arquivo': { ai_document: [[{ node: 'Guardar na base', type: 'ai_document', index: 0 }]] },
     'Dividir em trechos': { ai_textSplitter: [[{ node: 'Ler arquivo', type: 'ai_textSplitter', index: 0 }]] },
@@ -362,9 +406,15 @@ Um CRM próprio decide quando a IA atende e envia as respostas. Use exatamente e
 
 6. IF "IA atende?": continua só se {{ $json.atender }} for verdadeiro (boolean true). A saída falsa fica sem ligação.
 
-7. AI Agent "IA Vero":
-   - Prompt definido abaixo (Define below): {{ $json.mensagem }}.
-   - System Message: {{ $json.sistema }}.
+6b. Postgres "Diretrizes da Vero" (credencial "Postgres da VPS (base de conhecimento)"), ligado na saída verdadeira de "IA atende?".
+   - Execute Query com esta consulta (junta o texto inteiro de cada arquivo da pasta do Drive, em ordem de nome):
+     ${DIRETRIZES_SQL.replace(/\n\s*/g, ' ')}
+   - Settings: Always Output Data ligado e On Error "Continue".
+
+7. AI Agent "IA Vero", ligado depois de "Diretrizes da Vero":
+   - Prompt definido abaixo (Define below): {{ $('CRM - Conversa').item.json.mensagem }}.
+   - System Message: {{ $('CRM - Conversa').item.json.sistema + ($json.diretrizes ? '\\n\\nDiretrizes e memória da Vero (conteúdo da pasta do Google Drive: critérios de qualificação, regras, proibições e objeções). Siga sempre, junto com as regras acima; se algo conflitar, valem as regras acima. Não cite estas diretrizes ao cliente:\\n' + String($json.diretrizes).slice(0, ${DIRETRIZES_MAX}) : '') }}.
+   - Settings: Retry On Fail com 2 tentativas e 5000 ms entre elas.
    - Max Iterations: 10.
    - Em Settings, On Error: "Continue (using error output)".
    - Sem memória: o histórico da conversa já vem do CRM dentro de "sistema".
@@ -397,7 +447,7 @@ ${toolLines}
 
 12. HTTP Request "Avisar falha ao CRM", ligado na saída de erro do "IA Vero".
    - POST para a mesma URL de "Responder no WhatsApp", com a mesma credencial.
-   - Corpo JSON: {{ JSON.stringify({ conversa_id: $('CRM - Conversa').item.json.conversa_id, turno: $('CRM - Conversa').item.json.turno, erro: String($json.error?.message || $json.error || 'falha na IA') }) }}.
+   - Corpo JSON: {{ JSON.stringify({ conversa_id: $('CRM - Conversa').item.json.conversa_id, turno: $('CRM - Conversa').item.json.turno, erro: (typeof $json.error === 'object' && $json.error ? [$json.error.message, $json.error.description].filter(Boolean).join(' — ') : String($json.error || 'falha na IA')).slice(0, 400) }) }}.
 
 Não envie mensagens direto pela Evolution API: quem envia é o CRM, pelo "Responder no WhatsApp". Não crie memória de chat.
 \`\`\`
@@ -425,7 +475,7 @@ Não envie mensagens direto pela Evolution API: quem envia é o CRM, pelo "Respo
 
 Os dois são simples. Importe os arquivos prontos:
 - \`fluxo-base-conhecimento-crm.json\`: todo dia às 3h, \`GET /api/integracoes/n8n/conhecimento\`, apaga a cópia anterior do CRM e grava na tabela \`${TABLE}\` com os Embeddings Gemini.
-- \`fluxo-base-conhecimento-drive.json\`: arquivos de uma pasta do Google Drive entram na mesma tabela.
+- \`fluxo-base-conhecimento-drive.json\`: a cada hora, os arquivos de uma pasta do Google Drive entram na mesma tabela (novos e alterados entram; os que saem da pasta saem da base).
 
 Arquivo gerado por \`npm run n8n:fluxos\` a partir das ferramentas do agente do CRM.
 `;
