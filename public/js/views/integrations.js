@@ -461,6 +461,7 @@ function agentErrorText(e) {
   const t = String(e.detail || '');
   // Motivo devolvido pelo Google (o n8n confere a chave quando a IA falha) ou pelo provedor, do mais específico ao geral
   const CAUSES = [
+    [/free tier is not available|set up billing|paid tier|billing/i, 'O plano gratuito do Gemini não está disponível para o projeto dessa chave: o Google exige ativar o faturamento (plano pago). Em aistudio.google.com/billing, clique em "Set up billing" no projeto da chave e cadastre um cartão; a mesma chave passa a funcionar em alguns minutos. Dica: crie um alerta de orçamento no Google Cloud.'],
     [/SERVICE_DISABLED|has not been used in project|is disabled/i, 'A API do Gemini não está ativada no projeto do Google dessa chave (comum quando a chave foi criada no Google Cloud para outra coisa, como o Google Agenda). Crie a chave em aistudio.google.com › Get API key (já vem com a API ativada) e troque no n8n, na credencial "Google Gemini (Vero)", ou no CRM.'],
     [/API_KEY_INVALID|API key not valid|COLOQUE-A-CHAVE/i, 'A chave do Gemini é inválida ou não foi preenchida: copie de novo no Google AI Studio e cole na credencial "Google Gemini (Vero)" do n8n.'],
     [/REFERRER|referer|IP_ADDRESS|IP address|API_KEY_SERVICE_BLOCKED|blocked/i, 'A chave do Gemini tem restrição (de site, de IP ou de APIs) no Google Cloud. Use uma chave sem restrição de site/IP, criada no Google AI Studio.'],

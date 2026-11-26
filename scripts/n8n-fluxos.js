@@ -196,19 +196,20 @@ Endereço do CRM: nó **Configuração**. Token: credencial **${CRED.crm.name}**
     ...tools.map((t, i) => toolNode(t, [1000 + (i % 3) * 190, 320 + Math.floor(i / 3) * 220])),
     http('Responder no WhatsApp', [1220, -60], `={{ ${conv('urls.responder')} }}`,
       `={{ JSON.stringify({ conversa_id: ${conv('conversa_id')}, turno: ${conv('turno')}, texto: $json.output }) }}`, { retry: true }),
-    // Falha da IA: confere a chave do Gemini no Google para o CRM mostrar o motivo exato (o erro do agente vem genérico,
-    // ex.: "Forbidden - perhaps check your credentials?")
+    // Falha da IA: repete um pedido mínimo ao mesmo modelo do Gemini para o CRM mostrar o motivo exato do Google (o erro
+    // do agente vem genérico, ex.: "Forbidden - perhaps check your credentials?"): chave, faturamento, modelo, limite
     {
       parameters: {
-        method: 'GET', url: 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1',
+        method: 'POST', url: `=https://generativelanguage.googleapis.com/v1beta/{{ ${conv('modelo_gemini')} || 'models/gemini-2.5-flash' }}:generateContent`,
         authentication: 'predefinedCredentialType', nodeCredentialType: 'googlePalmApi',
-        options: { response: { response: { fullResponse: true, neverError: true, responseFormat: 'json' } }, timeout: 15000 },
+        sendBody: true, specifyBody: 'json', jsonBody: '{"contents":[{"role":"user","parts":[{"text":"teste"}]}],"generationConfig":{"maxOutputTokens":1}}',
+        options: { response: { response: { fullResponse: true, neverError: true, responseFormat: 'json' } }, timeout: 20000 },
       },
-      id: uid('chave'), name: 'Conferir a chave do Gemini', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [1220, 120], credentials: cred('gemini'),
+      id: uid('chave'), name: 'Conferir o Gemini', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [1220, 120], credentials: cred('gemini'),
       alwaysOutputData: true, onError: 'continueRegularOutput',
     },
     http('Avisar falha ao CRM', [1440, 120], `={{ ${conv('urls.responder')} }}`,
-      `={{ JSON.stringify({ conversa_id: ${conv('conversa_id')}, turno: ${conv('turno')}, erro: (String((() => { const e = $('IA Vero').item.json.error; return typeof e === 'object' && e ? [e.message, e.description].filter(Boolean).join(' — ') : (e || 'falha na IA'); })()) + (($json.statusCode || 0) >= 400 ? ' | Google (chave do Gemini): ' + [$json.body?.error?.status, ($json.body?.error?.details || []).map((d) => d.reason).filter(Boolean).join(','), $json.body?.error?.message].filter(Boolean).join(' · ') : '')).slice(0, 500) }) }}`),
+      `={{ JSON.stringify({ conversa_id: ${conv('conversa_id')}, turno: ${conv('turno')}, erro: (String((() => { const e = $('IA Vero').item.json.error; return typeof e === 'object' && e ? [e.message, e.description].filter(Boolean).join(' — ') : (e || 'falha na IA'); })()) + (($json.statusCode || 0) >= 400 ? ' | Google (Gemini): ' + [$json.body?.error?.status, ($json.body?.error?.details || []).map((d) => d.reason).filter(Boolean).join(','), $json.body?.error?.message].filter(Boolean).join(' · ') : '')).slice(0, 500) }) }}`),
   ];
   const connections = {
     'WhatsApp (conector)': { main: [[{ node: 'Configuração', type: 'main', index: 0 }]] },
@@ -218,8 +219,8 @@ Endereço do CRM: nó **Configuração**. Token: credencial **${CRED.crm.name}**
     'CRM - Conversa': { main: [[{ node: 'IA atende?', type: 'main', index: 0 }]] },
     'IA atende?': { main: [[{ node: 'Diretrizes da Vero', type: 'main', index: 0 }], []] },
     'Diretrizes da Vero': { main: [[{ node: 'IA Vero', type: 'main', index: 0 }]] },
-    'IA Vero': { main: [[{ node: 'Responder no WhatsApp', type: 'main', index: 0 }], [{ node: 'Conferir a chave do Gemini', type: 'main', index: 0 }]] },
-    'Conferir a chave do Gemini': { main: [[{ node: 'Avisar falha ao CRM', type: 'main', index: 0 }]] },
+    'IA Vero': { main: [[{ node: 'Responder no WhatsApp', type: 'main', index: 0 }], [{ node: 'Conferir o Gemini', type: 'main', index: 0 }]] },
+    'Conferir o Gemini': { main: [[{ node: 'Avisar falha ao CRM', type: 'main', index: 0 }]] },
     Gemini: { ai_languageModel: [[{ node: 'IA Vero', type: 'ai_languageModel', index: 0 }]] },
     base_de_conhecimento: { ai_tool: [[{ node: 'IA Vero', type: 'ai_tool', index: 0 }]] },
     'Embeddings Gemini': { ai_embedding: [[{ node: 'base_de_conhecimento', type: 'ai_embedding', index: 0 }]] },
@@ -507,17 +508,17 @@ ${toolLines}
    - Corpo JSON: {{ JSON.stringify({ conversa_id: $('CRM - Conversa').item.json.conversa_id, turno: $('CRM - Conversa').item.json.turno, texto: $json.output }) }}.
    - Retry On Fail: 3 tentativas.
 
-12. HTTP Request "Conferir a chave do Gemini", ligado na saída de erro do "IA Vero".
-   - GET https://generativelanguage.googleapis.com/v1beta/models?pageSize=1.
+12. HTTP Request "Conferir o Gemini", ligado na saída de erro do "IA Vero".
+   - POST https://generativelanguage.googleapis.com/v1beta/{{ $('CRM - Conversa').item.json.modelo_gemini }}:generateContent com o corpo {"contents":[{"role":"user","parts":[{"text":"teste"}]}],"generationConfig":{"maxOutputTokens":1}}.
    - Autenticação: Predefined Credential Type "Google Gemini (PaLM) API", credencial "Google Gemini (Vero)".
    - Options › Response: Include Response Headers and Status ligado, Never Error ligado.
    - Settings: Always Output Data ligado, On Error "Continue".
-   Serve para o CRM mostrar o motivo exato do Google quando a chave falha.
+   Serve para o CRM mostrar o motivo exato do Google quando a IA falha (chave, faturamento, modelo, limite).
 
-13. HTTP Request "Avisar falha ao CRM", depois de "Conferir a chave do Gemini".
+13. HTTP Request "Avisar falha ao CRM", depois de "Conferir o Gemini".
    - POST para a mesma URL de "Responder no WhatsApp", com a mesma credencial.
    - Corpo JSON: conversa_id e turno do "CRM - Conversa".
-   - Campo erro: a mensagem de erro do "IA Vero" ($('IA Vero').item.json.error). Quando o status da conferência for 400 ou mais, acrescente " | Google (chave do Gemini): " com $json.body.error.status, os motivos (details.reason) e $json.body.error.message.
+   - Campo erro: a mensagem de erro do "IA Vero" ($('IA Vero').item.json.error). Quando o status da conferência for 400 ou mais, acrescente " | Google (Gemini): " com $json.body.error.status, os motivos (details.reason) e $json.body.error.message.
 
 Não envie mensagens direto pela Evolution API: quem envia é o CRM, pelo "Responder no WhatsApp". Não crie memória de chat.
 \`\`\`

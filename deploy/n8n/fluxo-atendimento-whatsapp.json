@@ -498,10 +498,13 @@
     },
     {
       "parameters": {
-        "method": "GET",
-        "url": "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1",
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/{{ $('CRM - Conversa').item.json.modelo_gemini || 'models/gemini-2.5-flash' }}:generateContent",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":\"teste\"}]}],\"generationConfig\":{\"maxOutputTokens\":1}}",
         "options": {
           "response": {
             "response": {
@@ -510,11 +513,11 @@
               "responseFormat": "json"
             }
           },
-          "timeout": 15000
+          "timeout": 20000
         }
       },
       "id": "c876e0fd-d763-43a1-a0e1-c2b95fc38eb8",
-      "name": "Conferir a chave do Gemini",
+      "name": "Conferir o Gemini",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -538,7 +541,7 @@
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ conversa_id: $('CRM - Conversa').item.json.conversa_id, turno: $('CRM - Conversa').item.json.turno, erro: (String((() => { const e = $('IA Vero').item.json.error; return typeof e === 'object' && e ? [e.message, e.description].filter(Boolean).join(' — ') : (e || 'falha na IA'); })()) + (($json.statusCode || 0) >= 400 ? ' | Google (chave do Gemini): ' + [$json.body?.error?.status, ($json.body?.error?.details || []).map((d) => d.reason).filter(Boolean).join(','), $json.body?.error?.message].filter(Boolean).join(' · ') : '')).slice(0, 500) }) }}",
+        "jsonBody": "={{ JSON.stringify({ conversa_id: $('CRM - Conversa').item.json.conversa_id, turno: $('CRM - Conversa').item.json.turno, erro: (String((() => { const e = $('IA Vero').item.json.error; return typeof e === 'object' && e ? [e.message, e.description].filter(Boolean).join(' — ') : (e || 'falha na IA'); })()) + (($json.statusCode || 0) >= 400 ? ' | Google (Gemini): ' + [$json.body?.error?.status, ($json.body?.error?.details || []).map((d) => d.reason).filter(Boolean).join(','), $json.body?.error?.message].filter(Boolean).join(' · ') : '')).slice(0, 500) }) }}",
         "options": {
           "timeout": 30000
         }
@@ -650,14 +653,14 @@
         ],
         [
           {
-            "node": "Conferir a chave do Gemini",
+            "node": "Conferir o Gemini",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Conferir a chave do Gemini": {
+    "Conferir o Gemini": {
       "main": [
         [
           {
