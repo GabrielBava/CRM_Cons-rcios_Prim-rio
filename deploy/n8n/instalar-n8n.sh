@@ -332,7 +332,10 @@ for _ in $(seq 1 60); do
   sleep 5
 done
 [ "$OK_N8N" = 1 ] || falha "o n8n não iniciou. Veja os registros com: vero-whatsapp registros-n8n"
-docker compose exec -T -e PGOPTIONS=--client-min-messages=warning base-ia psql -U vero -d base_ia -qc "CREATE EXTENSION IF NOT EXISTS vector" >/dev/null \
+# A tabela da base de conhecimento (as mesmas colunas que o n8n cria) já existe antes do primeiro fluxo rodar
+docker compose exec -T -e PGOPTIONS=--client-min-messages=warning base-ia psql -U vero -d base_ia -q \
+  -c "CREATE EXTENSION IF NOT EXISTS vector" \
+  -c "CREATE TABLE IF NOT EXISTS vero_conhecimento (id uuid NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY, text text, metadata jsonb, embedding vector)" >/dev/null \
   || falha "a base de conhecimento (pgvector) não ativou. Veja: vero-whatsapp situacao"
 
 
@@ -364,6 +367,15 @@ done
 chown -R 1000:1000 "$TMP"
 docker compose cp "$TMP/." n8n:/tmp/vero-importar/ >/dev/null
 docker compose exec -T n8n n8n import:credentials --input=/tmp/vero-importar/credenciais.json >/dev/null 2>&1 || falha "não foi possível criar as credenciais no n8n (vero-whatsapp registros-n8n)."
+# Google Drive: credencial em branco, já ligada ao fluxo do Drive (você cola o ID e a chave do cliente OAuth e entra
+# com o Google). Só cria se ainda não existe, para não apagar o acesso já autorizado.
+if ! docker compose exec -T n8n n8n export:credentials --id=VeroGDrive000001 --output=/tmp/vero-importar/drive-existe.json >/dev/null 2>&1; then
+  printf '[{"id":"VeroGDrive000001","name":"Google Drive (Vero)","type":"googleDriveOAuth2Api","data":{"clientId":"","clientSecret":""}}]' > "$TMP/drive.json"
+  chown 1000:1000 "$TMP/drive.json"
+  docker compose cp "$TMP/drive.json" n8n:/tmp/vero-importar/drive.json >/dev/null 2>&1 \
+    && docker compose exec -T n8n n8n import:credentials --input=/tmp/vero-importar/drive.json >/dev/null 2>&1 \
+    || aviso "não foi possível criar a credencial do Google Drive; crie no n8n (Google Drive OAuth2 API) se for usar o Drive."
+fi
 
 EXISTENTES="$(docker compose exec -T n8n n8n list:workflow 2>/dev/null | cut -d'|' -f1 || true)"
 IMPORTOU=0

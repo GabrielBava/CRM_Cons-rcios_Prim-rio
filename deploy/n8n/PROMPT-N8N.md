@@ -128,6 +128,6 @@ Não envie mensagens direto pela Evolution API: quem envia é o CRM, pelo "Respo
 
 Os dois são simples. Importe os arquivos prontos:
 - `fluxo-base-conhecimento-crm.json`: todo dia às 3h, `GET /api/integracoes/n8n/conhecimento`, apaga a cópia anterior do CRM e grava na tabela `vero_conhecimento` com os Embeddings Gemini.
-- `fluxo-base-conhecimento-drive.json`: arquivos de uma pasta do Google Drive entram na mesma tabela.
+- `fluxo-base-conhecimento-drive.json`: a cada hora, os arquivos de uma pasta do Google Drive entram na mesma tabela (novos e alterados entram; os que saem da pasta saem da base).
 
 Arquivo gerado por `npm run n8n:fluxos` a partir das ferramentas do agente do CRM.

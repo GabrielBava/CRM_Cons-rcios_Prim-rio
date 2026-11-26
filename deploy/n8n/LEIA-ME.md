@@ -115,7 +115,7 @@ No fim, ele mostra o endereço, o seu e-mail e a **senha inicial**. Para ver de 
    - **CRM Vero (token do n8n)**: o token do CRM.
    - **Google Gemini (Vero)**: a chave do Gemini. Se não informou no instalador, abra e cole a chave em **API Key**.
    - **Postgres da VPS (base de conhecimento)**: já configurada.
-5. Abra **Vero - Base de conhecimento (CRM)** e clique em **Execute workflow** para preencher a base na hora. Depois ele roda sozinho todo dia às 3h.
+5. Abra **Vero - Base de conhecimento (CRM)** e clique em **Execute** para preencher a base na hora. Depois ele roda sozinho todo dia às 3h.
 
 ## 5. Testar
 
@@ -136,23 +136,63 @@ A IA consulta a ferramenta **base_de_conhecimento** antes de responder dúvidas.
 - Vão as transcrições anexadas aos negócios, sem nome, telefone, e-mail e CPF do cliente.
 - A IA aprende como a equipe explica e contorna objeções, sem citar dados de outros clientes.
 
-**c) Google Drive (opcional):** materiais, roteiros e transcrições de ligações em PDF, Word, Google Docs, TXT ou CSV.
+**c) Google Drive:** os arquivos de uma pasta do Drive entram na base. Servem materiais sobre consórcio, roteiros, perguntas frequentes e transcrições de ligações e reuniões.
 
-1. No Google Cloud Console (o mesmo projeto do Google Agenda do CRM, ou um novo):
-   1. Ative a **Google Drive API**.
-   2. Em **Credenciais › Criar credenciais › ID do cliente OAuth** (tipo **Aplicativo da Web**), adicione o URI de redirecionamento: `https://n8n.veroconsorciosbr.com.br/rest/oauth2-credential/callback`.
-2. No n8n:
-   1. Em **Credentials › Add credential › Google Drive OAuth2 API**, cole o ID e a chave secreta do cliente.
-   2. Clique em **Sign in with Google** e salve com o nome **Google Drive (Vero)**.
-3. Crie no Drive uma pasta, por exemplo **Vero - Base IA**, e coloque os arquivos nela.
-4. Abra o fluxo **Vero - Base de conhecimento (Google Drive)**:
-   1. Nos dois gatilhos (**Arquivo novo na pasta** e **Arquivo alterado na pasta**), escolha a credencial e a pasta.
-   2. No nó **Baixar arquivo**, escolha a credencial.
-   3. Clique em **Publish**.
+A IA consulta essa base sozinha (ferramenta **base_de_conhecimento**) sempre que o lead pergunta algo sobre consórcio. Não precisa mudar nada no fluxo de atendimento: só ligar a pasta.
 
-A cada hora, o fluxo confere a pasta. Arquivo alterado troca a versão anterior na base.
+**Passo 1. Liberar o Drive no Google Cloud (uma vez só, uns 10 minutos)**
+
+1. Abra <https://console.cloud.google.com> com a conta Google dona da pasta.
+2. No topo, escolha um projeto: o mesmo do Google Agenda do CRM, se já existir, ou **Novo projeto** (ex.: "Vero n8n").
+3. Ative a API do Drive: menu ☰ › **APIs e serviços › Biblioteca** › procure **Google Drive API** › **Ativar**.
+4. Configure a tela de permissão: menu ☰ › **Google Auth Platform** (ou "Tela de permissão OAuth") › **Começar**.
+   - **Nome do app:** Vero n8n. **E-mail de suporte:** o seu.
+   - **Público:**
+     - **Interno**, se a conta é do Google Workspace da Vero (e-mail @veroconsorciosbr.com.br);
+     - **Externo**, se é uma conta Gmail.
+   - **Contato:** o seu e-mail › **Criar**.
+   - **Se escolheu Externo:** em **Público**, clique em **Publicar aplicativo**. No modo "Teste", o Google desconecta o n8n a cada 7 dias. Não precisa pedir a verificação do Google.
+5. Crie o acesso do n8n: **Clientes** (ou **Credenciais › Criar credenciais › ID do cliente OAuth**):
+   - **Tipo:** Aplicativo da Web. **Nome:** n8n.
+   - **URIs de redirecionamento autorizados:** `https://n8n.veroconsorciosbr.com.br/rest/oauth2-credential/callback`
+   - **Criar** e copie o **ID do cliente** e a **Chave secreta do cliente**.
+
+**Passo 2. Ligar o Drive no n8n**
+
+1. No n8n, abra **Overview › Credentials › Google Drive (Vero)**. O instalador já criou essa credencial, ligada ao fluxo.
+2. Cole o **Client ID** e o **Client Secret**. Confira se o **OAuth Redirect URL** mostrado é igual ao do passo 1.5.
+3. Clique em **Sign in with Google**, escolha a conta dona da pasta e permita o acesso.
+   - Se aparecer "O Google não verificou este app", clique em **Avançado › Acessar Vero n8n**: o app é o seu.
+4. **Save**.
+
+**Passo 3. Escolher a pasta e importar**
+
+1. No Google Drive, crie uma pasta, por exemplo **Vero - Base IA**, e coloque os arquivos nela.
+2. Abra a pasta e copie o endereço da barra do navegador (ex.: `https://drive.google.com/drive/folders/1AbC...`).
+3. No n8n, abra o fluxo **Vero - Base de conhecimento (Google Drive)** e clique duas vezes no nó **Pasta do Drive**. No campo **pasta**, cole o endereço no lugar de `COLE-AQUI-O-LINK-DA-PASTA-DO-DRIVE` e salve.
+4. Clique em **Execute**: ele importa tudo o que já está na pasta. Os nós ficam verdes e **Guardar na base** mostra quantos trechos entraram.
+5. Clique em **Publish**. A partir daí, a cada hora (no minuto 20), ele confere a pasta:
+   - arquivo novo entra;
+   - arquivo alterado troca a versão anterior;
+   - arquivo tirado da pasta sai da base.
+
+   Para atualizar na hora, abra o fluxo e clique em **Execute** de novo.
+6. **Teste:** do celular do modo de teste, pergunte no WhatsApp algo que só está nos arquivos. Em **Executions** do fluxo de atendimento, o nó **base_de_conhecimento** mostra os trechos que a IA leu.
+
+**O que colocar na pasta**
+- **Formatos lidos:** Google Docs, Planilhas (lidas como tabela) e Apresentações, PDF com texto, Word (.docx), TXT e CSV.
+- **O que fica de fora:** imagens, áudios e vídeos (transcreva antes) e PDF escaneado (é imagem, não tem texto).
+- **Bons conteúdos:**
+  - como funciona o consórcio: assembleia, sorteio, lance livre, fixo e embutido, contemplação, carta de crédito, taxa de administração, fundo de reserva, seguro e reajuste;
+  - perguntas frequentes e objeções com as respostas da equipe;
+  - roteiros de atendimento;
+  - transcrições de ligações boas.
+- **Um assunto por documento,** com títulos claros: a busca acha o trecho certo com mais facilidade.
+- **A IA segue as regras do CRM:** mesmo que o arquivo traga números, ela não informa valores de parcela, taxas nem propostas; nesses casos, passa para o especialista. Use a base para explicar e tirar dúvidas.
 
 > Não coloque na pasta dados pessoais de clientes (CPF, telefone, valores de contratos): a IA pode usar o conteúdo nas respostas.
+
+**Já tinha instalado o n8n antes desta versão?** Rode o instalador de novo com `sudo REIMPORTAR=1 bash instalar-n8n.sh`, para trazer o fluxo novo do Drive e a credencial "Google Drive (Vero)". Atenção: os fluxos voltam ao original. Se mudou algum, baixe uma cópia antes (menu **…** › **Download**).
 
 ## 7. Ligar, desligar e assumir (igual ao agente do CRM)
 
