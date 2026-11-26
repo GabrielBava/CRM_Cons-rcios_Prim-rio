@@ -9,6 +9,7 @@
 # DOMINIO: subdomínio com registro A apontando para o IP da VPS (o HTTPS automático depende disso).
 # Rodar de novo atualiza a configuração e mantém a chave, as senhas e o WhatsApp conectado.
 # No fim, mostra o endereço e a chave para colar no CRM (Integrações › WhatsApp Lite › Servidor do WhatsApp Lite).
+# Com o n8n instalado (deploy/n8n/instalar-n8n.sh), mantém o n8n, o aviso do conector para ele e o endereço do n8n.
 set -euo pipefail
 
 PASTA="${VERO_PASTA:-/opt/vero-whatsapp}"
@@ -132,11 +133,41 @@ fi
 etapa "Configuração em $PASTA"
 mkdir -p "$PASTA"
 cd "$PASTA"
-ler() { grep -m1 "^$1=" .env 2>/dev/null | cut -d= -f2- || true; }
+ler() { grep -m1 "^$1=" "${2:-.env}" 2>/dev/null | cut -d= -f2- || true; }
 CHAVE="$(ler AUTHENTICATION_API_KEY)"
 SENHA="$(ler POSTGRES_PASSWORD)"
 [ -n "$CHAVE" ] || CHAVE="$(openssl rand -hex 24)"
 [ -n "$SENHA" ] || SENHA="$(openssl rand -hex 16)"
+
+# n8n na mesma VPS (instalar-n8n.sh): o conector avisa o n8n de cada mensagem pela rede interna
+N8N_DOMINIO=""
+if [ -f n8n.env ] && [ -f docker-compose.n8n.yml ]; then
+  N8N_DOMINIO="$(ler N8N_DOMINIO n8n.env)"
+fi
+if [ -n "$N8N_DOMINIO" ]; then
+  AVISO_GLOBAL="# n8n nesta VPS (instalar-n8n.sh): o conector avisa o n8n de cada mensagem pela rede interna da VPS.
+# O aviso de cada número para o CRM continua (status de entrega, conexão e QR Code).
+COMPOSE_FILE=docker-compose.yml:docker-compose.n8n.yml
+WEBHOOK_GLOBAL_ENABLED=true
+WEBHOOK_GLOBAL_URL=http://n8n:5678/webhook/vero-whatsapp
+WEBHOOK_GLOBAL_WEBHOOK_BY_EVENTS=false
+WEBHOOK_EVENTS_MESSAGES_UPSERT=true"
+  for ev in APPLICATION_STARTUP QRCODE_UPDATED MESSAGES_SET MESSAGES_EDITED MESSAGES_UPDATE MESSAGES_DELETE SEND_MESSAGE SEND_MESSAGE_UPDATE \
+    CONTACTS_SET CONTACTS_UPSERT CONTACTS_UPDATE PRESENCE_UPDATE CHATS_SET CHATS_UPSERT CHATS_UPDATE CHATS_DELETE GROUPS_UPSERT GROUPS_UPDATE \
+    GROUP_PARTICIPANTS_UPDATE CONNECTION_UPDATE REMOVE_INSTANCE LOGOUT_INSTANCE LABELS_EDIT LABELS_ASSOCIATION CALL TYPEBOT_START TYPEBOT_CHANGE_STATUS ERRORS; do
+    AVISO_GLOBAL="$AVISO_GLOBAL
+WEBHOOK_EVENTS_$ev=false"
+  done
+  AVISO_GLOBAL="$AVISO_GLOBAL
+# O aviso para o CRM vai antes do aviso para o n8n: tentativas curtas para o n8n não ficar esperando
+WEBHOOK_REQUEST_TIMEOUT_MS=8000
+WEBHOOK_RETRY_MAX_ATTEMPTS=2
+WEBHOOK_RETRY_INITIAL_DELAY_SECONDS=1
+WEBHOOK_RETRY_MAX_DELAY_SECONDS=4"
+else
+  AVISO_GLOBAL="# O CRM cadastra o webhook de cada número sozinho: sem webhook global
+WEBHOOK_GLOBAL_ENABLED=false"
+fi
 
 umask 077
 cat > .env <<EOF
@@ -177,8 +208,7 @@ CONFIG_SESSION_PHONE_NAME=Chrome
 QRCODE_LIMIT=30
 DEL_INSTANCE=false
 
-# O CRM cadastra o webhook de cada número sozinho: sem webhook global
-WEBHOOK_GLOBAL_ENABLED=false
+$AVISO_GLOBAL
 
 CORS_ORIGIN=*
 CORS_METHODS=GET,POST,PUT,DELETE
@@ -265,6 +295,18 @@ cat > Caddyfile <<'EOF'
 	reverse_proxy evolution-api:8080
 }
 EOF
+if [ -n "$N8N_DOMINIO" ]; then
+  cat >> Caddyfile <<EOF
+
+# n8n (agente de IA do WhatsApp). O aviso do conector chega pela rede interna: de fora, esse endereço fica fechado.
+$N8N_DOMINIO {
+	encode gzip
+	@aviso_do_conector path /webhook/vero-whatsapp* /webhook-test/vero-whatsapp*
+	respond @aviso_do_conector "Somente o conector desta VPS usa este endereço." 403
+	reverse_proxy n8n:5678
+}
+EOF
+fi
 
 cat > /usr/local/bin/vero-whatsapp <<EOF
 #!/usr/bin/env bash
@@ -273,12 +315,13 @@ cd "$PASTA" || exit 1
 case "\${1:-situacao}" in
   situacao|status) docker compose ps; echo; free -m ;;
   registros|logs) docker compose logs --tail=200 -f evolution-api ;;
+  registros-n8n|logs-n8n) docker compose logs --tail=200 -f n8n ;;
   reiniciar) docker compose restart ;;
-  dados) cat DADOS-DO-CONECTOR.txt ;;
+  dados) cat DADOS-DO-CONECTOR.txt; if [ -f DADOS-DO-N8N.txt ]; then echo; cat DADOS-DO-N8N.txt; fi ;;
   diagnostico)
     curl -fsSL https://raw.githubusercontent.com/gabrielbava/crm_cons-rcios_prim-rio/HEAD/deploy/whatsapp-lite/diagnostico.sh -o /tmp/vero-diagnostico.sh \
       && bash /tmp/vero-diagnostico.sh ;;
-  *) echo "Uso: vero-whatsapp situacao | registros | reiniciar | dados | diagnostico" ;;
+  *) echo "Uso: vero-whatsapp situacao | registros | registros-n8n | reiniciar | dados | diagnostico" ;;
 esac
 EOF
 chmod 755 /usr/local/bin/vero-whatsapp
@@ -311,6 +354,9 @@ if [ "$BAIXOU" != 1 ]; then
   aviso "não deu para baixar atualizações agora; usando os programas que já estão nesta VPS."
 fi
 docker compose up -d --remove-orphans
+# O Caddy só lê o Caddyfile ao iniciar: recarrega para valer o endereço novo (conector ou n8n)
+docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 \
+  || docker compose restart caddy >/dev/null 2>&1 || true
 
 etapa "Aguardando o conector e o certificado HTTPS de https://$DOMINIO (até 5 minutos)"
 INSEGURO=""
@@ -332,6 +378,12 @@ Endereço do servidor: https://$DOMINIO
 Chave global (apikey): $CHAVE
 EOF
 umask 022
+
+# Chamado pelo instalador do n8n: ele mostra o resumo dele
+if [ -n "${VERO_SEM_RESUMO:-}" ]; then
+  if [ "$OK" = 1 ] && [ "$CHAVE_OK" = 1 ]; then echo "Conector do WhatsApp no ar em https://$DOMINIO."; else aviso "https://$DOMINIO ainda não respondeu (confira o DNS e as portas 80 e 443)."; fi
+  exit 0
+fi
 
 echo
 echo "=================================================================================="

@@ -17,7 +17,8 @@
     "supabase": "node --disable-warning=ExperimentalWarning scripts/supabase-sync.js",
     "pg:schema": "node --disable-warning=ExperimentalWarning scripts/pg-schema.js",
     "test:pg": "node --disable-warning=ExperimentalWarning --test --test-concurrency=1 test/*.test.js",
-    "teste:online": "node scripts/teste-online.js"
+    "teste:online": "node scripts/teste-online.js",
+    "n8n:fluxos": "node --disable-warning=ExperimentalWarning scripts/n8n-fluxos.js"
   },
   "license": "UNLICENSED",
   "devDependencies": {

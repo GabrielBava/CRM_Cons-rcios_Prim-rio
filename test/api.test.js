@@ -3901,3 +3901,163 @@ test('Central de agendas e tarefas: fila do especialista por urgência e ações
     await call('admin', 'PUT', '/api/whatsapp/lite/config', { sandbox: false });
   }
 });
+
+test('Agente de IA no n8n: token próprio, mensagem repassada pelo n8n, ações do CRM, resposta enviada pelo CRM e as mesmas regras de ligar/desligar', async () => {
+  process.env.WA_AGENT_DEBOUNCE_MS = '0';
+  process.env.N8N_WAIT_LOCK_MS = '0';
+  await call('admin', 'PUT', '/api/whatsapp/lite/config', { url: '', clear_key: true, sandbox: true });
+  const inst = await call('admin', 'POST', '/api/whatsapp/lite/instancias', { name: 'Central n8n' });
+  await call('admin', 'POST', `/api/whatsapp/lite/instancias/${inst.data.id}/simular-conexao`, { phone: '5151970000000' });
+  const row = appDb.prepare('SELECT instance_key, webhook_token FROM wa_instances WHERE id = ?').get(inst.data.id);
+  const c1 = await userId('c1@t.com');
+  let seq = 0;
+  const evo = (from, text, extra = {}) => ({ event: 'messages.upsert', instance: row.instance_key, data: { key: { remoteJid: `${from}@s.whatsapp.net`, fromMe: false, id: `N8N-${++seq}`, ...extra }, pushName: 'Paula', message: { conversation: text }, messageTimestamp: Math.floor(Date.now() / 1000) } });
+  let token = '';
+  const n8n = (method, path, body, tk = token) => fetch(`${base}/api/integracoes/n8n${path}`, { method, headers: { 'Content-Type': 'application/json', ...(tk ? { Authorization: `Bearer ${tk}` } : {}) }, body: body ? JSON.stringify(body) : undefined })
+    .then(async (r) => ({ status: r.status, data: await r.json() }));
+  try {
+    // Provedor n8n: sem o token, o agente não fica pronto
+    let cfg = await call('admin', 'PUT', '/api/whatsapp/agente', { enabled: true, channel: 'lite', instance_id: inst.data.id, provider: 'n8n', default_owner_id: c1, notice_hours: 0, days: [0, 1, 2, 3, 4, 5, 6], start: '00:00', end: '23:59' });
+    assert.equal(cfg.status, 200, JSON.stringify(cfg.data));
+    assert.equal(cfg.data.ready, false);
+    assert.equal(cfg.data.reason, 'sem_token_n8n');
+    assert.equal(cfg.data.n8n.has_token, false);
+    assert.equal((await call('gestor', 'POST', '/api/whatsapp/agente/n8n/token')).status, 403);
+    const tk = await call('admin', 'POST', '/api/whatsapp/agente/n8n/token');
+    assert.equal(tk.status, 200);
+    assert.match(tk.data.token, /^crm_n8n_/);
+    token = tk.data.token;
+    cfg = await call('admin', 'GET', '/api/whatsapp/agente');
+    assert.equal(cfg.data.ready, true);
+    assert.equal(cfg.data.llm.provider, 'n8n');
+    assert.equal(cfg.data.n8n.has_token, true);
+    assert.equal(cfg.data.n8n.hint, `…${token.slice(-4)}`);
+    assert.ok(!('n8n_token_hash' in cfg.data.config), 'o hash do token não sai do servidor');
+    assert.ok(!JSON.stringify(cfg.data).includes(token));
+
+    // Token: sem ou errado, 401; certo, a conferência mostra o agente
+    assert.equal((await n8n('GET', '/status', null, '')).status, 401);
+    assert.equal((await n8n('GET', '/status', null, 'crm_n8n_errado')).status, 401);
+    const st = await n8n('GET', '/status');
+    assert.equal(st.status, 200);
+    assert.equal(st.data.agente.provedor, 'n8n');
+    assert.equal(st.data.agente.pronto, true);
+    assert.equal(st.data.agente.numero_central.conectado, true);
+    assert.ok((await call('admin', 'GET', '/api/whatsapp/agente')).data.n8n.last_call_at, 'último contato do n8n registrado');
+
+    // O aviso do próprio CRM chega: registra a mensagem, mas quem responde é o n8n (o agente do CRM não entra)
+    const m1 = evo('5511932170001', 'Oi, quero saber do consórcio de imóvel');
+    const hook = await fetch(`${base}/api/whatsapp/lite/webhook/${row.webhook_token}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(m1) }).then((r) => r.json());
+    assert.equal(hook.mensagens, 1);
+    assert.ok(!hook.agente);
+    // Eventos que não são mensagem e números que o CRM não conhece
+    assert.equal((await n8n('POST', '/mensagem', { event: 'messages.update', instance: row.instance_key, data: {} })).data.motivo, 'evento_ignorado');
+    assert.equal((await n8n('POST', '/mensagem', { ...m1, instance: 'outro' })).data.motivo, 'numero_desconhecido');
+    // O n8n repassa a mesma mensagem: não duplica e a IA atende
+    const t1 = await n8n('POST', '/mensagem', m1);
+    assert.equal(t1.status, 200, JSON.stringify(t1.data));
+    assert.equal(t1.data.atender, true, JSON.stringify(t1.data));
+    assert.equal(t1.data.registradas, 0, 'já tinha chegado pelo aviso do CRM');
+    const convId = t1.data.conversa_id;
+    assert.equal(appDb.prepare('SELECT COUNT(*) AS n FROM wa_messages WHERE conversation_id = ?').get(convId).n, 1);
+    assert.match(t1.data.mensagem, /consórcio de imóvel/);
+    assert.match(t1.data.sistema, /salvar_triagem/);
+    assert.match(t1.data.sistema, /base_de_conhecimento/);
+    assert.match(t1.data.sistema, /Dados do lead no CRM/);
+    assert.ok(t1.data.turno);
+    assert.match(t1.data.urls.acao, /\/api\/integracoes\/n8n\/acao$/);
+    let w = appDb.prepare('SELECT * FROM wa_conversations WHERE id = ?').get(convId);
+    assert.ok(w.contact_id, 'número novo vira lead');
+    assert.equal(w.ai_status, 'ativa');
+    assert.equal(appDb.prepare('SELECT origin FROM contacts WHERE id = ?').get(w.contact_id).origin, 'whatsapp');
+
+    // Outra mensagem durante o atendimento: a conversa está ocupada (uma resposta por vez)
+    const busy = await n8n('POST', '/mensagem', evo('5511932170001', 'Moro em Porto Alegre'));
+    assert.equal(busy.data.atender, false);
+    assert.equal(busy.data.motivo, 'ocupada');
+    assert.equal(busy.data.registradas, 1, 'a mensagem fica registrada mesmo assim');
+
+    // Ações: turno errado é recusado; triagem e horários pelo CRM
+    assert.equal((await n8n('POST', '/acao/salvar_triagem', { conversa_id: convId, turno: 'x', dados: {} })).status, 409);
+    assert.equal((await n8n('POST', '/acao/apagar_tudo', { conversa_id: convId, turno: t1.data.turno })).status, 400);
+    const tri = await n8n('POST', '/acao/salvar_triagem', { conversa_id: convId, turno: t1.data.turno, dados: JSON.stringify({ interesse: 'sim', dor: 'sim', dor_descricao: 'comprar o primeiro apartamento', impacto: 'curto', decisor: 'sim', faixa_investimento: '1000_2000', faixa_renda: '10k_20k' }) });
+    assert.equal(tri.status, 200, JSON.stringify(tri.data));
+    assert.equal(tri.data.salvo, true);
+    assert.equal(tri.data.triagem_concluida, true, JSON.stringify(tri.data));
+    const hrs = await n8n('POST', '/acao/horarios_r1', { conversa_id: convId, turno: t1.data.turno });
+    assert.ok(hrs.data.horarios?.length, JSON.stringify(hrs.data));
+    // Resposta: o CRM envia pelo WhatsApp e registra como mensagem da IA
+    const rep = await n8n('POST', '/responder', { conversa_id: convId, turno: t1.data.turno, texto: `Tenho ${hrs.data.horarios[0].rotulo}. Pode ser?`, tokens_entrada: 1200, tokens_saida: 40 });
+    assert.equal(rep.status, 200, JSON.stringify(rep.data));
+    assert.equal(rep.data.enviado, true);
+    const out = appDb.prepare("SELECT * FROM wa_messages WHERE conversation_id = ? AND direction = 'out' ORDER BY id DESC LIMIT 1").get(convId);
+    assert.equal(out.ai, 1);
+    assert.match(out.body, /Pode ser\?/);
+    w = appDb.prepare('SELECT * FROM wa_conversations WHERE id = ?').get(convId);
+    assert.equal(w.ai_lock_at, null, 'trava liberada');
+    assert.equal(w.ai_status, 'ativa', 'a resposta da IA não conta como resposta de uma pessoa');
+    assert.equal((await n8n('POST', '/responder', { conversa_id: convId, turno: t1.data.turno, texto: 'de novo' })).status, 409, 'turno encerrado');
+    // A mensagem que ficou "ocupada" é atendida quando chega a próxima; o aviso repetido não gera outra resposta
+    const t2 = await n8n('POST', '/mensagem', evo('5511932170001', 'Pode ser sim, no primeiro horário'));
+    assert.equal(t2.data.atender, true);
+    assert.match(t2.data.mensagem, /primeiro horário/);
+    assert.match(t2.data.sistema, /Tenho .* Pode ser\?/, 'o histórico traz a resposta anterior da IA');
+    const ag = await n8n('POST', '/acao/agendar_r1', { conversa_id: convId, turno: t2.data.turno, dados: { inicio: hrs.data.horarios[0].inicio, email: 'paula@exemplo.com' } });
+    assert.equal(ag.data.agendado, true, JSON.stringify(ag.data));
+    assert.equal(appDb.prepare('SELECT ai_status FROM wa_conversations WHERE id = ?').get(convId).ai_status, 'humano', 'R1 agendada: a conversa passa ao especialista');
+    const rep2 = await n8n('POST', '/responder', { conversa_id: convId, turno: t2.data.turno, texto: `Prontinho! R1 marcada para ${ag.data.quando}.` });
+    assert.equal(rep2.data.enviado, true, 'a confirmação ainda sai');
+    assert.equal(appDb.prepare("SELECT COUNT(*) AS n FROM tasks WHERE contact_id = ? AND type = 'reuniao'").get(w.contact_id).n, 1);
+    const again = await n8n('POST', '/mensagem', evo('5511932170001', 'Obrigada!'));
+    assert.equal(again.data.atender, false);
+    assert.equal(again.data.motivo, 'com_especialista');
+
+    // Devolver para a IA e o especialista responder pelo CRM: a IA para (mesma regra do agente do CRM)
+    assert.equal((await call('admin', 'POST', `/api/whatsapp/conversas/${convId}/ia`, { acao: 'devolver' })).status, 200);
+    const t3 = await n8n('POST', '/mensagem', evo('5511932170001', 'Tenho mais uma dúvida'));
+    assert.equal(t3.data.atender, true);
+    await n8n('POST', '/responder', { conversa_id: convId, turno: t3.data.turno, texto: 'Claro, pode perguntar!' });
+    await call('admin', 'POST', `/api/whatsapp/conversas/${convId}/mensagens`, { body: 'Oi Paula, aqui é da equipe.' });
+    assert.equal(appDb.prepare('SELECT ai_status FROM wa_conversations WHERE id = ?').get(convId).ai_status, 'pausada');
+    assert.equal((await n8n('POST', '/mensagem', evo('5511932170001', 'Oi'))).data.motivo, 'com_especialista');
+
+    // Falha no n8n (modelo fora do ar): o CRM manda a mensagem padrão e passa ao especialista
+    const t4 = await n8n('POST', '/mensagem', evo('5511932170002', 'Bom dia'));
+    assert.equal(t4.data.atender, true, JSON.stringify(t4.data));
+    const err = await n8n('POST', '/responder', { conversa_id: t4.data.conversa_id, turno: t4.data.turno, erro: 'Gemini: 429' });
+    assert.equal(err.data.enviado, true);
+    assert.equal(appDb.prepare('SELECT ai_status FROM wa_conversations WHERE id = ?').get(t4.data.conversa_id).ai_status, 'humano');
+    assert.match(appDb.prepare("SELECT body FROM wa_messages WHERE conversation_id = ? AND direction = 'out' ORDER BY id DESC LIMIT 1").get(t4.data.conversa_id).body, /especialista/);
+    assert.ok(appDb.prepare("SELECT 1 FROM wa_agent_log WHERE conversation_id = ? AND action = 'erro'").get(t4.data.conversa_id));
+
+    // Modo de teste e IA desligada: o n8n não responde
+    await call('admin', 'PUT', '/api/whatsapp/agente', { test_numbers: '51 99999-0000' });
+    // (número fora da lista nem entra no CRM: o número central só registra os autorizados)
+    assert.equal((await n8n('POST', '/mensagem', evo('5511932170003', 'Olá'))).data.motivo, 'mensagem_ignorada');
+    assert.equal((await n8n('POST', '/mensagem', evo('5511932170002', 'Olá de novo'))).data.motivo, 'modo_de_teste', 'conversa que já existe, fora da lista');
+    await call('admin', 'PUT', '/api/whatsapp/agente', { test_numbers: '', enabled: false });
+    assert.equal((await n8n('POST', '/mensagem', evo('5511932170001', 'Olá?'))).data.motivo, 'ia_desligada');
+    assert.ok(appDb.prepare("SELECT 1 FROM wa_messages WHERE body = 'Olá?'").get(), 'desligada, a mensagem chega ao CRM pelo n8n do mesmo jeito');
+
+    // Base de conhecimento: a base da IA do CRM e, se ligado, as transcrições das R1 sem dados pessoais
+    appDb.prepare("INSERT INTO ai_knowledge (kind, title, content, active, created_at, updated_at) VALUES ('objecao', 'Demora da contemplação', 'Explique o lance e o planejamento.', 1, ?, ?)").run(new Date().toISOString(), new Date().toISOString());
+    let kb = await n8n('GET', '/conhecimento');
+    assert.equal(kb.status, 200);
+    assert.ok(kb.data.documentos.some((d) => /Demora da contemplação/.test(d.texto)));
+    assert.ok(kb.data.documentos.some((d) => d.id === 'crm-fit'));
+    assert.equal(kb.data.transcricoes, 0);
+    const opp = appDb.prepare("SELECT id FROM opportunities WHERE contact_id = ? ORDER BY id DESC LIMIT 1").get(w.contact_id).id;
+    appDb.prepare('INSERT INTO r1_transcripts (opportunity_id, filename, content, created_at) VALUES (?, ?, ?, ?)').run(opp, 'r1.txt', 'Especialista: Paula, seu e-mail é paula@exemplo.com e o celular (11) 95555-0001? Cliente: sim, CPF 123.456.789-09. Quero lance embutido.', new Date().toISOString());
+    await call('admin', 'PUT', '/api/whatsapp/agente', { n8n_transcripts: true });
+    kb = await n8n('GET', '/conhecimento');
+    assert.ok(kb.data.transcricoes >= 1);
+    const tr = kb.data.documentos.find((d) => d.tipo === 'transcricao_r1' && /lance embutido/.test(d.texto)).texto;
+    assert.match(tr, /lance embutido/);
+    assert.doesNotMatch(tr, /Paula|paula@|95555|123\.456/);
+  } finally {
+    delete process.env.WA_AGENT_DEBOUNCE_MS;
+    delete process.env.N8N_WAIT_LOCK_MS;
+    await call('admin', 'PUT', '/api/whatsapp/agente', { enabled: false, provider: 'gemini', test_numbers: '', default_owner_id: null, n8n_transcripts: false });
+    await call('admin', 'PUT', '/api/whatsapp/lite/config', { sandbox: false });
+  }
+});

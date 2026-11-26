@@ -464,26 +464,33 @@ async function agentDialog(onClose) {
     return toastError(e);
   }
   const sh = sheet(onClose);
+  // Token do n8n recém-gerado: aparece uma vez só (o CRM guarda apenas o hash)
+  let n8nToken = '';
   const draw = () => {
     const c = d.config;
     const st = d.stats;
     const ro = d.can_edit ? '' : 'disabled';
-    const gem = (c.provider || 'gemini') === 'gemini';
+    const prov = c.provider || 'gemini';
+    const gem = prov === 'gemini';
+    const isN8n = prov === 'n8n';
+    const nn = d.n8n || {};
     const [pi, po] = PRICE[c.model] || PRICE['claude-opus-5-5'];
     const cost = (st.tokens_in * pi + st.tokens_out * po) / 1e6;
     const pv = d.providers || { gemini: {}, claude: {} };
     const target = c.channel === 'oficial' ? 'oficial' : c.instance_id ? `lite:${c.instance_id}` : '';
     render(sh.box, html`<header class="int-head"><span class="integ-logo brand-ia">${icon('ia', 26)}</span><div><h2>Agente de IA no WhatsApp</h2>
-        <small>${d.ready ? html`<span class="dot-ok"></span> Atendendo no ${c.channel === 'oficial' ? 'número oficial' : 'número central'}` : c.enabled ? 'Ligado, mas falta configurar (veja abaixo)' : 'Desligado'}</small></div><button type="button" class="icon" data-x aria-label="Fechar">×</button></header>
+        <small>${d.ready ? html`<span class="dot-ok"></span> Atendendo no ${c.channel === 'oficial' ? 'número oficial' : 'número central'}${isN8n ? ' pelo n8n' : ''}` : c.enabled ? 'Ligado, mas falta configurar (veja abaixo)' : 'Desligado'}</small></div><button type="button" class="icon" data-x aria-label="Fechar">×</button></header>
       <div class="int-body">
         <p class="small muted">Quando um lead escreve no número central, a IA responde na hora, faz a triagem (as 6 perguntas da aba Qualificação), registra no CRM e, se houver fit, agenda a R1 na agenda do especialista. Depois passa a conversa para ele. O especialista pode assumir a qualquer momento.</p>
-        ${!d.llm.has_key ? html`<div class="alert">Falta a chave do ${gem ? 'Gemini' : 'Claude'}: informe abaixo${gem ? html` (crie grátis em <strong>Google AI Studio › Get API key</strong>)` : ' (console da Anthropic)'} ou em <a href="#/configuracoes/integracoes" data-x>Configurações › Integrações › IA generativa</a>.</div>` : ''}
-        ${!gem && !d.llm.sdk ? html`<div class="alert">A biblioteca da Anthropic não está instalada no servidor (<code>npm install</code>).</div>` : ''}
+        ${isN8n && !nn.has_token ? html`<div class="alert">Falta gerar o <strong>token do n8n</strong> (abaixo) e colocar no fluxo do n8n na VPS.</div>` : ''}
+        ${isN8n && nn.has_token && !nn.last_call_at ? html`<div class="alert small">O n8n ainda não falou com o CRM. Rode o instalador do n8n na VPS com este token (guia em <code>deploy/n8n/LEIA-ME.md</code>).</div>` : ''}
+        ${!isN8n && !d.llm.has_key ? html`<div class="alert">Falta a chave do ${gem ? 'Gemini' : 'Claude'}: informe abaixo${gem ? html` (crie grátis em <strong>Google AI Studio › Get API key</strong>)` : ' (console da Anthropic)'} ou em <a href="#/configuracoes/integracoes" data-x>Configurações › Integrações › IA generativa</a>.</div>` : ''}
+        ${prov === 'claude' && !d.llm.sdk ? html`<div class="alert">A biblioteca da Anthropic não está instalada no servidor (<code>npm install</code>).</div>` : ''}
         ${gem && pv.gemini.note ? html`<div class="alert small">${pv.gemini.note}</div>` : ''}
         ${!d.instances.length && !d.official.configured && !d.official.sandbox ? html`<div class="alert">Conecte primeiro o número central em <strong>WhatsApp Lite</strong> (QR Code) ou o número oficial.</div>` : ''}
         <div class="agent-stats">${[['Atendidas', st.atendidas], ['Novos leads', st.novos_leads], ['Triagens', st.qualificados], ['R1 agendadas', st.r1_agendadas], ['Transferidas', st.transferidas], ['Sem fit', st.sem_fit], ['IA atendendo agora', st.ativas]]
           .map(([l, v]) => html`<div><b>${v}</b><small>${l}</small></div>`)}</div>
-        <p class="hint">Últimos 30 dias. Uso da IA: ${Math.round(st.tokens_in / 1000)} mil tokens de entrada e ${Math.round(st.tokens_out / 1000)} mil de saída${gem ? ' · no plano gratuito do Gemini não há cobrança (há limite de pedidos por minuto e por dia)' : `, cerca de US$ ${cost.toFixed(2)} no modelo escolhido (estimativa; o cache reduz o valor)`}.</p>
+        <p class="hint">Últimos 30 dias. Uso da IA: ${Math.round(st.tokens_in / 1000)} mil tokens de entrada e ${Math.round(st.tokens_out / 1000)} mil de saída${isN8n ? ' (informado pelo fluxo do n8n; a cobrança é a do provedor configurado no n8n)' : gem ? ' · no plano gratuito do Gemini não há cobrança (há limite de pedidos por minuto e por dia)' : `, cerca de US$ ${cost.toFixed(2)} no modelo escolhido (estimativa; o cache reduz o valor)`}.</p>
         <form data-form="agent" class="grid" novalidate>
           <label class="check full"><input type="checkbox" name="enabled" ${c.enabled ? 'checked' : ''} ${ro}> <strong>Ligar o agente de IA</strong></label>
           <div class="field"><label>Número central atendido pela IA</label><select name="target" ${ro}>
@@ -491,11 +498,21 @@ async function agentDialog(onClose) {
             ${d.instances.map((i) => html`<option value="lite:${i.id}" ${target === `lite:${i.id}` ? 'selected' : ''}>WhatsApp Lite · ${i.label}</option>`)}
             ${d.official.configured || d.official.sandbox ? html`<option value="oficial" ${target === 'oficial' ? 'selected' : ''}>Número oficial (API do WhatsApp Business)</option>` : ''}</select></div>
           <div class="field"><label>Nome da assistente</label><input name="name" maxlength="40" value="${c.name}" ${ro}></div>
-          <div class="field"><label>Provedor de IA</label><select name="provider" ${ro}><option value="gemini" ${gem ? 'selected' : ''}>Google Gemini (tem plano gratuito)</option><option value="claude" ${gem ? '' : 'selected'}>Anthropic Claude</option></select></div>
-          <div class="field" data-prov="gemini" ${gem ? '' : 'hidden'}><label>Modelo do Gemini</label><input name="gemini_model" value="${c.gemini_model || 'gemini-3.8-flash'}" list="agent-gemini-models" ${ro}><datalist id="agent-gemini-models"></datalist>${d.can_edit ? html`<small class="hint"><a href="#" data-a="gmodels">Buscar os modelos da conta</a></small>` : ''}</div>
-          <div class="field" data-prov="claude" ${gem ? 'hidden' : ''}><label>Modelo do Claude</label><select name="model" ${ro}>${d.models.map((m) => html`<option value="${m.value}" ${c.model === m.value ? 'selected' : ''}>${m.label}</option>`)}</select></div>
+          <div class="field"><label>Provedor de IA</label><select name="provider" ${ro}><option value="gemini" ${gem ? 'selected' : ''}>Google Gemini (tem plano gratuito)</option><option value="claude" ${prov === 'claude' ? 'selected' : ''}>Anthropic Claude</option><option value="n8n" ${isN8n ? 'selected' : ''}>Fluxo do n8n na VPS (24 horas)</option></select></div>
+          <div class="field full n8n-box" data-prov="n8n" ${isN8n ? '' : 'hidden'}>
+            <p class="small muted">A IA roda no <strong>n8n</strong>, na VPS do WhatsApp, com o modelo e a base de conhecimento configurados lá. O CRM continua mandando: ligar e desligar, Assumir/Devolver, modo de teste, triagem, agenda da R1 e o envio das mensagens.</p>
+            <dl class="n8n-info">
+              <dt>Endereço do CRM</dt><dd><code>${nn.crm_url || ''}</code> <button type="button" class="btn small ghost" data-copy="${nn.crm_url || ''}">Copiar</button></dd>
+              <dt>Token do n8n</dt><dd>${nn.has_token ? `Gerado (termina em ${nn.hint})` : 'Ainda não gerado'}${d.can_edit ? html` <button type="button" class="btn small" data-a="n8ntoken">${nn.has_token ? 'Gerar outro token' : 'Gerar token'}</button>` : ''}</dd>
+              <dt>Último contato do n8n</dt><dd>${nn.last_call_at ? new Date(nn.last_call_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : 'Nenhum ainda'}</dd>
+            </dl>
+            ${n8nToken ? html`<div class="alert small n8n-token"><span>Copie agora (não aparece de novo): <code>${n8nToken}</code></span> <button type="button" class="btn small" data-copy="${n8nToken}">Copiar token</button></div>` : ''}
+            <label class="check"><input type="checkbox" name="n8n_transcripts" ${c.n8n_transcripts ? 'checked' : ''} ${ro}> Mandar as transcrições das R1 para a base de conhecimento do n8n (sem nome, telefone, e-mail e CPF do cliente)</label>
+          </div>
+          <div class="field" data-prov="gemini n8n" ${gem || isN8n ? '' : 'hidden'}><label>Modelo do Gemini${isN8n ? ' (usado pelo n8n)' : ''}</label><input name="gemini_model" value="${c.gemini_model || 'gemini-3.8-flash'}" list="agent-gemini-models" ${ro}><datalist id="agent-gemini-models"></datalist>${d.can_edit ? html`<small class="hint"><a href="#" data-a="gmodels">Buscar os modelos da conta</a></small>` : ''}</div>
+          <div class="field" data-prov="claude" ${prov === 'claude' ? '' : 'hidden'}><label>Modelo do Claude</label><select name="model" ${ro}>${d.models.map((m) => html`<option value="${m.value}" ${c.model === m.value ? 'selected' : ''}>${m.label}</option>`)}</select></div>
           ${d.can_edit ? html`<div class="field" data-prov="gemini" ${gem ? '' : 'hidden'}><label>Chave da API do Gemini</label><input type="password" name="gemini_api_key" autocomplete="off" placeholder="${pv.gemini.has_key ? '•••••••• (salva; preencha só para trocar)' : 'AIza… (Google AI Studio › Get API key)'}" ${pv.gemini.from_env ? 'disabled' : ''}></div>
-          <div class="field" data-prov="claude" ${gem ? 'hidden' : ''}><label>Chave da API da Anthropic</label><input type="password" name="api_key" autocomplete="off" placeholder="${pv.claude.has_key ? '•••••••• (salva; preencha só para trocar)' : 'sk-ant-…'}" ${pv.claude.from_env ? 'disabled' : ''}></div>` : ''}
+          <div class="field" data-prov="claude" ${prov === 'claude' ? '' : 'hidden'}><label>Chave da API da Anthropic</label><input type="password" name="api_key" autocomplete="off" placeholder="${pv.claude.has_key ? '•••••••• (salva; preencha só para trocar)' : 'sk-ant-…'}" ${pv.claude.from_env ? 'disabled' : ''}></div>` : ''}
           <div class="field"><label>Duração da R1</label><select name="r1_minutes" ${ro}>${[30, 45, 60, 90].map((m) => html`<option value="${m}" ${c.r1_minutes === m ? 'selected' : ''}>${m} minutos</option>`)}</select></div>
           <div class="field full"><label>Dias para a R1</label><div class="agent-days">${DAYS.map(([v, l]) => html`<label class="chip-check"><input type="checkbox" name="day" value="${v}" ${c.days.includes(v) ? 'checked' : ''} ${ro}> ${l}</label>`)}</div></div>
           <div class="field"><label>Das</label><input type="time" name="start" value="${c.start}" ${ro}></div>
@@ -514,9 +531,31 @@ async function agentDialog(onClose) {
   // Troca de provedor na tela: mostra o modelo e a chave do escolhido
   sh.box.addEventListener('change', (e) => {
     if (e.target.name !== 'provider') return;
-    sh.box.querySelectorAll('[data-prov]').forEach((el) => { el.hidden = el.dataset.prov !== e.target.value; });
+    sh.box.querySelectorAll('[data-prov]').forEach((el) => { el.hidden = !el.dataset.prov.split(' ').includes(e.target.value); });
   });
   sh.box.addEventListener('click', async (e) => {
+    const cp = e.target.closest('[data-copy]');
+    if (cp) {
+      try {
+        await navigator.clipboard.writeText(cp.dataset.copy);
+        toast('Copiado.');
+      } catch {
+        toast('Selecione o texto e copie com Ctrl+C.');
+      }
+      return undefined;
+    }
+    const tk = e.target.closest('[data-a=n8ntoken]');
+    if (tk) {
+      if (d.n8n?.has_token && !(await confirmDialog('Gerar outro token?', 'O token atual para de funcionar na hora. Atualize a credencial "CRM Vero" no n8n (ou rode o instalador de novo) com o novo token.', { confirmLabel: 'Gerar outro' }))) return undefined;
+      try {
+        n8nToken = (await post('/api/whatsapp/agente/n8n/token', {})).token;
+        d = await get('/api/whatsapp/agente');
+        draw();
+      } catch (ex) {
+        toastError(ex);
+      }
+      return undefined;
+    }
     const a = e.target.closest('[data-a=gmodels]');
     if (!a) return;
     e.preventDefault();
@@ -548,11 +587,13 @@ async function agentDialog(onClose) {
       days: [...f.querySelectorAll('[name=day]:checked')].map((x) => Number(x.value)), start: f.start.value, end: f.end.value,
       notice_hours: Number(f.notice_hours.value), fit: f.fit.value, instructions: f.instructions.value,
       test_numbers: f.test_numbers.value, default_owner_id: f.default_owner_id.value ? Number(f.default_owner_id.value) : null,
+      n8n_transcripts: !!f.n8n_transcripts?.checked,
       ...(t === 'oficial' ? { channel: 'oficial' } : t ? { channel: 'lite', instance_id: Number(t.split(':')[1]) } : {}),
     };
     try {
       d = await put('/api/whatsapp/agente', body);
-      toast(d.config.enabled ? (d.ready ? `Agente de IA ligado (${d.llm.provider === 'gemini' ? 'Gemini' : 'Claude'}).` : `Configuração salva. Falta a chave do ${d.llm.provider === 'gemini' ? 'Gemini' : 'Claude'}.`) : 'Agente de IA desligado.');
+      const pname = { gemini: 'Gemini', claude: 'Claude', n8n: 'n8n' }[d.llm.provider] || d.llm.provider;
+      toast(d.config.enabled ? (d.ready ? `Agente de IA ligado (${pname}).` : d.llm.provider === 'n8n' ? 'Configuração salva. Falta gerar o token do n8n.' : `Configuração salva. Falta a chave do ${pname}.`) : 'Agente de IA desligado.');
       draw();
     } catch (ex) {
       toastError(ex);

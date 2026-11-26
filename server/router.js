@@ -579,8 +579,9 @@ function createRouter(db) {
   });
   // WhatsApp Lite (QR Code): números conectados pelos usuários num servidor compatível com a Evolution API
   const waagent = require('./services/waagent');
-  add('GET', '/api/whatsapp/agente', ({ user }) => waagent.view(db, user));
-  add('PUT', '/api/whatsapp/agente', ({ user, body }) => waagent.save(db, user, body));
+  add('GET', '/api/whatsapp/agente', ({ user, req }) => waagent.view(db, user, req));
+  add('PUT', '/api/whatsapp/agente', ({ user, body, req }) => waagent.save(db, user, body, req));
+  add('POST', '/api/whatsapp/agente/n8n/token', ({ user }) => require('./services/n8n').rotateToken(db, user));
   add('POST', '/api/whatsapp/conversas/:id/ia', ({ user, params, body }) => waagent.control(db, user, params.id, body));
   add('GET', '/api/whatsapp/lite', ({ user, req }) => walite.overview(db, user, req));
   add('PUT', '/api/whatsapp/lite/config', ({ user, body }) => walite.saveConfig(db, user, body));
@@ -596,6 +597,14 @@ function createRouter(db) {
   add('PUT', '/api/whatsapp/lite/instancias/:id/acesso', ({ user, params, body }) => walite.setMemberAccess(db, user, params.id, body));
   // Webhook de cada instância (o endereço leva o segredo da instância)
   add('POST', '/api/whatsapp/lite/webhook/:token', ({ params, body }) => walite.receiveWebhook(db, params.token, body), { integration: true, bodyLimit: 4.5e6 });
+  // Agente de IA no n8n (fluxo na VPS): token próprio, gerado em Integrações › Agente de IA no WhatsApp
+  const n8n = require('./services/n8n');
+  add('GET', '/api/integracoes/n8n/status', ({ req }) => n8n.status(db, req), { integration: true });
+  add('GET', '/api/integracoes/n8n/conhecimento', ({ req }) => n8n.knowledge(db, req), { integration: true });
+  add('POST', '/api/integracoes/n8n/mensagem', ({ req, body }) => n8n.message(db, req, body), { integration: true, bodyLimit: 4.5e6 });
+  add('POST', '/api/integracoes/n8n/acao/:acao', ({ req, params, body }) => n8n.action(db, req, params.acao, body), { integration: true });
+  add('POST', '/api/integracoes/n8n/acao', ({ req, body }) => n8n.action(db, req, body.acao, body), { integration: true });
+  add('POST', '/api/integracoes/n8n/responder', ({ req, body }) => n8n.reply(db, req, body), { integration: true });
   // Webhook da Meta (API oficial do WhatsApp Business): verificação (GET) e mensagens/status (POST)
   add('GET', '/api/whatsapp/webhook', ({ query, res }) => wa.verifyWebhook(db, query, res), { integration: true });
   add('POST', '/api/whatsapp/webhook', ({ req, body }) => wa.receiveWebhook(db, req, body), { integration: true, bodyLimit: 4e6 });
