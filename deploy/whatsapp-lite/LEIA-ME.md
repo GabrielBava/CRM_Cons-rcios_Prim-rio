@@ -162,6 +162,14 @@ conexão, corrige o endereço de aviso no conector, testa se recebe e mostra as 
 O caso mais comum é o número estar em **"Só conversas com cadastros do CRM"**: mensagens de leads novos (números que
 ainda não estão no CRM) não entram. Para o número central, use **Registrar todas as conversas**.
 
+**A VPS não alcança o CRM na Vercel** (visto na Locaweb: a conexão fica esperando até o tempo acabar). Rode o
+instalador de novo informando o endereço do CRM:
+```
+sudo CRM_URL=https://crm.veroconsorciosbr.com.br DOMINIO=whatsapp.veroconsorciosbr.com.br bash instalar.sh
+```
+Ele testa o caminho até o CRM. Se o caminho normal não responder, testa outros endereços da própria Vercel e fixa no
+conector o primeiro que responder (arquivos `crm.env` e `docker-compose.crm.yml`). O instalador do n8n faz o mesmo.
+
 **Se ainda não resolver**, rode o diagnóstico na VPS:
 ```
 curl -fsSL https://raw.githubusercontent.com/gabrielbava/crm_cons-rcios_prim-rio/HEAD/deploy/whatsapp-lite/diagnostico.sh -o diagnostico.sh

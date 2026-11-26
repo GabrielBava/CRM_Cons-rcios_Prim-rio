@@ -36,6 +36,55 @@ command -v curl >/dev/null 2>&1 || falha "curl não encontrado (apt-get install 
 cd "$PASTA"
 
 ler() { grep -m1 "^$1=" "${2:-.env}" 2>/dev/null | cut -d= -f2- || true; }
+# ---------------------------------------------------------------- caminho até o CRM (Vercel)
+# Algumas redes de VPS (já visto na Locaweb) não alcançam os endereços novos da Vercel: a conexão fica esperando até
+# o tempo acabar. A Vercel atende o mesmo site em qualquer endereço dela; se o caminho normal não responde, testa
+# outros endereços da Vercel e fixa no conector (e no n8n) o primeiro que responder.
+# Usa CRM_URL; define CRM_HOST, CRM_PORTA e CRM_IP_FIXO (vazio quando o caminho normal funciona).
+VERCEL_IPS="76.76.21.21 76.76.21.98 216.198.79.1 64.29.17.1"
+crm_responde() { # [ip] -> código HTTP de /api/saude (000 = sem conexão)
+  local fixo=()
+  if [ -n "${1:-}" ]; then fixo=(--resolve "$CRM_HOST:$CRM_PORTA:$1"); fi
+  curl -s -o /dev/null -w '%{http_code}' --connect-timeout 8 --max-time 20 "${fixo[@]}" "$CRM_URL/api/saude" 2>/dev/null || true
+}
+caminho_crm() {
+  CRM_HOST="$(printf '%s' "$CRM_URL" | sed -E 's#^https?://##; s#/.*$##; s#:.*$##')"
+  CRM_PORTA="$(printf '%s' "$CRM_URL" | sed -nE 's#^https?://[^/:]+:([0-9]+).*#\1#p')"
+  if [ -z "$CRM_PORTA" ]; then
+    if [[ "$CRM_URL" =~ ^http:// ]]; then CRM_PORTA=80; else CRM_PORTA=443; fi
+  fi
+  CRM_IP_FIXO=""
+  local cod ip
+  cod="$(crm_responde)"
+  if [ -n "$cod" ] && [ "$cod" != 000 ]; then return 0; fi
+  for ip in ${VERO_CRM_IPS:-} $(ler CRM_IP_FIXO crm.env) $VERCEL_IPS; do
+    cod="$(crm_responde "$ip")"
+    if [ -n "$cod" ] && [ "$cod" != 000 ]; then CRM_IP_FIXO="$ip"; return 0; fi
+  done
+  return 1
+}
+guardar_caminho_crm() {
+  { echo "# Caminho desta VPS até o CRM. Gerado pelos instaladores; rode o instalador de novo para mudar."
+    echo "CRM_URL=$CRM_URL"
+    echo "CRM_IP_FIXO=$CRM_IP_FIXO"; } > crm.env
+}
+diagnostico_crm() {
+  local ip r alvo
+  echo
+  echo "------------------------- copie daqui (não tem senha nem token) -------------------------"
+  echo "CRM: $CRM_HOST · DNS: $(getent ahostsv4 "$CRM_HOST" 2>/dev/null | awk '{print $1}' | sort -u | tr '\n' ' ')"
+  r="$(curl -sS -o /dev/null -w '%{http_code} %{remote_ip}' --connect-timeout 8 --max-time 20 "$CRM_URL/api/saude" 2>&1 | tail -1 || true)"
+  echo "caminho normal: $r"
+  for ip in $VERCEL_IPS; do
+    r="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 8 --max-time 20 --resolve "$CRM_HOST:$CRM_PORTA:$ip" "$CRM_URL/api/saude" 2>&1 | tail -1 || true)"
+    echo "vercel $ip: $r"
+  done
+  for alvo in https://github.com https://vercel.com https://www.google.com; do
+    r="$(curl -sS -o /dev/null -w '%{http_code} %{remote_ip}' --connect-timeout 8 --max-time 15 "$alvo" 2>&1 | tail -1 || true)"
+    echo "$alvo: $r"
+  done
+  echo "----------------------------------------- até aqui -----------------------------------------"
+}
 DOMINIO="$(ler DOMINIO)"
 SENHA_PG="$(ler POSTGRES_PASSWORD)"
 [ -n "$DOMINIO" ] && [ -n "$SENHA_PG" ] || falha "o arquivo $PASTA/.env está incompleto. Rode de novo o instalador do conector."
@@ -103,11 +152,26 @@ if [ "$N8N_DOMINIO" != "n8n.localhost" ] && [[ "$N8N_DOMINIO" != *.localhost ]];
   fi
 fi
 
+etapa "Conferindo o caminho desta VPS até o CRM ($CRM_URL)"
+if caminho_crm; then
+  if [ -n "$CRM_IP_FIXO" ]; then
+    echo "O caminho normal até a Vercel não responde nesta VPS, mas o endereço $CRM_IP_FIXO da Vercel responde."
+    echo "O n8n e o conector vão falar com o CRM por ele (isso também faz o conector voltar a avisar o CRM das mensagens)."
+  else
+    echo "A VPS alcança o CRM."
+  fi
+  guardar_caminho_crm
+else
+  diagnostico_crm
+  falha "esta VPS não conseguiu falar com o CRM ($CRM_URL) por nenhum caminho. Confira se o endereço abre no navegador e mande o bloco acima para o suporte (ou para quem está configurando)."
+fi
+FIXO_CRM=()
+[ -z "$CRM_IP_FIXO" ] || FIXO_CRM=(--resolve "$CRM_HOST:$CRM_PORTA:$CRM_IP_FIXO")
+
 PROVEDOR=""
 if [ -n "$CRM_TOKEN" ]; then
-  etapa "Conferindo a ligação desta VPS com o CRM ($CRM_URL)"
   RESP="$(mktemp)"
-  COD="$(curl -sS -o "$RESP" -w '%{http_code}' --max-time 30 -H "Authorization: Bearer $CRM_TOKEN" "$CRM_URL/api/integracoes/n8n/status" 2>"$RESP.err" || true)"
+  COD="$(curl -sS -o "$RESP" -w '%{http_code}' --max-time 30 "${FIXO_CRM[@]}" -H "Authorization: Bearer $CRM_TOKEN" "$CRM_URL/api/integracoes/n8n/status" 2>"$RESP.err" || true)"
   case "$COD" in
     200)
       PROVEDOR="$(grep -o '"provedor":"[a-z0-9]*"' "$RESP" | head -1 | cut -d'"' -f4 || true)"
@@ -257,7 +321,7 @@ if [ ! -f "$EVO" ]; then
   EVO="$(mktemp)"
   curl -fsSL "$RAW/deploy/whatsapp-lite/instalar-evolution.sh" -o "$EVO" || falha "não foi possível baixar o instalador do conector."
 fi
-VERO_SEM_RESUMO=1 VERO_PASTA="$PASTA" DOMINIO="$DOMINIO" bash "$EVO"
+VERO_SEM_RESUMO=1 VERO_PASTA="$PASTA" DOMINIO="$DOMINIO" CRM_URL="$CRM_URL" bash "$EVO"
 grep -q '^COMPOSE_FILE=docker-compose.yml:docker-compose.n8n.yml' .env || falha "o instalador do conector não ligou o n8n (use a versão mais nova do instalador do conector)."
 
 etapa "Aguardando o n8n iniciar (até 5 minutos)"

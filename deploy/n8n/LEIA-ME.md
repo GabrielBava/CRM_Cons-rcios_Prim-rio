@@ -96,7 +96,11 @@ O que ele faz sozinho:
 
 No fim, ele mostra o endereço, o seu e-mail e a **senha inicial**. Para ver de novo: `vero-whatsapp dados`.
 
-> Se aparecer "esta VPS não conseguiu falar com o CRM", confira o endereço do CRM (abra no navegador) e rode de novo.
+> Se o caminho normal até a Vercel não responder (já aconteceu na Locaweb: a conexão fica esperando), o instalador testa
+> outros endereços da própria Vercel e fixa o que responder, no n8n e no conector. Ele avisa:
+> "o endereço ... da Vercel responde". Isso também faz o conector voltar a avisar o CRM das respostas dos leads.
+> Se aparecer "esta VPS não conseguiu falar com o CRM ... por nenhum caminho", confira o endereço do CRM no navegador
+> e mande o bloco "copie daqui" que o instalador mostra (não tem senha nem token).
 > Se aparecer "o CRM recusou o token", gere outro token no CRM e rode de novo.
 
 ## 4. Primeiro acesso ao n8n
@@ -204,6 +208,7 @@ Quando alguém da equipe responde pelo CRM ou pelo celular, a IA para naquela co
 | Executions param em **IA atende?** | O CRM disse que a IA não atende. Abra a execução e veja `motivo` no nó **CRM - Conversa**: `ia_desligada`, `modo_de_teste`, `com_especialista`, `equipe_ja_atendia`, `agente_do_crm` (o provedor no CRM não é o n8n), `ocupada` (outra resposta em andamento). |
 | Erro 401 em **CRM - Conversa** | Token errado ou trocado. Gere outro no CRM e rode o instalador informando o novo token (ou edite a credencial **CRM Vero (token do n8n)**: valor `Bearer crm_n8n_...`). |
 | Erro no nó **Gemini** / o lead recebe "um especialista vai continuar..." | Chave do Gemini inválida ou limite do plano gratuito. Confira a credencial **Google Gemini (Vero)** e o modelo no CRM. |
+| "esta VPS não conseguiu falar com o CRM" | O instalador já testa os outros endereços da Vercel. Se nenhum responde, confira o endereço do CRM e mande o bloco "copie daqui". |
 | `https://n8n...` não abre | Registro A do DNS (passo 1.3) e portas 80/443 liberadas no painel da VPS. O HTTPS sai sozinho quando o DNS valer. |
 | VPS lenta ou o n8n reinicia sozinho | Pouca memória: passe a VPS para 2 GB. |
 
