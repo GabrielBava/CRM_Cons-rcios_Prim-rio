@@ -459,13 +459,21 @@ async function noticesDialog(onClose) {
 /** Falha da IA nas últimas 24 h, com a causa provável em português. */
 function agentErrorText(e) {
   const t = String(e.detail || '');
-  const hint = /chave|api key|api_key|401|403|permission|unauthori/i.test(t) ? 'A chave da IA parece inválida: confira a chave (no n8n, a credencial do Gemini).'
-    : /429|limite|quota|rate|resource.?exhausted/i.test(t) ? 'Limite de uso da IA atingido (no plano gratuito do Gemini há limite por minuto e por dia).'
-      : /404|not.?found|model|modelo/i.test(t) ? 'O modelo escolhido não existe ou não está liberado na conta: use "Buscar os modelos da conta" e escolha outro.'
-        : /bad request|400|invalid/i.test(t) ? 'O Google recusou o pedido: confira a chave do Gemini (no n8n, a credencial "Google Gemini (Vero)") e o modelo escolhido.'
-        : /envio/i.test(t) ? 'A resposta da IA não saiu pelo WhatsApp: confira se o número central está conectado.'
-          : 'Confira a configuração abaixo.';
-  return html`<strong>A IA falhou ${e.count} ${e.count === 1 ? 'vez' : 'vezes'} nas últimas 24 horas.</strong> Nessas conversas, o lead recebeu só a mensagem de cortesia ("um especialista vai continuar...") e a conversa passou para o especialista. ${hint}<br><small class="muted">Último erro (${new Date(e.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}): ${t.slice(0, 220)}</small>`;
+  // Motivo devolvido pelo Google (o n8n confere a chave quando a IA falha) ou pelo provedor, do mais específico ao geral
+  const CAUSES = [
+    [/SERVICE_DISABLED|has not been used in project|is disabled/i, 'A API do Gemini não está ativada no projeto do Google dessa chave (comum quando a chave foi criada no Google Cloud para outra coisa, como o Google Agenda). Crie a chave em aistudio.google.com › Get API key (já vem com a API ativada) e troque no n8n, na credencial "Google Gemini (Vero)", ou no CRM.'],
+    [/API_KEY_INVALID|API key not valid|COLOQUE-A-CHAVE/i, 'A chave do Gemini é inválida ou não foi preenchida: copie de novo no Google AI Studio e cole na credencial "Google Gemini (Vero)" do n8n.'],
+    [/REFERRER|referer|IP_ADDRESS|IP address|API_KEY_SERVICE_BLOCKED|blocked/i, 'A chave do Gemini tem restrição (de site, de IP ou de APIs) no Google Cloud. Use uma chave sem restrição de site/IP, criada no Google AI Studio.'],
+    [/leaked/i, 'O Google bloqueou a chave por ter sido exposta. Crie uma chave nova no Google AI Studio.'],
+    [/429|limite|quota|rate|RESOURCE_EXHAUSTED/i, 'Limite de uso da IA atingido (no plano gratuito do Gemini há limite por minuto e por dia).'],
+    [/location|region|país|FAILED_PRECONDITION/i, 'O Google não liberou o Gemini para a região da conta ou do servidor.'],
+    [/404|not.?found|modelo|model is not|models\//i, 'O modelo escolhido não existe ou não está liberado na conta: use "Buscar os modelos da conta" e escolha outro.'],
+    [/forbidden|403|permission|unauthori|401/i, 'O Google recusou a chave do Gemini (sem permissão). Em geral é chave de um projeto do Google Cloud sem a API do Gemini ativada, ou com restrição. Crie a chave no Google AI Studio e troque no n8n, na credencial "Google Gemini (Vero)".'],
+    [/bad request|400|invalid/i, 'O Google recusou o pedido: confira a chave do Gemini (no n8n, a credencial "Google Gemini (Vero)") e o modelo escolhido.'],
+    [/envio/i, 'A resposta da IA não saiu pelo WhatsApp: confira se o número central está conectado.'],
+  ];
+  const hint = (CAUSES.find(([re]) => re.test(t)) || [null, 'Confira a configuração abaixo.'])[1];
+  return html`<strong>A IA falhou ${e.count} ${e.count === 1 ? 'vez' : 'vezes'} nas últimas 24 horas.</strong> Nessas conversas, o lead recebeu só a mensagem de cortesia ("um especialista vai continuar...") e a conversa passou para o especialista. ${hint}<br><small class="muted">Último erro (${new Date(e.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}): ${t.slice(0, 320)}</small>`;
 }
 
 async function agentDialog(onClose) {

@@ -104,9 +104,17 @@ Um CRM próprio decide quando a IA atende e envia as respostas. Use exatamente e
    - Corpo JSON: {{ JSON.stringify({ conversa_id: $('CRM - Conversa').item.json.conversa_id, turno: $('CRM - Conversa').item.json.turno, texto: $json.output }) }}.
    - Retry On Fail: 3 tentativas.
 
-12. HTTP Request "Avisar falha ao CRM", ligado na saída de erro do "IA Vero".
+12. HTTP Request "Conferir a chave do Gemini", ligado na saída de erro do "IA Vero".
+   - GET https://generativelanguage.googleapis.com/v1beta/models?pageSize=1.
+   - Autenticação: Predefined Credential Type "Google Gemini (PaLM) API", credencial "Google Gemini (Vero)".
+   - Options › Response: Include Response Headers and Status ligado, Never Error ligado.
+   - Settings: Always Output Data ligado, On Error "Continue".
+   Serve para o CRM mostrar o motivo exato do Google quando a chave falha.
+
+13. HTTP Request "Avisar falha ao CRM", depois de "Conferir a chave do Gemini".
    - POST para a mesma URL de "Responder no WhatsApp", com a mesma credencial.
-   - Corpo JSON: {{ JSON.stringify({ conversa_id: $('CRM - Conversa').item.json.conversa_id, turno: $('CRM - Conversa').item.json.turno, erro: (typeof $json.error === 'object' && $json.error ? [$json.error.message, $json.error.description].filter(Boolean).join(' — ') : String($json.error || 'falha na IA')).slice(0, 400) }) }}.
+   - Corpo JSON: conversa_id e turno do "CRM - Conversa".
+   - Campo erro: a mensagem de erro do "IA Vero" ($('IA Vero').item.json.error). Quando o status da conferência for 400 ou mais, acrescente " | Google (chave do Gemini): " com $json.body.error.status, os motivos (details.reason) e $json.body.error.message.
 
 Não envie mensagens direto pela Evolution API: quem envia é o CRM, pelo "Responder no WhatsApp". Não crie memória de chat.
 ```

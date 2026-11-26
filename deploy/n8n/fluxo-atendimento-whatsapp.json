@@ -475,23 +475,57 @@
     },
     {
       "parameters": {
+        "method": "GET",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "4bfe7829-e277-47ce-a7f9-cf47bd8bcc0c",
+      "name": "Conferir a chave do Gemini",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1220,
+        120
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "VeroGemini000001",
+          "name": "Google Gemini (Vero)"
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "={{ $('CRM - Conversa').item.json.urls.responder }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ conversa_id: $('CRM - Conversa').item.json.conversa_id, turno: $('CRM - Conversa').item.json.turno, erro: (typeof $json.error === 'object' && $json.error ? [$json.error.message, $json.error.description].filter(Boolean).join(' — ') : String($json.error || 'falha na IA')).slice(0, 400) }) }}",
+        "jsonBody": "={{ JSON.stringify({ conversa_id: $('CRM - Conversa').item.json.conversa_id, turno: $('CRM - Conversa').item.json.turno, erro: (String((() => { const e = $('IA Vero').item.json.error; return typeof e === 'object' && e ? [e.message, e.description].filter(Boolean).join(' — ') : (e || 'falha na IA'); })()) + (($json.statusCode || 0) >= 400 ? ' | Google (chave do Gemini): ' + [$json.body?.error?.status, ($json.body?.error?.details || []).map((d) => d.reason).filter(Boolean).join(','), $json.body?.error?.message].filter(Boolean).join(' · ') : '')).slice(0, 500) }) }}",
         "options": {
           "timeout": 30000
         }
       },
-      "id": "9146a336-f8a6-4d61-a8ab-9b9831277908",
+      "id": "6ee755d5-41c5-484a-ae4f-ea978379588c",
       "name": "Avisar falha ao CRM",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1220,
+        1440,
         120
       ],
       "credentials": {
@@ -580,6 +614,17 @@
             "index": 0
           }
         ],
+        [
+          {
+            "node": "Conferir a chave do Gemini",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conferir a chave do Gemini": {
+      "main": [
         [
           {
             "node": "Avisar falha ao CRM",
