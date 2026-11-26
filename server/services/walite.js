@@ -827,4 +827,6 @@ function startConversation(db, user, contact, instanceId) {
 module.exports = {
   liteConfig, saveConfig, overview, createInstance, instanceStatus, reconnect, checkReceiving, syncInstance, syncAll, syncConversation, sendSystemText, simulateConnect, disconnect, removeInstance, updateInstance,
   members, setMemberAccess, accessOf, convAccess, visibleInstanceIds, send, mediaFor, receiveWebhook, startConversation, parseMessage, initials, LEVEL_LABEL, MAX_FILE,
+  // Mensagem repassada pelo n8n (o mesmo corpo do aviso do conector)
+  ingest: inbound,
 };

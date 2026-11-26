@@ -1,0 +1,349 @@
+{
+  "name": "Vero - Base de conhecimento (CRM)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Base de conhecimento do CRM\nTodo dia às 3h (ou em **Executar fluxo**), copia para a base da IA (tabela **vero_conhecimento** no Postgres da VPS):\n- a base da IA do CRM (perguntas, objeções, dicas e mensagens);\n- o critério de fit e as orientações do agente;\n- as transcrições das R1, se o administrador ligar no CRM (sem nome, telefone, e-mail e CPF).\nA cópia anterior do CRM é trocada pela nova (os arquivos do Google Drive ficam).",
+        "height": 260,
+        "width": 520,
+        "color": 4
+      },
+      "id": "29495d81-62a0-4e67-a1c4-dc2e12ee98e9",
+      "name": "Leia-me",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 3 * * *"
+            }
+          ]
+        }
+      },
+      "id": "acf7c47f-0a4b-4088-a9c9-62c8c5880b14",
+      "name": "Todo dia às 3h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -400,
+        0
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "1fa79bf3-2c5b-4a92-aca7-8ec7ba5fedd1",
+      "name": "Executar agora",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "208729ad-f5af-48ab-a937-53afc35358ee",
+              "name": "crm_url",
+              "value": "https://SEU-CRM.com.br",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "500aeeb3-6a83-4daf-a293-216e15d0334d",
+      "name": "Configuração",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -180,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.crm_url.replace(/\\/+$/, \"\") }}/api/integracoes/n8n/conhecimento",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "b2de8f42-b9e7-4986-a00c-b2b0f20cc01b",
+      "name": "CRM - Base de conhecimento",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        40,
+        80
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VeroCrmToken0001",
+          "name": "CRM Vero (token do n8n)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DO $$ BEGIN IF to_regclass('public.vero_conhecimento') IS NOT NULL THEN DELETE FROM vero_conhecimento WHERE metadata->>'fonte' = 'crm'; END IF; END $$;",
+        "options": {}
+      },
+      "id": "f9e22909-df33-4f10-a095-f2bb859b3298",
+      "name": "Apagar a cópia anterior",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        260,
+        80
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "VeroPostgres0001",
+          "name": "Postgres da VPS (base de conhecimento)"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Um item por documento do CRM\nreturn $('CRM - Base de conhecimento').first().json.documentos.map((d) => ({ json: d }));"
+      },
+      "id": "fa63930a-540c-46da-a5e6-775cf810d942",
+      "name": "Um item por documento",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "tableName": "vero_conhecimento",
+        "embeddingBatchSize": 50,
+        "options": {}
+      },
+      "id": "057facff-3c39-4270-afc0-5233a3875ccf",
+      "name": "Guardar na base",
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePGVector",
+      "typeVersion": 1.3,
+      "position": [
+        720,
+        80
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "VeroPostgres0001",
+          "name": "Postgres da VPS (base de conhecimento)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-embedding-001"
+      },
+      "id": "e5ab7ab9-8022-4a73-ad21-78c229f92825",
+      "name": "Embeddings Gemini",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        640,
+        300
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "VeroGemini000001",
+          "name": "Google Gemini (Vero)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "dataType": "json",
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $json.texto }}",
+        "textSplittingMode": "custom",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "fonte",
+                "value": "={{ $json.fonte }}"
+              },
+              {
+                "name": "documento",
+                "value": "={{ $json.id }}"
+              },
+              {
+                "name": "titulo",
+                "value": "={{ $json.titulo }}"
+              },
+              {
+                "name": "tipo",
+                "value": "={{ $json.tipo }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "77df23f7-b40f-4d59-a87f-2b4f40164915",
+      "name": "Ler documento",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        840,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "chunkSize": 1500,
+        "chunkOverlap": 150,
+        "options": {}
+      },
+      "id": "e01b7466-e7d2-40c3-a5bc-da7f8194f2fa",
+      "name": "Dividir em trechos",
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [
+        920,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "Todo dia às 3h": {
+      "main": [
+        [
+          {
+            "node": "Configuração",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Executar agora": {
+      "main": [
+        [
+          {
+            "node": "Configuração",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuração": {
+      "main": [
+        [
+          {
+            "node": "CRM - Base de conhecimento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CRM - Base de conhecimento": {
+      "main": [
+        [
+          {
+            "node": "Apagar a cópia anterior",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apagar a cópia anterior": {
+      "main": [
+        [
+          {
+            "node": "Um item por documento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Um item por documento": {
+      "main": [
+        [
+          {
+            "node": "Guardar na base",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings Gemini": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Guardar na base",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler documento": {
+      "ai_document": [
+        [
+          {
+            "node": "Guardar na base",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dividir em trechos": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Ler documento",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "timezone": "America/Sao_Paulo"
+  },
+  "id": "VeroBaseCrm00001",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "vero": "Gerado por scripts/n8n-fluxos.js (CRM Vero Consórcios)"
+  },
+  "tags": []
+}

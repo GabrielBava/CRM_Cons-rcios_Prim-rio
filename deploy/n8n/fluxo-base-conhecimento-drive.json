@@ -1,0 +1,373 @@
+{
+  "name": "Vero - Base de conhecimento (Google Drive)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Base de conhecimento do Google Drive\nArquivos colocados (ou alterados) na pasta escolhida entram na base da IA: materiais sobre consórcio, roteiros, transcrições de ligações e reuniões (PDF, Word, Google Docs, TXT, CSV).\n1. Crie a credencial **Google Drive (Vero)** (Google Drive OAuth2).\n2. Escolha a mesma pasta nos dois gatilhos.\n3. Publique o fluxo. A cada hora ele confere a pasta.\nEvite dados pessoais de clientes nos arquivos: a IA pode usar o conteúdo nas respostas.",
+        "height": 280,
+        "width": 560,
+        "color": 4
+      },
+      "id": "29495d81-62a0-4e67-a1c4-dc2e12ee98e9",
+      "name": "Leia-me",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        -340
+      ]
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyHour"
+            }
+          ]
+        },
+        "triggerOn": "specificFolder",
+        "folderToWatch": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": ""
+        },
+        "event": "fileCreated",
+        "options": {}
+      },
+      "id": "90499214-4522-4f84-a2fa-f8f108ae9634",
+      "name": "Arquivo novo na pasta",
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        0
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "VeroGDrive000001",
+          "name": "Google Drive (Vero)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyHour"
+            }
+          ]
+        },
+        "triggerOn": "specificFolder",
+        "folderToWatch": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": ""
+        },
+        "event": "fileUpdated",
+        "options": {}
+      },
+      "id": "b9e1ac80-9a31-4aa8-a8cb-b5f38c8cd301",
+      "name": "Arquivo alterado na pasta",
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        200
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "VeroGDrive000001",
+          "name": "Google Drive (Vero)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "36822b37-e6ca-4555-afbe-74b830979328",
+              "name": "id",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "c77430a4-3793-42c0-aad8-7d65c932e9b0",
+              "name": "nome",
+              "value": "={{ $json.name }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "19301f94-87cd-409b-aa49-0b72702d71b1",
+      "name": "Arquivo",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -180,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DO $$ BEGIN IF to_regclass('public.vero_conhecimento') IS NOT NULL THEN DELETE FROM vero_conhecimento WHERE metadata->>'documento' = 'drive-{{ String($json.id).replace(/[^A-Za-z0-9_-]/g, '') }}'; END IF; END $$;",
+        "options": {}
+      },
+      "id": "eb17b3b4-f049-4171-a718-10927da85db1",
+      "name": "Apagar a versão anterior",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        40,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "VeroPostgres0001",
+          "name": "Postgres da VPS (base de conhecimento)"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $('Arquivo').item.json.id }}",
+          "mode": "id"
+        },
+        "options": {
+          "googleFileConversion": {
+            "conversion": {
+              "docsToFormat": "text/plain",
+              "sheetsToFormat": "text/csv",
+              "slidesToFormat": "application/pdf"
+            }
+          }
+        }
+      },
+      "id": "cc273354-de0b-4ceb-ac0e-b9fac60a827f",
+      "name": "Baixar arquivo",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        260,
+        100
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "VeroGDrive000001",
+          "name": "Google Drive (Vero)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "tableName": "vero_conhecimento",
+        "embeddingBatchSize": 50,
+        "options": {}
+      },
+      "id": "057facff-3c39-4270-afc0-5233a3875ccf",
+      "name": "Guardar na base",
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePGVector",
+      "typeVersion": 1.3,
+      "position": [
+        500,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "VeroPostgres0001",
+          "name": "Postgres da VPS (base de conhecimento)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-embedding-001"
+      },
+      "id": "e5ab7ab9-8022-4a73-ad21-78c229f92825",
+      "name": "Embeddings Gemini",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        420,
+        320
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "VeroGemini000001",
+          "name": "Google Gemini (Vero)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "dataType": "binary",
+        "binaryMode": "allInputData",
+        "loader": "auto",
+        "textSplittingMode": "custom",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "fonte",
+                "value": "drive"
+              },
+              {
+                "name": "documento",
+                "value": "=drive-{{ $('Arquivo').item.json.id }}"
+              },
+              {
+                "name": "titulo",
+                "value": "={{ $('Arquivo').item.json.nome }}"
+              },
+              {
+                "name": "tipo",
+                "value": "arquivo"
+              }
+            ]
+          }
+        }
+      },
+      "id": "bf3f329d-e1b3-40ee-abc4-86cf58a8b3ad",
+      "name": "Ler arquivo",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        620,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "chunkSize": 1500,
+        "chunkOverlap": 150,
+        "options": {}
+      },
+      "id": "e01b7466-e7d2-40c3-a5bc-da7f8194f2fa",
+      "name": "Dividir em trechos",
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [
+        700,
+        520
+      ]
+    }
+  ],
+  "connections": {
+    "Arquivo novo na pasta": {
+      "main": [
+        [
+          {
+            "node": "Arquivo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Arquivo alterado na pasta": {
+      "main": [
+        [
+          {
+            "node": "Arquivo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Arquivo": {
+      "main": [
+        [
+          {
+            "node": "Apagar a versão anterior",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apagar a versão anterior": {
+      "main": [
+        [
+          {
+            "node": "Baixar arquivo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Baixar arquivo": {
+      "main": [
+        [
+          {
+            "node": "Guardar na base",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings Gemini": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Guardar na base",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler arquivo": {
+      "ai_document": [
+        [
+          {
+            "node": "Guardar na base",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dividir em trechos": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Ler arquivo",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "timezone": "America/Sao_Paulo"
+  },
+  "id": "VeroBaseDrive001",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "vero": "Gerado por scripts/n8n-fluxos.js (CRM Vero Consórcios)"
+  },
+  "tags": []
+}

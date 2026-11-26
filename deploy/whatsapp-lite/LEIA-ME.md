@@ -115,6 +115,10 @@ de especialistas cabem bem; se forem muitos números, suba o plano para 2 GB no 
 5. **Para valer:** quando estiver tudo certo, **apague os números do modo de teste** e salve. A partir daí, a IA atende
    todos os leads que escreverem para o número central.
 
+> **IA no n8n, 24 horas na VPS (opcional):** para a IA rodar num fluxo do n8n, com base de conhecimento (CRM, transcrições
+> das R1 e Google Drive), siga [`deploy/n8n/LEIA-ME.md`](../n8n/LEIA-ME.md). O instalador do n8n usa este mesmo conector.
+> No CRM, o ligar e desligar continua igual.
+
 ## Começar do zero (zerar a VPS)
 
 1. **Painel da Locaweb:** na VPS, use a opção de **reinstalar o sistema operacional** e escolha **Ubuntu 24.04**.
@@ -136,12 +140,13 @@ de especialistas cabem bem; se forem muitos números, suba o plano para 2 GB no 
 | `vero-whatsapp situacao` | Mostra se os serviços estão de pé e a memória usada |
 | `vero-whatsapp registros` | Mostra os registros do conector ao vivo (Ctrl+C para sair) |
 | `vero-whatsapp reiniciar` | Reinicia o conector (o WhatsApp continua conectado) |
-| `vero-whatsapp dados` | Mostra o endereço e a chave para o CRM |
+| `vero-whatsapp dados` | Mostra o endereço e a chave para o CRM (e o login do n8n, se instalado) |
+| `vero-whatsapp registros-n8n` | Registros do n8n ao vivo, se instalado (Ctrl+C para sair) |
 | `vero-whatsapp diagnostico` | Confere números, webhook do CRM, últimas mensagens e erros (sem mostrar a chave nem os números completos) |
 
 - **Reiniciar a VPS:** o conector volta sozinho.
 - **Mudar algo ou corrigir o domínio:** rode `sudo DOMINIO=... bash instalar.sh` de novo. A chave, as senhas e os
-  números conectados são mantidos.
+  números conectados são mantidos. Com o n8n instalado, ele também é mantido (e o aviso do conector para ele).
 - **Versão fixa:** a versão do conector é a **v2.3.8**. A partir da 2.4, a Evolution API passou a exigir a ativação
   de uma licença; confira isso antes de atualizar.
 - **Arquivos:** ficam em `/opt/vero-whatsapp`. O `.env` guarda a chave do conector e a senha do banco: não publique

@@ -29,6 +29,10 @@ const DEFAULTS = {
   test_numbers: '',
   // Especialista que recebe os leads novos quando a distribuição automática não definir ninguém
   default_owner_id: null,
+  // Provedor "n8n": a IA roda num fluxo do n8n na VPS e fala com o CRM por um token próprio (só o hash fica salvo)
+  n8n_token_hash: null, n8n_token_hint: null,
+  // Manda as transcrições das R1 (sem dados pessoais) para a base de conhecimento do n8n
+  n8n_transcripts: false,
 };
 const STATUS_LABEL = { ativa: 'IA atendendo', humano: 'Com o especialista', pausada: 'Especialista assumiu' };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -45,15 +49,16 @@ function config(db) {
   return c;
 }
 
-/** O agente está ligado e pronto para responder (chave do provedor escolhido e, no Claude, a biblioteca). */
+/** O agente está ligado e pronto para responder (chave do provedor escolhido e, no Claude, a biblioteca; no n8n, o token). */
 function ready(db) {
   const c = config(db);
   if (!c.enabled) return { ok: false, reason: 'desligado', cfg: c };
+  if (c.provider === 'n8n') return c.n8n_token_hash ? { ok: true, cfg: c } : { ok: false, reason: 'sem_token_n8n', cfg: c };
   const av = llm.availability(db, c.provider);
   if (!av.ok) return { ok: false, reason: av.reason, cfg: c };
   return { ok: true, cfg: c };
 }
-const modelOf = (cfg) => (llm.providerOf(cfg.provider) === 'claude' ? cfg.model || llm.DEFAULTS.claude : cfg.gemini_model || llm.GEMINI_DEFAULT);
+const modelOf = (cfg) => (cfg.provider === 'n8n' ? 'n8n' : llm.providerOf(cfg.provider) === 'claude' ? cfg.model || llm.DEFAULTS.claude : cfg.gemini_model || llm.GEMINI_DEFAULT);
 
 /** A conversa é do número central atendido pelo agente? */
 function handlesConversation(db, w) {
@@ -87,9 +92,10 @@ const peerOfConv = (w) => (w?.channel === 'lite' ? w.peer : w?.wa_id);
 
 const isLead = (u) => u.role === 'admin' || u.role === 'gestor';
 
-function view(db, user) {
+function view(db, user, req) {
   if (!isLead(user)) throw forbidden('O agente de IA é configurado pela liderança.');
   const c = config(db);
+  const { n8n_token_hash: _hash, ...pub } = c;
   const r = ready(db);
   const prov = llm.providersStatus(db);
   const instances = db.prepare("SELECT id, name, phone, status FROM wa_instances ORDER BY status = 'conectado' DESC, name").all();
@@ -100,9 +106,10 @@ function view(db, user) {
   const recent = db.prepare(`SELECT l.action, l.detail, l.created_at, l.conversation_id, c.name AS contact_name FROM wa_agent_log l LEFT JOIN contacts c ON c.id = l.contact_id
     WHERE l.action IN ('qualificou','agendou_r1','transferiu','sem_fit','erro','novo_lead') ORDER BY l.id DESC LIMIT 12`).all();
   return {
-    config: { ...c },
+    config: pub,
     ready: r.ok, reason: r.ok ? null : r.reason,
-    llm: { provider: llm.providerOf(c.provider), model: modelOf(c), has_key: prov[llm.providerOf(c.provider)].has_key, sdk: prov.claude.sdk },
+    llm: { provider: c.provider === 'n8n' ? 'n8n' : llm.providerOf(c.provider), model: modelOf(c), has_key: c.provider === 'n8n' ? true : prov[llm.providerOf(c.provider)].has_key, sdk: prov.claude.sdk },
+    n8n: require('./n8n').info(db, req),
     providers: { claude: { has_key: prov.claude.has_key, from_env: prov.claude.from_env, sdk: prov.claude.sdk }, gemini: { has_key: prov.gemini.has_key, from_env: prov.gemini.from_env, note: prov.gemini.free_tier_note } },
     can_edit: user.role === 'admin',
     official: (() => {
@@ -123,7 +130,7 @@ function view(db, user) {
   };
 }
 
-function save(db, user, data = {}) {
+function save(db, user, data = {}, req) {
   if (user.role !== 'admin') throw forbidden('Só o administrador liga e configura o agente de IA.');
   const c = config(db);
   const next = { ...c };
@@ -135,7 +142,7 @@ function save(db, user, data = {}) {
   if (data.instance_id !== undefined) next.instance_id = data.instance_id ? Number(data.instance_id) : null;
   if (data.name !== undefined) next.name = String(clean(data.name) || 'Vero').slice(0, 40);
   if (data.provider !== undefined) {
-    if (!['gemini', 'claude'].includes(data.provider)) throw badRequest('Provedor de IA inválido: use gemini ou claude.');
+    if (!['gemini', 'claude', 'n8n'].includes(data.provider)) throw badRequest('Provedor de IA inválido: use gemini, claude ou n8n.');
     next.provider = data.provider;
   }
   if (data.model !== undefined) {
@@ -175,6 +182,7 @@ function save(db, user, data = {}) {
     next.test_numbers = String(clean(data.test_numbers) || '').slice(0, 500);
     if (next.test_numbers && !testNumbers(next).length) throw badRequest('Números do modo de teste inválidos (ex.: 51 99999-0000).');
   }
+  if (data.n8n_transcripts !== undefined) next.n8n_transcripts = !!data.n8n_transcripts;
   if (data.default_owner_id !== undefined) {
     const id = data.default_owner_id ? Number(data.default_owner_id) : null;
     if (id && !db.prepare("SELECT 1 FROM users WHERE id = ? AND active = 1 AND role IN ('consultor','gestor','admin')").get(id)) throw badRequest('Especialista padrão inválido.');
@@ -191,7 +199,7 @@ function save(db, user, data = {}) {
   }
   setSetting(db, 'wa_agent', next);
   audit(db, user, 'integration', null, 'agente_ia_whatsapp', { ligado: next.enabled, canal: next.channel, provedor: next.provider, modelo: modelOf(next) });
-  return view(db, user);
+  return view(db, user, req);
 }
 
 /* ------------------------- Controle por conversa ------------------------- */
@@ -236,15 +244,29 @@ function log(db, w, action, detail, usage) {
  * Chamado pelos webhooks depois de gravar uma mensagem recebida. Devolve uma promessa (o webhook espera o agente
  * terminar, porque na Vercel nada roda depois da resposta).
  */
+/**
+ * A IA pode atender esta conversa agora? Devolve o motivo quando não pode (as mesmas regras para o agente do CRM e
+ * para o fluxo do n8n).
+ */
+function gate(db, w) {
+  if (!w) return 'sem_conversa';
+  if (!config(db).enabled) return 'ia_desligada';
+  if (!handlesConversation(db, w)) return 'fora_do_numero_central';
+  if (!allowsPeer(db, peerOfConv(w))) return 'modo_de_teste';
+  if (w.ai_status === 'humano' || w.ai_status === 'pausada') return 'com_especialista';
+  const r = ready(db);
+  if (!r.ok) return r.reason;
+  // Conversa que a equipe já atendia antes de ligar o agente: a IA não entra no meio
+  if (!w.ai_status && db.prepare("SELECT 1 FROM wa_messages WHERE conversation_id = ? AND direction = 'out' AND ai = 0 LIMIT 1").get(w.id)) return 'equipe_ja_atendia';
+  return null;
+}
+
 async function onInbound(db, convId, msgId) {
   let w = db.prepare('SELECT * FROM wa_conversations WHERE id = ?').get(convId);
-  if (!handlesConversation(db, w)) return null;
-  if (!allowsPeer(db, peerOfConv(w))) return null;
-  if (w.ai_status === 'humano' || w.ai_status === 'pausada') return null;
+  if (gate(db, w)) return null;
   const r = ready(db);
-  if (!r.ok) return null;
-  // Conversa que a equipe já atendia antes de ligar o agente: a IA não entra no meio
-  if (!w.ai_status && db.prepare("SELECT 1 FROM wa_messages WHERE conversation_id = ? AND direction = 'out' AND ai = 0 LIMIT 1").get(convId)) return null;
+  // Com o provedor n8n, quem responde é o fluxo do n8n (ele recebe a mensagem pelo conector)
+  if (r.cfg.provider === 'n8n') return null;
   // Junta mensagens seguidas: só quem recebeu a última responde
   const wait = debounceMs();
   if (wait) await sleep(wait);
@@ -274,9 +296,9 @@ async function onInbound(db, convId, msgId) {
   }
 }
 
-function lock(db, convId) {
+function lock(db, convId, ms = LOCK_MS) {
   const now = nowIso();
-  const stale = new Date(Date.now() - LOCK_MS).toISOString();
+  const stale = new Date(Date.now() - ms).toISOString();
   return db.prepare('UPDATE wa_conversations SET ai_lock_at = ? WHERE id = ? AND (ai_lock_at IS NULL OR ai_lock_at < ?)').run(now, convId, stale).changes === 1;
 }
 
@@ -533,7 +555,7 @@ function ensureOwner(db, w) {
 
 /* ------------------------- Conversa com o Claude ------------------------- */
 
-function systemPrompt(db, cfg) {
+function systemPrompt(db, cfg, opts = {}) {
   const company = getSetting(db, 'company_name') || 'Vero Consórcios';
   const kb = db.prepare("SELECT kind, title, content FROM ai_knowledge WHERE active = 1 AND kind IN ('pergunta','objecao','mensagem') ORDER BY likes - dislikes DESC, id LIMIT 30").all();
   return `Você é ${cfg.name}, assistente virtual da ${company} no WhatsApp. A ${company} trabalha com consórcio (imóvel, veículo e serviços) e planejamento financeiro.
@@ -558,7 +580,7 @@ Com a triagem completa:
 Passe para um especialista com transferir_especialista quando: o cliente pedir uma pessoa; reclamar; já for cliente (pós-venda, boleto, assembleia, contemplação); perguntar valores de parcela, taxas, administradoras, propostas ou contratos; mandar áudio, foto ou documento que você não consegue avaliar; ou quando você não souber responder. Avise que um especialista vai continuar a conversa.
 
 Nunca: prometa data ou garantia de contemplação; garanta aprovação, rentabilidade ou taxa; informe valores de parcela ou de proposta; peça CPF, documentos, senhas ou dados de cartão; invente informações; diga que é humano. Se o cliente pedir para parar de receber mensagens, respeite, agradeça e transfira com o motivo "pediu para não receber mensagens".
-${cfg.instructions ? `\nOrientações da ${company}:\n${cfg.instructions}\n` : ''}${kb.length ? `\nBase de conhecimento (use para responder dúvidas e objeções; fora disso, transfira):\n${kb.map((k) => `- [${k.kind}] ${k.title}: ${k.content}`).join('\n')}\n` : ''}
+${cfg.instructions ? `\nOrientações da ${company}:\n${cfg.instructions}\n` : ''}${opts.n8n ? `\nBase de conhecimento: para dúvidas sobre consórcio, planejamento ou objeções, consulte a ferramenta base_de_conhecimento antes de responder. Ela traz materiais e trechos de conversas da equipe: use o conteúdo para explicar, mas nunca cite nomes, valores, números ou dados de outros clientes. Se não encontrar a resposta, transfira.\n` : ''}${kb.length ? `\nBase de conhecimento (use para responder dúvidas e objeções; fora disso, transfira):\n${kb.map((k) => `- [${k.kind}] ${k.title}: ${k.content}`).join('\n')}\n` : ''}
 Sua resposta final (texto) é enviada ao cliente no WhatsApp exatamente como escrita.`;
 }
 
@@ -630,15 +652,18 @@ async function runTurn(db, cfg, w0) {
   }
   db.prepare('UPDATE wa_conversations SET ai_turns = ai_turns + 1 WHERE id = ?').run(w.id);
   log(db, w, 'respondeu', reply ? reply.slice(0, 200) : null, usage);
-  if (ctx.handoff) {
-    setStatus(db, w.id, ctx.handoff.status, ctx.handoff.reason);
-    const target = db.prepare('SELECT owner_id FROM contacts WHERE id = ?').get(w.contact_id)?.owner_id;
-    const name = ctx.contact?.name || 'lead';
-    if (!/^R1 agendada/.test(ctx.handoff.reason)) {
-      notify(db, target || managersOf(db, null), { kind: 'whatsapp', level: 'warn', title: `IA Vero passou a conversa para você: ${name}`, body: ctx.handoff.reason, link: `#/comunicacao/whatsapp/${w.id}` });
-    }
-  }
+  if (ctx.handoff) applyHandoff(db, w, ctx);
   return { reply, message_id: sentId, handoff: ctx.handoff || null, usage };
+}
+
+/** A IA passa a conversa para o especialista (transferência, sem fit, R1 agendada ou falha) e avisa o responsável. */
+function applyHandoff(db, w, ctx) {
+  setStatus(db, w.id, ctx.handoff.status, ctx.handoff.reason);
+  const target = db.prepare('SELECT owner_id FROM contacts WHERE id = ?').get(w.contact_id)?.owner_id;
+  const name = ctx.contact?.name || 'lead';
+  if (!/^R1 agendada/.test(ctx.handoff.reason)) {
+    notify(db, target || managersOf(db, null), { kind: 'whatsapp', level: 'warn', title: `IA Vero passou a conversa para você: ${name}`, body: ctx.handoff.reason, link: `#/comunicacao/whatsapp/${w.id}` });
+  }
 }
 
 async function sendAsAgent(db, w, text) {
@@ -650,5 +675,7 @@ async function sendAsAgent(db, w, text) {
 
 module.exports = {
   config, ready, view, save, control, onInbound, humanReplied, handlesConversation, handlesInstance, answers, allowsPeer, freeSlots, fmtSlot, systemPrompt,
+  // Usados pelo fluxo do n8n (server/services/n8n.js)
+  gate, lock, debounceMs, ensureLead, setStatus, leadContext, tools, runTool, applyHandoff, sendAsAgent, log, testNumbersOf: testNumbers,
   STATUS_LABEL, AGENT_USER, DEFAULT_FIT,
 };
